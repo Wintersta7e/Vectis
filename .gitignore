@@ -1,0 +1,38 @@
+# Build
+build/
+cmake-build-*/
+out/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# vcpkg
+vcpkg_installed/
+
+# Binary output
+vectis
+vectis.exe
+vectis-data/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Secrets
+.env
+*.pem
+*.key
+vectis.toml
+
+# CLAUDE.md is local project instructions only
+CLAUDE.md
+
+# Internal planning docs (not for the repo)
+docs/design/
+docs/BUILD.md

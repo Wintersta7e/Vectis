@@ -1,0 +1,69 @@
+# Vectis Configuration
+# Copy this to vectis.toml alongside the binary and customize.
+# All settings have sensible defaults — this file is optional.
+
+[general]
+# Theme: "dark" (default), "light"
+theme = "dark"
+
+# Data directory (relative to binary or absolute path)
+data_dir = "./vectis-data"
+
+# --- Code Mode ---
+[code]
+# Languages to parse (or "auto" to detect from file extensions)
+languages = ["auto"]
+
+# Directories to exclude from analysis
+exclude = ["node_modules", "dist", ".git", "vendor", "build", "target", "__pycache__"]
+
+[code.digest]
+# What to include in agent digest exports
+include_signatures = true
+include_routes = true
+include_hotspots = true
+max_depth = 3
+
+# --- HTTP Mode ---
+[http]
+# Local proxy port
+proxy_port = 8080
+
+# Maximum captured requests to keep in memory
+max_captures = 10000
+
+# --- Ask Mode ---
+[ask]
+# AI backend: "auto" (best available), "offline", "claude", "openai", "gemini", "ollama"
+ai_backend = "auto"
+
+# For offline mode: path to GGUF model file
+# model_path = "./models/phi-3-mini-4k-instruct.Q4_K_M.gguf"
+
+# For API backends: tokens are read from environment variables, never from this file
+# Set CLAUDE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OLLAMA_URL in your environment
+
+# --- Project Mode ---
+# API integrations are optional. Everything works without them.
+
+# [project.github]
+# token_env = "GITHUB_TOKEN"
+# repos = ["myorg/api", "myorg/frontend"]
+
+# [project.jira]
+# token_env = "JIRA_API_TOKEN"
+# url = "https://mycompany.atlassian.net"
+# default_project = "BACKEND"
+
+# [project.gitlab]
+# token_env = "GITLAB_TOKEN"
+# url = "https://gitlab.com"
+# projects = ["mygroup/myproject"]
+
+# --- Write Mode ---
+[write]
+# Default template for new documents
+default_template = "blank"
+
+# Auto-save interval in seconds (0 to disable)
+autosave_interval = 30

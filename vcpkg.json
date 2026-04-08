@@ -1,0 +1,17 @@
+{
+  "name": "vectis",
+  "version": "0.1.0",
+  "description": "Portable Developer Intelligence Tool",
+  "dependencies": [
+    "sdl2",
+    "opengl",
+    "sqlite3",
+    "nlohmann-json",
+    "tomlplusplus",
+    "curl",
+    "mbedtls",
+    "cmark",
+    "gtest",
+    "libgit2"
+  ]
+}
