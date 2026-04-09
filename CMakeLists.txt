@@ -307,6 +307,8 @@ add_library(vectis_core STATIC
     src/core/log.cpp
     src/core/service_registry.cpp
     src/core/task_queue.cpp
+    src/modes/code/code_index.cpp
+    src/modes/code/language.cpp
     src/platform/file_dialog.cpp
     src/platform/file_io.cpp
     src/platform/process.cpp
