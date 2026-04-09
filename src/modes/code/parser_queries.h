@@ -19,4 +19,10 @@ namespace vectis::modes::code {
 /// Step 3/4 can refine them without touching callers.
 [[nodiscard]] std::string_view query_for(Language language) noexcept;
 
+/// S-expression tree-sitter query for extracting import / include /
+/// use / require statements from a file. Returns an empty view for
+/// languages Vectis doesn't yet support for dependency extraction —
+/// the parser treats an empty query as "no imports".
+[[nodiscard]] std::string_view import_query_for(Language language) noexcept;
+
 } // namespace vectis::modes::code

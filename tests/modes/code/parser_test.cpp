@@ -377,6 +377,105 @@ TEST(ParserTest, EmptyContentReturnsNoSymbols)
     EXPECT_TRUE(result.symbols.empty());
 }
 
+TEST(ParserTest, ExtractsCppIncludes)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+#include <vector>
+#include <string>
+#include "core/log.h"
+#include "platform/file_io.h"
+
+namespace demo {
+int foo() { return 0; }
+}
+)";
+    const auto imports = parser->extract_imports(Language::Cpp, source);
+
+    // Angle-bracket includes (<vector>, <string>) are intentionally
+    // skipped; only the two quoted includes should show up.
+    ASSERT_EQ(imports.size(), 2U);
+    EXPECT_EQ(imports[0].import_string, "core/log.h");
+    EXPECT_EQ(imports[0].kind,          "include");
+    EXPECT_EQ(imports[1].import_string, "platform/file_io.h");
+}
+
+TEST(ParserTest, ExtractsPythonImports)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+import os
+import sys
+from typing import Optional
+from models.user import User
+from .helpers import greet
+)";
+    const auto imports = parser->extract_imports(Language::Python, source);
+
+    // All five imports should be captured — names are dotted_name
+    // or relative_import; relative imports show up as "." prefix.
+    ASSERT_GE(imports.size(), 3U);
+
+    bool saw_os = false;
+    bool saw_typing = false;
+    bool saw_models_user = false;
+    for (const auto& imp : imports) {
+        if (imp.import_string == "os") { saw_os = true; }
+        if (imp.import_string == "typing") { saw_typing = true; }
+        if (imp.import_string == "models.user") { saw_models_user = true; }
+    }
+    EXPECT_TRUE(saw_os);
+    EXPECT_TRUE(saw_typing);
+    EXPECT_TRUE(saw_models_user);
+}
+
+TEST(ParserTest, ExtractsTypeScriptImports)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+import { User } from "./types";
+import { UserService } from "./services/user-service";
+import * as path from "path";
+)";
+    const auto imports = parser->extract_imports(Language::TypeScript, source);
+
+    ASSERT_EQ(imports.size(), 3U);
+    EXPECT_EQ(imports[0].import_string, "./types");
+    EXPECT_EQ(imports[1].import_string, "./services/user-service");
+    EXPECT_EQ(imports[2].import_string, "path");
+    for (const auto& imp : imports) {
+        EXPECT_EQ(imp.kind, "import");
+    }
+}
+
+TEST(ParserTest, ExtractsRustUseDeclarations)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+use std::collections::HashMap;
+use crate::foo::bar;
+mod helpers;
+)";
+    const auto imports = parser->extract_imports(Language::Rust, source);
+    ASSERT_GE(imports.size(), 2U);
+    // The Rust query should pick up HashMap and bar from the
+    // scoped_identifier captures, plus helpers from the mod_item.
+    bool saw_helpers = false;
+    for (const auto& imp : imports) {
+        if (imp.import_string == "helpers") { saw_helpers = true; }
+    }
+    EXPECT_TRUE(saw_helpers);
+}
+
+TEST(ParserTest, ExtractImports_EmptyForUnwiredLanguage)
+{
+    auto parser = make_parser();
+    // Java isn't wired for import extraction in Step 4 — returns empty.
+    const auto imports = parser->extract_imports(
+        Language::Java, "import java.util.List; class Foo {}");
+    EXPECT_TRUE(imports.empty());
+}
+
 TEST(ParserTest, UnknownLanguageReturnsNoSymbols)
 {
     auto parser = make_parser();

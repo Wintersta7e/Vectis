@@ -166,6 +166,50 @@ constexpr std::string_view k_query_sql = R"(
 (create_function_statement [(identifier) (dotted_name)] @name) @function
 )";
 
+// -----------------------------------------------------------------------------
+// Import queries — one per supported language. Captures `@path` on the
+// identifier / string holding the imported module name, and a kind
+// capture (`@include`, `@import`, `@use`, `@require`, `@mod`) on the
+// enclosing node so the parser can tag each raw import.
+//
+// Languages not yet wired (Go, Java, C#, Ruby, PHP, SQL) return an
+// empty view — the parser treats empty as "no imports for this
+// language" and gracefully skips extraction.
+// -----------------------------------------------------------------------------
+
+// C / C++ — quoted #include "..." only. Angle-bracket includes
+// (#include <vector>) are intentionally skipped: they're system /
+// library headers we won't resolve to files inside the project.
+constexpr std::string_view k_imports_c_cpp = R"(
+(preproc_include
+  path: (string_literal) @path) @include
+)";
+
+// Python — three statement forms:
+//   import foo
+//   import foo.bar
+//   from foo import bar
+//   from .relative import bar
+constexpr std::string_view k_imports_python = R"(
+(import_statement (dotted_name) @path) @import
+(import_from_statement module_name: (dotted_name)    @path) @import
+(import_from_statement module_name: (relative_import) @path) @import
+)";
+
+// TypeScript / JavaScript — `import x from '...'` only. The source
+// path sits inside a `string > string_fragment` pair.
+constexpr std::string_view k_imports_ts_js = R"(
+(import_statement
+  source: (string (string_fragment) @path)) @import
+)";
+
+// Rust — `use foo::bar;` and `mod foo;`.
+constexpr std::string_view k_imports_rust = R"(
+(use_declaration argument: (scoped_identifier) @path) @use
+(use_declaration argument: (identifier) @path) @use
+(mod_item name: (identifier) @path) @mod
+)";
+
 } // namespace
 
 std::string_view query_for(Language language) noexcept
@@ -183,6 +227,29 @@ std::string_view query_for(Language language) noexcept
         case Language::Ruby:       return k_query_ruby;
         case Language::Php:        return k_query_php;
         case Language::Sql:        return k_query_sql;
+        case Language::Unknown:    return {};
+    }
+    return {};
+}
+
+std::string_view import_query_for(Language language) noexcept
+{
+    switch (language) {
+        case Language::Python:     return k_imports_python;
+        case Language::JavaScript: return k_imports_ts_js;
+        case Language::TypeScript: return k_imports_ts_js;
+        case Language::C:          return k_imports_c_cpp;
+        case Language::Cpp:        return k_imports_c_cpp;
+        case Language::Rust:       return k_imports_rust;
+        // Languages not yet wired for dependency extraction. The
+        // parser handles an empty query as "no imports". These can
+        // be filled in without touching callers.
+        case Language::Java:       return {};
+        case Language::CSharp:     return {};
+        case Language::Go:         return {};
+        case Language::Ruby:       return {};
+        case Language::Php:        return {};
+        case Language::Sql:        return {};
         case Language::Unknown:    return {};
     }
     return {};

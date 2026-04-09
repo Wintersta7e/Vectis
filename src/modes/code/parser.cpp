@@ -266,8 +266,9 @@ struct TreeSitterParser::Impl {
     TSParser* parser = nullptr;
 
     struct LanguageEntry {
-        const TSLanguage* grammar = nullptr;
-        TSQuery*          query   = nullptr;
+        const TSLanguage* grammar       = nullptr;
+        TSQuery*          query         = nullptr;  ///< symbol query
+        TSQuery*          import_query  = nullptr;  ///< imports query, may be null
     };
 
     std::unordered_map<Language, LanguageEntry> languages;
@@ -278,15 +279,20 @@ struct TreeSitterParser::Impl {
             if (entry.query != nullptr) {
                 ts_query_delete(entry.query);
             }
+            if (entry.import_query != nullptr) {
+                ts_query_delete(entry.import_query);
+            }
         }
         if (parser != nullptr) {
             ts_parser_delete(parser);
         }
     }
 
-    /// Compile the query for one language and store the grammar+query
-    /// pair. Returns true on success; on failure logs a WARN and
-    /// leaves the language unregistered so `supports()` returns false.
+    /// Compile both the symbol query and (optionally) the import
+    /// query for one language and store the grammar + queries.
+    /// Returns true if the symbol query compiled (the primary
+    /// requirement for "supported"). An import-query compile
+    /// failure is logged but non-fatal.
     bool register_one(Language lang, const TSLanguage* grammar)
     {
         const std::string_view query_source = query_for(lang);
@@ -312,7 +318,30 @@ struct TreeSitterParser::Impl {
             return false;
         }
 
-        languages[lang] = LanguageEntry{grammar, query};
+        // Import query is optional — if it fails or is empty, the
+        // language is still "supported" for symbols; it just won't
+        // contribute to the dependency graph.
+        TSQuery*               import_query       = nullptr;
+        const std::string_view import_query_source = import_query_for(lang);
+        if (!import_query_source.empty()) {
+            std::uint32_t import_error_offset = 0;
+            TSQueryError  import_error_type   = TSQueryErrorNone;
+            import_query = ts_query_new(
+                grammar,
+                import_query_source.data(),
+                static_cast<std::uint32_t>(import_query_source.size()),
+                &import_error_offset,
+                &import_error_type);
+            if (import_query == nullptr) {
+                VECTIS_LOG_WARN(
+                    "failed to compile import query for {} (error {}, offset {})",
+                    language_name(lang),
+                    static_cast<int>(import_error_type),
+                    import_error_offset);
+            }
+        }
+
+        languages[lang] = LanguageEntry{grammar, query, import_query};
         return true;
     }
 };
@@ -462,6 +491,100 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
     ts_query_cursor_delete(cursor);
     ts_tree_delete(tree);
 
+    return result;
+}
+
+namespace {
+
+/// Strip one leading and one trailing character from `text` if both
+/// are the given quote character. Used to peel the surrounding quotes
+/// off tree-sitter `string_literal` captures (e.g. `"core/log.h"` ->
+/// `core/log.h`).
+[[nodiscard]] std::string_view unquote(std::string_view text, char quote) noexcept
+{
+    if (text.size() >= 2 && text.front() == quote && text.back() == quote) {
+        return text.substr(1, text.size() - 2);
+    }
+    return text;
+}
+
+} // namespace
+
+std::vector<RawImport>
+TreeSitterParser::extract_imports(Language language, std::string_view content)
+{
+    std::vector<RawImport> result;
+
+    if (language == Language::Unknown || content.empty()) {
+        return result;
+    }
+
+    const auto lang_it = m_impl->languages.find(language);
+    if (lang_it == m_impl->languages.end()) {
+        return result;
+    }
+    const Impl::LanguageEntry& entry = lang_it->second;
+    if (entry.import_query == nullptr) {
+        return result;
+    }
+
+    if (!ts_parser_set_language(m_impl->parser, entry.grammar)) {
+        return result;
+    }
+
+    TSTree* tree = ts_parser_parse_string(
+        m_impl->parser, nullptr, content.data(),
+        static_cast<std::uint32_t>(content.size()));
+    if (tree == nullptr) {
+        return result;
+    }
+
+    const TSNode   root   = ts_tree_root_node(tree);
+    TSQueryCursor* cursor = ts_query_cursor_new();
+    ts_query_cursor_exec(cursor, entry.import_query, root);
+
+    TSQueryMatch match;
+    while (ts_query_cursor_next_match(cursor, &match)) {
+        RawImport       raw;
+        bool            has_path = false;
+        bool            has_kind = false;
+
+        for (std::uint16_t i = 0; i < match.capture_count; ++i) {
+            const TSQueryCapture& capture       = match.captures[i];
+            std::uint32_t         capture_len   = 0;
+            const char*           capture_chars = ts_query_capture_name_for_id(
+                entry.import_query, capture.index, &capture_len);
+            const std::string_view capture_name(capture_chars, capture_len);
+
+            if (capture_name == "path") {
+                const std::uint32_t start = ts_node_start_byte(capture.node);
+                const std::uint32_t end   = ts_node_end_byte(capture.node);
+                if (end > content.size() || start > end) {
+                    continue;
+                }
+                std::string_view path_text = content.substr(start, end - start);
+                path_text = unquote(path_text, '"');
+                path_text = unquote(path_text, '\'');
+                raw.import_string.assign(path_text);
+                has_path = true;
+            } else {
+                // `@include`, `@import`, `@use`, `@require`, `@mod`
+                // are treated as the kind tag — whichever fires is
+                // stored verbatim.
+                raw.kind.assign(capture_name);
+                has_kind = true;
+                const TSPoint start_pt = ts_node_start_point(capture.node);
+                raw.line = static_cast<int>(start_pt.row) + 1;
+            }
+        }
+
+        if (has_path && has_kind && !raw.import_string.empty()) {
+            result.push_back(std::move(raw));
+        }
+    }
+
+    ts_query_cursor_delete(cursor);
+    ts_tree_delete(tree);
     return result;
 }
 

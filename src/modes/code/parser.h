@@ -19,6 +19,15 @@ namespace vectis::modes::code {
 ///
 /// Thread-safety: **not** thread-safe. Each worker thread that wants
 /// to parse must own its own `TreeSitterParser` instance.
+/// One raw import extracted from a file's parse tree. The scanner
+/// collects a vector of these per file and the dependency resolver
+/// turns them into `Dependency` edges in a second pass.
+struct RawImport {
+    std::string import_string;   ///< Raw path text ("./foo", "core/log.h", "fmt")
+    std::string kind;            ///< "include" | "import" | "use" | "require" | "mod"
+    int         line = 0;        ///< 1-based source line
+};
+
 class TreeSitterParser {
 public:
     /// Outcome of parsing one file. `symbols.file_id` is always 0 —
@@ -45,6 +54,12 @@ public:
     /// unregistered, or unparsable content — all non-fatal conditions
     /// are logged and surfaced as an empty result, never an exception.
     [[nodiscard]] ParseResult parse_file(Language language, std::string_view content);
+
+    /// Extract raw import statements from a file's contents. Returns
+    /// an empty vector for languages that don't yet have an import
+    /// query wired up, or when no imports are present. Never throws.
+    [[nodiscard]] std::vector<RawImport>
+    extract_imports(Language language, std::string_view content);
 
     /// True if a grammar and query have been successfully registered
     /// for this language.
