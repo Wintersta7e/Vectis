@@ -83,6 +83,21 @@ if(NOT tl-expected_FOUND)
     FetchContent_MakeAvailable(tl_expected)
 endif()
 
+# --- portable-file-dialogs (header-only, download-only) ----------------------
+# We deliberately skip FetchContent_MakeAvailable() because the upstream
+# CMakeLists would add example/demo targets to our build.
+FetchContent_Declare(
+    pfd
+    GIT_REPOSITORY https://github.com/samhocevar/portable-file-dialogs.git
+    GIT_TAG        0.1.0
+)
+FetchContent_GetProperties(pfd)
+if(NOT pfd_POPULATED)
+    FetchContent_Populate(pfd)
+endif()
+add_library(pfd INTERFACE)
+target_include_directories(pfd INTERFACE ${pfd_SOURCE_DIR})
+
 # --- Dear ImGui (docking branch, pinned) -------------------------------------
 FetchContent_Declare(
     imgui
@@ -131,6 +146,7 @@ add_library(vectis_core STATIC
     src/core/log.cpp
     src/core/service_registry.cpp
     src/core/task_queue.cpp
+    src/platform/file_dialog.cpp
     src/platform/file_io.cpp
     src/platform/process.cpp
     src/ui/theme.cpp
@@ -143,6 +159,7 @@ target_include_directories(vectis_core PUBLIC
 
 target_link_libraries(vectis_core PUBLIC
     imgui_lib
+    pfd
     SDL2::SDL2
     OpenGL::GL
     ${VECTIS_SQLITE3_TARGET}
