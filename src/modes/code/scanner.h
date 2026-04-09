@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "core/result.h"
 #include "core/task_queue.h"
 #include "modes/code/code_index.h"
 #include "modes/code/parser.h"
@@ -54,25 +55,38 @@ public:
     using ProgressCallback = std::function<void(const ScanProgress&)>;
     using CompletionCallback = std::function<void(const ScanSummary&)>;
 
-    /// Execute a full scan. Returns true on normal completion, false
-    /// if the scan was cancelled or pre-empted by an epoch bump.
+    /// Execute a full scan.
+    ///
+    /// Returns `Result<ScanSummary>`:
+    /// - **Ok** — scan ran to completion; the payload is the final
+    ///   summary (file/symbol/language counts).
+    /// - **Err(Cancelled)** — scan was cancelled via the token or
+    ///   pre-empted by an epoch bump. Not a hard failure; the caller
+    ///   asked to stop. The partial state in `index` may be stale.
+    /// - **Err(IoError / PlatformError)** — root is not a directory
+    ///   or another unrecoverable filesystem problem occurred.
+    ///
+    /// `on_complete` is still invoked once at the end of a successful
+    /// run (before the result is returned) so bus-based subscribers
+    /// receive the summary even if the caller discards the return.
     ///
     /// @param config              Root, excludes, and epoch identifier.
     /// @param index               Caller-owned index to populate.
     /// @param parser              Caller-owned parser (one per worker thread).
     /// @param on_progress         Called at most every 50 files or 100 ms.
-    /// @param on_complete         Called once with the final summary.
+    /// @param on_complete         Called once with the final summary on success.
     /// @param cancel_token        Cooperative cancellation handle.
     /// @param current_epoch       Atomic compared with config.epoch at
     ///                            every batch boundary; mismatch ends
     ///                            the scan immediately.
-    static bool run(const ScanConfig&                           config,
-                    CodeIndex&                                  index,
-                    TreeSitterParser&                           parser,
-                    const ProgressCallback&                     on_progress,
-                    const CompletionCallback&                   on_complete,
-                    const vectis::core::CancellationToken&      cancel_token,
-                    const std::atomic<std::int64_t>&            current_epoch);
+    [[nodiscard]] static vectis::core::Result<ScanSummary>
+    run(const ScanConfig&                           config,
+        CodeIndex&                                  index,
+        TreeSitterParser&                           parser,
+        const ProgressCallback&                     on_progress,
+        const CompletionCallback&                   on_complete,
+        const vectis::core::CancellationToken&      cancel_token,
+        const std::atomic<std::int64_t>&            current_epoch);
 };
 
 } // namespace vectis::modes::code

@@ -62,12 +62,13 @@ void scan_fixture(std::string_view fixture_name, CodeIndex& index)
     std::atomic<std::int64_t> epoch{1};
     const CancellationToken   token{};
 
-    const bool ok = Scanner::run(
+    const auto result = Scanner::run(
         cfg, index, parser,
         [](const ScanProgress&) {},
         [](const ScanSummary&) {},
         token, epoch);
-    EXPECT_TRUE(ok) << "scan of fixture '" << fixture_name << "' failed";
+    EXPECT_TRUE(result.has_value())
+        << "scan of fixture '" << fixture_name << "' failed";
 }
 
 TEST(FixturesTest, SamplePython_ScansAndExtractsSymbols)

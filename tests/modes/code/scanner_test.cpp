@@ -63,12 +63,13 @@ protected:
         std::atomic<std::int64_t> epoch{1};
         const CancellationToken   token{}; // default = never cancelled
 
-        return Scanner::run(
+        const auto result = Scanner::run(
             cfg, index, m_parser,
             [](const ScanProgress&) {},
             [](const ScanSummary&) {},
             token,
             epoch);
+        return result.has_value();
     }
 
     std::filesystem::path m_root;
@@ -147,6 +148,83 @@ TEST_F(ScannerFixture, EmptyDirectoryScansCleanly)
     ASSERT_TRUE(ok);
     EXPECT_EQ(index.file_count(), 0U);
     EXPECT_EQ(index.symbol_count(), 0U);
+}
+
+TEST_F(ScannerFixture, SuccessfulScanReturnsSummary)
+{
+    // Regression guard for the Result<ScanSummary> refactor: the
+    // returned value must carry the same counts the scanner wrote
+    // into the index.
+    write("a.py",           "def alpha():\n    return 1\n");
+    write("sub/b.py",       "def beta(): pass\n");
+    write("sub/c.ts",       "export function gamma() {}\n");
+
+    CodeIndex        index;
+    ScanConfig       cfg;
+    cfg.root  = m_root;
+    cfg.epoch = 1;
+
+    std::atomic<std::int64_t> epoch{1};
+    const CancellationToken   token{};
+
+    const auto result = Scanner::run(
+        cfg, index, m_parser,
+        [](const ScanProgress&) {},
+        [](const ScanSummary&) {},
+        token, epoch);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->file_count,     3U);
+    EXPECT_EQ(result->file_count,     index.file_count());
+    EXPECT_EQ(result->symbol_count,   index.symbol_count());
+    EXPECT_EQ(result->language_count, index.language_count());
+}
+
+TEST_F(ScannerFixture, MissingRootReturnsIoError)
+{
+    // Non-existent root should surface as an IoError, not a bool false.
+    CodeIndex  index;
+    ScanConfig cfg;
+    cfg.root  = m_root / "does-not-exist-xyz";
+    cfg.epoch = 1;
+
+    std::atomic<std::int64_t> epoch{1};
+    const CancellationToken   token{};
+
+    const auto result = Scanner::run(
+        cfg, index, m_parser,
+        [](const ScanProgress&) {},
+        [](const ScanSummary&) {},
+        token, epoch);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().kind, vectis::core::ErrorKind::IoError);
+}
+
+TEST_F(ScannerFixture, CancelledBeforeStartReturnsCancelledError)
+{
+    // If the epoch has already moved by the time run() is called,
+    // the scan aborts immediately with an ErrorKind::Cancelled.
+    write("a.py", "def alpha(): pass\n");
+
+    CodeIndex  index;
+    ScanConfig cfg;
+    cfg.root  = m_root;
+    cfg.epoch = 1;
+
+    // Seed epoch higher than config.epoch so the preemption check
+    // fires on the first iteration.
+    std::atomic<std::int64_t> epoch{2};
+    const CancellationToken   token{};
+
+    const auto result = Scanner::run(
+        cfg, index, m_parser,
+        [](const ScanProgress&) {},
+        [](const ScanSummary&) {},
+        token, epoch);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().kind, vectis::core::ErrorKind::Cancelled);
 }
 
 } // namespace

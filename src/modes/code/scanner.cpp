@@ -64,14 +64,18 @@ constexpr std::chrono::milliseconds k_progress_time_stride{100};
 
 } // namespace
 
-bool Scanner::run(const ScanConfig&                           config,
-                  CodeIndex&                                  index,
-                  TreeSitterParser&                           parser,
-                  const ProgressCallback&                     on_progress,
-                  const CompletionCallback&                   on_complete,
-                  const vectis::core::CancellationToken&      cancel_token,
-                  const std::atomic<std::int64_t>&            current_epoch)
+vectis::core::Result<ScanSummary>
+Scanner::run(const ScanConfig&                           config,
+             CodeIndex&                                  index,
+             TreeSitterParser&                           parser,
+             const ProgressCallback&                     on_progress,
+             const CompletionCallback&                   on_complete,
+             const vectis::core::CancellationToken&      cancel_token,
+             const std::atomic<std::int64_t>&            current_epoch)
 {
+    using vectis::core::ErrorKind;
+    using vectis::core::make_error;
+
     VECTIS_LOG_INFO("Scanner: starting scan of '{}'", config.root.string());
 
     std::size_t       files_seen     = 0;
@@ -83,16 +87,16 @@ bool Scanner::run(const ScanConfig&                           config,
     // resolver sees the complete file table.
     std::vector<FileImports> per_file_imports;
 
-    const auto bail_if_preempted = [&]() -> bool {
+    // Check for cancellation or a superseding epoch. Returns the
+    // reason the scan should stop, or an empty string to continue.
+    const auto preemption_reason = [&]() -> std::string_view {
         if (cancel_token.stop_requested()) {
-            VECTIS_LOG_INFO("Scanner: scan cancelled by token");
-            return true;
+            return "cancelled by token";
         }
         if (current_epoch.load(std::memory_order_acquire) != config.epoch) {
-            VECTIS_LOG_INFO("Scanner: scan pre-empted by epoch bump");
-            return true;
+            return "pre-empted by epoch bump";
         }
-        return false;
+        return {};
     };
 
     // Directory-name-only exclude check. Matches the design doc: the
@@ -109,7 +113,10 @@ bool Scanner::run(const ScanConfig&                           config,
             "Scanner: root '{}' is not a directory: {}",
             config.root.string(),
             ec.message());
-        return false;
+        return make_error(
+            ErrorKind::IoError,
+            "scan root is not a directory: " + ec.message(),
+            config.root.string());
     }
 
     using Iter = std::filesystem::recursive_directory_iterator;
@@ -120,17 +127,27 @@ bool Scanner::run(const ScanConfig&                           config,
         it = Iter{config.root, options, ec};
     } catch (const std::exception& e) {
         VECTIS_LOG_ERROR("Scanner: failed to open recursive iterator: {}", e.what());
-        return false;
+        return make_error(
+            ErrorKind::PlatformError,
+            std::string{"recursive_directory_iterator threw: "} + e.what(),
+            config.root.string());
     }
     if (ec) {
         VECTIS_LOG_ERROR("Scanner: recursive_directory_iterator init failed: {}", ec.message());
-        return false;
+        return make_error(
+            ErrorKind::IoError,
+            "recursive_directory_iterator init failed: " + ec.message(),
+            config.root.string());
     }
 
     const Iter end_it{};
     for (; it != end_it; ) {
-        if (bail_if_preempted()) {
-            return false;
+        if (const std::string_view reason = preemption_reason(); !reason.empty()) {
+            VECTIS_LOG_INFO("Scanner: scan {}", reason);
+            return make_error(
+                vectis::core::ErrorKind::Cancelled,
+                std::string{reason},
+                config.root.string());
         }
 
         const std::filesystem::directory_entry& entry = *it;
@@ -297,8 +314,12 @@ bool Scanner::run(const ScanConfig&                           config,
         }
     }
 
-    if (bail_if_preempted()) {
-        return false;
+    if (const std::string_view reason = preemption_reason(); !reason.empty()) {
+        VECTIS_LOG_INFO("Scanner: scan {}", reason);
+        return make_error(
+            vectis::core::ErrorKind::Cancelled,
+            std::string{reason},
+            config.root.string());
     }
 
     // Second pass — resolve raw imports into Dependency edges now
@@ -321,7 +342,7 @@ bool Scanner::run(const ScanConfig&                           config,
     if (on_complete) {
         on_complete(summary);
     }
-    return true;
+    return summary;
 }
 
 } // namespace vectis::modes::code

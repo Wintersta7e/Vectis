@@ -194,10 +194,18 @@ void CodeMode::start_scan(const std::filesystem::path& root)
             }
         };
 
-        const bool ok = Scanner::run(
+        const auto result = Scanner::run(
             cfg, *index_ptr, parser, on_progress, on_complete, token, *epoch_ptr);
-        if (!ok) {
-            VECTIS_LOG_INFO("Scan did not complete normally (cancelled or pre-empted)");
+        if (!result) {
+            const auto& err = result.error();
+            if (err.kind == vectis::core::ErrorKind::Cancelled) {
+                VECTIS_LOG_INFO("Scan did not complete: {}", err.message);
+            } else {
+                VECTIS_LOG_ERROR(
+                    "Scan failed: [{}] {}",
+                    vectis::core::error_kind_to_string(err.kind),
+                    err.message);
+            }
         }
         running_ptr->store(false, std::memory_order_release);
     });

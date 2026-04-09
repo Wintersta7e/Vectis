@@ -19,6 +19,11 @@ enum class ErrorKind {
     AIError,
     ConfigError,
     PlatformError,
+    /// Operation was cancelled cooperatively (e.g. a scan interrupted
+    /// by the user). Not a failure in the "something went wrong"
+    /// sense — the caller asked for it to stop. Still modeled as an
+    /// Error so it flows through the Result<T> pipeline naturally.
+    Cancelled,
 };
 
 /// Rich error value propagated via `Result<T>`.
@@ -65,6 +70,7 @@ using Result = tl::expected<T, Error>;
         case ErrorKind::AIError:       return "AIError";
         case ErrorKind::ConfigError:   return "ConfigError";
         case ErrorKind::PlatformError: return "PlatformError";
+        case ErrorKind::Cancelled:     return "Cancelled";
     }
     return "UnknownError";
 }
