@@ -12,6 +12,9 @@
     "mbedtls",
     "cmark",
     "gtest",
-    "libgit2"
+    "libgit2",
+    "spdlog",
+    "fmt",
+    "tl-expected"
   ]
 }
