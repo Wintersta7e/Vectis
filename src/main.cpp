@@ -1,3 +1,8 @@
+// SDL2 must be included in the translation unit that defines `main`
+// so its `SDL_main.h` macro redefinition takes effect on Windows.
+// Without this, Windows linking fails with undefined `SDL_main`.
+#include <SDL.h>
+
 #include "core/app.h"
 
 // Modes will be included as they're implemented:

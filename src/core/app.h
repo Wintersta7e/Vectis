@@ -37,6 +37,7 @@ private:
     void render_frame();
     void render_mode_tabs();
     void render_welcome_screen();
+    void shutdown_internal();
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;
