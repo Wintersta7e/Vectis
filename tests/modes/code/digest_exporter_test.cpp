@@ -45,11 +45,13 @@ void populate_synthetic_index(CodeIndex& index)
     f2.line_count    = 280;
     const std::int64_t f2_id = index.add_file(std::move(f2));
 
-    const std::array<Symbol, 4> batch = {
-        Symbol{0, f1_id, "App",        SymbolKind::Class,  13,  460, 0, "",                      {}},
+    const std::array<Symbol, 6> batch = {
+        Symbol{0, f1_id, "App",        SymbolKind::Class,  13,  460, 0, "",                       {}},
         Symbol{0, f1_id, "initialize", SymbolKind::Method, 109, 256, 0, "bool App::initialize()", {}},
         Symbol{0, f1_id, "run",        SymbolKind::Method, 258, 300, 0, "int App::run()",         {}},
-        Symbol{0, f2_id, "Scanner",    SymbolKind::Class,  52,  280, 0, "",                      {}},
+        Symbol{0, f2_id, "Scanner",    SymbolKind::Class,  52,  280, 0, "",                       {}},
+        Symbol{0, f1_id, "ErrorKind",  SymbolKind::Enum,   14,  22,  0, "",                       {"IoError", "ParseError", "NetworkError"}},
+        Symbol{0, f2_id, "Point",      SymbolKind::Struct, 30,  34,  0, "",                       {"x", "y"}},
     };
     index.add_symbols(batch);
 }
@@ -79,7 +81,7 @@ TEST(DigestExporterTest, Json_WellFormed)
     EXPECT_EQ(parsed["project"]["name"], "vectis-test");
     EXPECT_EQ(parsed["project"]["root"], "/fake/project");
     EXPECT_EQ(parsed["project"]["file_count"], 2);
-    EXPECT_EQ(parsed["project"]["symbol_count"], 4);
+    EXPECT_EQ(parsed["project"]["symbol_count"], 6);
     EXPECT_EQ(parsed["project"]["languages"].size(), 1U);
     EXPECT_EQ(parsed["project"]["languages"][0], "C++");
 
@@ -91,10 +93,27 @@ TEST(DigestExporterTest, Json_WellFormed)
     EXPECT_EQ(parsed["files"][0]["lines"], 425);
 
     const auto& symbols = parsed["files"][0]["symbols"];
-    ASSERT_EQ(symbols.size(), 3U);
-    EXPECT_EQ(symbols[0]["name"], "App");
-    EXPECT_EQ(symbols[0]["kind"], "class");
-    EXPECT_EQ(symbols[0]["line"], 13);
+    // file_id f1 has: App, initialize, run, ErrorKind = 4 symbols
+    ASSERT_EQ(symbols.size(), 4U);
+
+    // Find the initialize method and check its signature made it through.
+    bool saw_initialize_signature = false;
+    bool saw_errorkind_members    = false;
+    for (const auto& sym : symbols) {
+        if (sym["name"] == "initialize") {
+            ASSERT_TRUE(sym.contains("signature"));
+            EXPECT_EQ(sym["signature"], "bool App::initialize()");
+            saw_initialize_signature = true;
+        }
+        if (sym["name"] == "ErrorKind") {
+            ASSERT_TRUE(sym.contains("members"));
+            EXPECT_EQ(sym["members"].size(), 3U);
+            EXPECT_EQ(sym["members"][0], "IoError");
+            saw_errorkind_members = true;
+        }
+    }
+    EXPECT_TRUE(saw_initialize_signature);
+    EXPECT_TRUE(saw_errorkind_members);
 }
 
 TEST(DigestExporterTest, SlimJson_OmitsSizeLinesAndSymbols)
@@ -109,7 +128,7 @@ TEST(DigestExporterTest, SlimJson_OmitsSizeLinesAndSymbols)
 
     // Top-level project block is still there.
     EXPECT_EQ(parsed["project"]["file_count"], 2);
-    EXPECT_EQ(parsed["project"]["symbol_count"], 4);
+    EXPECT_EQ(parsed["project"]["symbol_count"], 6);
 
     // Per-file entries only have path + language.
     ASSERT_EQ(parsed["files"].size(), 2U);
@@ -149,12 +168,38 @@ TEST(DigestExporterTest, Markdown_ContainsHeadingsAndSymbolLines)
     EXPECT_NE(content.find("## Overview"),                            std::string::npos);
     EXPECT_NE(content.find("## Files"),                               std::string::npos);
     EXPECT_NE(content.find("- Files: 2"),                             std::string::npos);
-    EXPECT_NE(content.find("- Symbols: 4"),                           std::string::npos);
+    EXPECT_NE(content.find("- Symbols: 6"),                           std::string::npos);
     EXPECT_NE(content.find("### src/core/app.cpp"),                   std::string::npos);
     EXPECT_NE(content.find("### src/modes/code/scanner.cpp"),         std::string::npos);
     EXPECT_NE(content.find("`App`"),                                  std::string::npos);
     EXPECT_NE(content.find("`Scanner`"),                              std::string::npos);
     EXPECT_NE(content.find("line 13"),                                std::string::npos);
+}
+
+TEST(DigestExporterTest, Markdown_RendersSignaturesAndMembers)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+
+    // Methods with signatures should be rendered with the full
+    // signature as the bullet's code span instead of just the name.
+    EXPECT_NE(content.find("`bool App::initialize()` (method)"), std::string::npos);
+    EXPECT_NE(content.find("`int App::run()` (method)"),         std::string::npos);
+
+    // Classes without signatures fall back to the bare name.
+    EXPECT_NE(content.find("`App` (class)"),     std::string::npos);
+    EXPECT_NE(content.find("`Scanner` (class)"), std::string::npos);
+
+    // Enum values rendered as an indented comma-separated sub-bullet.
+    EXPECT_NE(content.find("`ErrorKind` (enum)"),                            std::string::npos);
+    EXPECT_NE(content.find("`IoError`, `ParseError`, `NetworkError`"),       std::string::npos);
+
+    // Struct fields rendered similarly.
+    EXPECT_NE(content.find("`Point` (struct)"), std::string::npos);
+    EXPECT_NE(content.find("`x`, `y`"),         std::string::npos);
 }
 
 TEST(DigestExporterTest, Export_WritesFileAtDefaultLocation)

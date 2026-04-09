@@ -114,6 +114,11 @@ constexpr const char* k_vectis_version = "0.1.0";
         if (!sym.signature.empty()) {
             symbol_node["signature"] = sym.signature;
         }
+        if (!sym.members.empty()) {
+            // Members are a flat array of strings: enum values for
+            // `enum` symbols, public field names for `struct` symbols.
+            symbol_node["members"] = sym.members;
+        }
         symbols_array.push_back(std::move(symbol_node));
     }
     node["symbols"] = std::move(symbols_array);
@@ -194,8 +199,26 @@ constexpr const char* k_vectis_version = "0.1.0";
             continue;
         }
         for (const Symbol& sym : symbols) {
-            out << "- `" << sym.name << "` ("
+            // Prefer the full signature as the displayed label for
+            // functions and methods — it's far more useful to an LLM
+            // or reader than the bare name. Everything else uses the
+            // plain name.
+            const std::string& label = sym.signature.empty() ? sym.name : sym.signature;
+            out << "- `" << label << "` ("
                 << symbol_kind_name(sym.kind) << ") — line " << sym.line_start << "\n";
+
+            // Indented sub-bullet for enum values / struct fields,
+            // comma-separated and inline-code-formatted.
+            if (!sym.members.empty()) {
+                out << "    - ";
+                for (std::size_t i = 0; i < sym.members.size(); ++i) {
+                    if (i > 0) {
+                        out << ", ";
+                    }
+                    out << "`" << sym.members[i] << "`";
+                }
+                out << "\n";
+            }
         }
         out << "\n";
     }
