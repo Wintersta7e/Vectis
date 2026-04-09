@@ -77,6 +77,29 @@ constexpr std::string_view k_query_cpp = R"(
   declarator: (function_declarator
     declarator: (field_identifier) @name)) @method
 
+; Free function DECLARATION at namespace scope (no body):
+; `Result<void> init(...);` inside `namespace foo { ... }`. Without
+; these, headers that only declare free functions report "no symbols
+; extracted" (log.h, parser_queries.h, file_io.h, process.h, widgets.h,
+; file_dialog.h). Note: tree-sitter-cpp exposes function_declarator as
+; a positional child of declaration, NOT via a `declarator:` field —
+; so we match without field paths.
+(declaration
+  (function_declarator
+    declarator: (identifier) @name)) @function
+
+; Pointer-return free function declaration: `int* foo();`
+(declaration
+  (pointer_declarator
+    (function_declarator
+      declarator: (identifier) @name))) @function
+
+; Reference-return free function declaration: `int& foo();`
+(declaration
+  (reference_declarator
+    (function_declarator
+      declarator: (identifier) @name))) @function
+
 ; Class / struct / namespace declarations
 (class_specifier      name: (type_identifier) @name) @class
 (struct_specifier     name: (type_identifier) @name) @struct
