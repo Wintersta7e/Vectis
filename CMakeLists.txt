@@ -378,6 +378,7 @@ add_library(vectis_core STATIC
     src/modes/code/code_index.cpp
     src/modes/code/code_mode.cpp
     src/modes/code/complexity_analyzer.cpp
+    src/modes/code/dep_view.cpp
     src/modes/code/dependency_graph.cpp
     src/modes/code/dependency_resolver.cpp
     src/modes/code/digest_exporter.cpp

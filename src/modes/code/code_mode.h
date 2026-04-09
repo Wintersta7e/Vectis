@@ -12,6 +12,7 @@
 #include "core/context_bus.h"
 #include "core/mode.h"
 #include "modes/code/code_index.h"
+#include "modes/code/dep_view.h"
 #include "modes/code/digest_exporter.h"
 #include "modes/code/file_tree_view.h"
 #include "modes/code/parser.h"
@@ -64,6 +65,7 @@ private:
     void render_file_tree_panel();
     void render_code_viewer_panel();
     void render_symbol_browser_panel();
+    void render_dependencies_panel();
     void refresh_filtered_symbols();
     void ensure_docking_layout(ImGuiID dockspace_id);
 
@@ -83,6 +85,7 @@ private:
     // UI caches
     std::vector<FileEntry> m_cached_files;
     FileTreeView           m_tree_view;
+    DependencyView         m_dep_view;
     std::int64_t           m_selected_file_id = 0;
     std::vector<char>      m_viewer_buffer;
     bool                   m_viewer_too_large = false;

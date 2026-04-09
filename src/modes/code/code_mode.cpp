@@ -48,6 +48,7 @@ const std::vector<std::string> k_default_excludes = {
 constexpr const char* k_panel_file_tree     = "File Tree";
 constexpr const char* k_panel_code_viewer   = "Code Viewer";
 constexpr const char* k_panel_symbol_browser= "Symbol Browser";
+constexpr const char* k_panel_dependencies  = "Dependencies";
 constexpr const char* k_dockspace_name      = "VectisDockspace";
 
 } // namespace
@@ -120,6 +121,7 @@ void CodeMode::start_scan(const std::filesystem::path& root)
     m_index->clear();
     m_cached_files.clear();
     m_tree_view.clear();
+    m_dep_view.clear();
     m_selected_file_id = 0;
     m_viewer_buffer.clear();
     m_viewer_buffer.push_back('\0');
@@ -280,10 +282,15 @@ void CodeMode::ensure_docking_layout(ImGuiID dockspace_id)
         main_id, ImGuiDir_Left, 0.22F, nullptr, &main_id);
     const ImGuiID right_id = ImGui::DockBuilderSplitNode(
         main_id, ImGuiDir_Right, 0.24F, nullptr, &main_id);
+    // Split the center region horizontally so the Dependencies panel
+    // lives below the code viewer, sharing the middle column.
+    ImGuiID bottom_id = ImGui::DockBuilderSplitNode(
+        main_id, ImGuiDir_Down, 0.32F, nullptr, &main_id);
 
     ImGui::DockBuilderDockWindow(k_panel_file_tree,      left_id);
     ImGui::DockBuilderDockWindow(k_panel_symbol_browser, right_id);
     ImGui::DockBuilderDockWindow(k_panel_code_viewer,    main_id);
+    ImGui::DockBuilderDockWindow(k_panel_dependencies,   bottom_id);
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
@@ -297,6 +304,7 @@ void CodeMode::render()
     {
         m_cached_files = m_index->snapshot_files();
         m_tree_view.rebuild(m_cached_files);
+        m_dep_view.rebuild(*m_index);
         refresh_filtered_symbols();
     }
 
@@ -308,6 +316,7 @@ void CodeMode::render()
     render_file_tree_panel();
     render_code_viewer_panel();
     render_symbol_browser_panel();
+    render_dependencies_panel();
 }
 
 void CodeMode::render_file_tree_panel()
@@ -446,6 +455,21 @@ void CodeMode::render_code_viewer_panel()
             ImVec2(-1.0F, -1.0F),
             ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoUndoRedo);
     }
+
+    ImGui::End();
+}
+
+void CodeMode::render_dependencies_panel()
+{
+    if (!ImGui::Begin(k_panel_dependencies)) {
+        ImGui::End();
+        return;
+    }
+
+    m_dep_view.render(
+        *m_index,
+        [this](std::int64_t file_id) { show_file(file_id); },
+        m_selected_file_id);
 
     ImGui::End();
 }
