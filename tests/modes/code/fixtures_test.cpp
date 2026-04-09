@@ -133,4 +133,48 @@ TEST(FixturesTest, MixedProject_RecognizesMultipleLanguages)
     EXPECT_GE(index.language_count(), 3U);
 }
 
+TEST(FixturesTest, SampleCpp_ScannerPopulatesDependencies)
+{
+    CodeIndex index;
+    scan_fixture("sample-cpp", index);
+
+    // widget.cpp includes widget.hpp, main.cpp includes widget.hpp.
+    // The scanner should register both as dependency edges.
+    EXPECT_GE(index.dependency_count(), 2U)
+        << "expected at least 2 #include edges in sample-cpp";
+
+    // Find the widget.hpp file id and assert someone depends on it.
+    std::int64_t widget_hpp_id = 0;
+    for (const auto& f : index.snapshot_files()) {
+        if (f.path_relative.filename().string() == "widget.hpp") {
+            widget_hpp_id = f.id;
+            break;
+        }
+    }
+    ASSERT_NE(widget_hpp_id, 0);
+    const auto dependents = index.dependents_of(widget_hpp_id);
+    EXPECT_GE(dependents.size(), 2U)
+        << "widget.hpp should be included by both main.cpp and widget.cpp";
+}
+
+TEST(FixturesTest, SamplePython_ScannerResolvesImports)
+{
+    CodeIndex index;
+    scan_fixture("sample-python", index);
+
+    // main.py imports models.user and utils.helpers; utils/helpers.py
+    // imports models.user. All three should resolve internally.
+    std::int64_t user_py_id = 0;
+    for (const auto& f : index.snapshot_files()) {
+        if (f.path_relative.generic_string() == "models/user.py") {
+            user_py_id = f.id;
+            break;
+        }
+    }
+    ASSERT_NE(user_py_id, 0);
+    const auto user_dependents = index.dependents_of(user_py_id);
+    // Both main.py and helpers.py should depend on models/user.py.
+    EXPECT_GE(user_dependents.size(), 2U);
+}
+
 } // namespace

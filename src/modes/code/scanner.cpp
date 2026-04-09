@@ -15,6 +15,7 @@
 
 #include "core/log.h"
 #include "modes/code/code_index.h"
+#include "modes/code/dependency_resolver.h"
 #include "modes/code/language.h"
 #include "modes/code/parser.h"
 #include "modes/code/symbol.h"
@@ -76,6 +77,11 @@ bool Scanner::run(const ScanConfig&                           config,
     std::size_t       files_seen     = 0;
     std::uint64_t     files_skipped  = 0;
     auto              last_publish   = std::chrono::steady_clock::now();
+
+    // Per-file raw imports collected during the scan. Resolution is
+    // deferred to `resolve_all` after the main loop exits so the
+    // resolver sees the complete file table.
+    std::vector<FileImports> per_file_imports;
 
     const auto bail_if_preempted = [&]() -> bool {
         if (cancel_token.stop_requested()) {
@@ -235,6 +241,9 @@ bool Scanner::run(const ScanConfig&                           config,
         }
         ec.clear();
 
+        // Save the relative path before moving file_entry into the
+        // index — we need it for the dependency resolver later.
+        std::filesystem::path relative_path = file_entry.path_relative;
         const std::int64_t file_id = index.add_file(std::move(file_entry));
 
         auto parse_result = parser.parse_file(language, content);
@@ -243,6 +252,19 @@ bool Scanner::run(const ScanConfig&                           config,
                 sym.file_id = file_id;
             }
             index.add_symbols(parse_result.symbols);
+        }
+
+        // Collect raw imports for later resolution — only if the
+        // language has an import query wired up. Skipped languages
+        // return an empty vector so no cost to call unconditionally.
+        auto raw_imports = parser.extract_imports(language, content);
+        if (!raw_imports.empty()) {
+            FileImports fi;
+            fi.file_id       = file_id;
+            fi.language      = language;
+            fi.relative_path = std::move(relative_path);
+            fi.imports       = std::move(raw_imports);
+            per_file_imports.push_back(std::move(fi));
         }
 
         ++files_seen;
@@ -279,14 +301,22 @@ bool Scanner::run(const ScanConfig&                           config,
         return false;
     }
 
+    // Second pass — resolve raw imports into Dependency edges now
+    // that the file table is stable. Only runs once per scan, so any
+    // O(N*M) worst case inside resolve_all is bounded.
+    if (!per_file_imports.empty()) {
+        resolve_all(index, config.root, per_file_imports);
+    }
+
     ScanSummary summary;
     summary.file_count     = index.file_count();
     summary.symbol_count   = index.symbol_count();
     summary.language_count = index.language_count();
 
     VECTIS_LOG_INFO(
-        "Scanner: scan complete — {} files, {} symbols, {} languages ({} skipped)",
-        summary.file_count, summary.symbol_count, summary.language_count, files_skipped);
+        "Scanner: scan complete — {} files, {} symbols, {} languages, {} deps ({} skipped)",
+        summary.file_count, summary.symbol_count, summary.language_count,
+        index.dependency_count(), files_skipped);
 
     if (on_complete) {
         on_complete(summary);
