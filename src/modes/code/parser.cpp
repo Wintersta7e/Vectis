@@ -59,6 +59,93 @@ namespace {
     return SymbolKind::Unknown;
 }
 
+/// Normalize internal whitespace in a source fragment: collapse runs
+/// of spaces / tabs / newlines into a single space and trim the ends.
+/// Used to keep multi-line signatures compact in the digest.
+[[nodiscard]] std::string normalize_whitespace(std::string_view source)
+{
+    std::string out;
+    out.reserve(source.size());
+    bool last_was_space = true;  // leading whitespace becomes nothing
+    for (const char ch : source) {
+        if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+            if (!last_was_space) {
+                out.push_back(' ');
+                last_was_space = true;
+            }
+        } else {
+            out.push_back(ch);
+            last_was_space = false;
+        }
+    }
+    while (!out.empty() && out.back() == ' ') {
+        out.pop_back();
+    }
+    return out;
+}
+
+/// Extract a human-readable signature for a function-like node.
+///
+/// For `function_definition`, the signature is everything before the
+/// body (so `void Foo::bar(int x) const` without the braces or body).
+/// For `declaration`, it's the full declaration minus the trailing
+/// semicolon. Whitespace is collapsed and the result trimmed.
+///
+/// Returns an empty string if the node type is not function-like or
+/// if byte offsets fall outside `content`.
+[[nodiscard]] std::string extract_signature(TSNode node, std::string_view content)
+{
+    const std::string_view node_type{ts_node_type(node)};
+    const std::uint32_t    node_start = ts_node_start_byte(node);
+    std::uint32_t          node_end   = ts_node_end_byte(node);
+
+    if (node_start >= content.size() || node_end > content.size() || node_end <= node_start) {
+        return {};
+    }
+
+    if (node_type == "function_definition") {
+        // Walk named children and stop at the body — either a normal
+        // compound_statement or a function-try-block.
+        const std::uint32_t child_count = ts_node_named_child_count(node);
+        for (std::uint32_t i = 0; i < child_count; ++i) {
+            const TSNode           child      = ts_node_named_child(node, i);
+            const std::string_view child_type{ts_node_type(child)};
+            if (child_type == "compound_statement" ||
+                child_type == "try_statement" ||
+                child_type == "field_initializer_list")
+            {
+                node_end = ts_node_start_byte(child);
+                break;
+            }
+        }
+    } else if (node_type == "declaration" || node_type == "field_declaration") {
+        // Trim trailing whitespace and the terminating semicolon so the
+        // signature doesn't carry a dangling ';'.
+        while (node_end > node_start &&
+               (content[node_end - 1] == ' ' ||
+                content[node_end - 1] == '\t' ||
+                content[node_end - 1] == '\n' ||
+                content[node_end - 1] == '\r' ||
+                content[node_end - 1] == ';'))
+        {
+            --node_end;
+        }
+    }
+
+    if (node_end <= node_start) {
+        return {};
+    }
+    return normalize_whitespace(
+        content.substr(node_start, node_end - node_start));
+}
+
+/// True if a given symbol kind is function-like and should carry a
+/// signature string.
+[[nodiscard]] constexpr bool kind_has_signature(SymbolKind kind) noexcept
+{
+    return kind == SymbolKind::Function || kind == SymbolKind::Method;
+}
+
 } // namespace
 
 struct TreeSitterParser::Impl {
@@ -226,6 +313,13 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
                     const TSPoint end_pt   = ts_node_end_point(capture.node);
                     symbol.line_start = static_cast<int>(start_pt.row) + 1;
                     symbol.line_end   = static_cast<int>(end_pt.row) + 1;
+
+                    // Capture the node for post-match processing —
+                    // we can't call extract_signature yet because we
+                    // may not have seen the @name capture.
+                    if (kind_has_signature(kind)) {
+                        symbol.signature = extract_signature(capture.node, content);
+                    }
                 }
             }
         }

@@ -168,6 +168,93 @@ TEST(ParserTest, LineNumbersAre1Based)
     EXPECT_EQ(result.symbols[0].line_start, 2);
 }
 
+TEST(ParserTest, ExtractsSignaturesForCppFunctions)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+namespace demo {
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int multiply(
+    int lhs,
+    int rhs) const noexcept
+{
+    return lhs * rhs;
+}
+
+}  // namespace demo
+)";
+    const auto result = parser->parse_file(Language::Cpp, source);
+
+    // Find each function by name and inspect its signature.
+    for (const auto& sym : result.symbols) {
+        if (sym.name == "add") {
+            EXPECT_EQ(sym.signature, "int add(int a, int b)");
+        } else if (sym.name == "multiply") {
+            // Whitespace-normalized, multi-line collapsed to one line.
+            EXPECT_EQ(sym.signature, "int multiply( int lhs, int rhs) const noexcept");
+        }
+    }
+}
+
+TEST(ParserTest, ExtractsSignaturesForCppDeclarations)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+namespace vectis::core {
+
+Result<void> init(const std::filesystem::path& data_dir);
+int* make_buffer(std::size_t n);
+const std::string& default_name();
+
+}  // namespace vectis::core
+)";
+    const auto result = parser->parse_file(Language::Cpp, source);
+
+    bool saw_init = false;
+    bool saw_make_buffer = false;
+    for (const auto& sym : result.symbols) {
+        if (sym.name == "init") {
+            saw_init = true;
+            // No trailing semicolon, multi-line collapsed, signature captures args.
+            EXPECT_NE(sym.signature.find("init"), std::string::npos);
+            EXPECT_NE(sym.signature.find("data_dir"), std::string::npos);
+            EXPECT_EQ(sym.signature.find(';'), std::string::npos);
+        }
+        if (sym.name == "make_buffer") {
+            saw_make_buffer = true;
+            EXPECT_NE(sym.signature.find("int"), std::string::npos);
+            EXPECT_NE(sym.signature.find("make_buffer"), std::string::npos);
+        }
+    }
+    EXPECT_TRUE(saw_init);
+    EXPECT_TRUE(saw_make_buffer);
+}
+
+TEST(ParserTest, NonFunctionSymbolsHaveEmptySignature)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+namespace demo {
+class Widget {};
+struct Point {};
+enum Color { Red, Blue };
+}  // namespace demo
+)";
+    const auto result = parser->parse_file(Language::Cpp, source);
+    for (const auto& sym : result.symbols) {
+        if (sym.kind == SymbolKind::Class || sym.kind == SymbolKind::Struct ||
+            sym.kind == SymbolKind::Enum  || sym.kind == SymbolKind::Namespace)
+        {
+            EXPECT_TRUE(sym.signature.empty())
+                << sym.name << " had unexpected signature: " << sym.signature;
+        }
+    }
+}
+
 TEST(ParserTest, EmptyContentReturnsNoSymbols)
 {
     auto parser = make_parser();
