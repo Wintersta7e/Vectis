@@ -20,7 +20,7 @@ struct ExtensionEntry {
 
 /// File-extension → language map. Kept small and deliberately explicit
 /// so it's easy to review and easy to extend without regex pitfalls.
-constexpr std::array<ExtensionEntry, 25> k_extension_map = {{
+constexpr std::array<ExtensionEntry, 27> k_extension_map = {{
     {".py",    Language::Python},
     {".pyi",   Language::Python},
     {".js",    Language::JavaScript},
@@ -30,11 +30,17 @@ constexpr std::array<ExtensionEntry, 25> k_extension_map = {{
     {".ts",    Language::TypeScript},
     {".tsx",   Language::TypeScript},
     {".c",     Language::C},
-    {".h",     Language::C},
+    // `.h` is treated as C++ in mixed codebases because pure-C projects
+    // are rare today and C++ headers are by far the common case.
+    // Projects with `.h` files intended as C can still work — the C++
+    // grammar is a (nearly complete) superset of C syntax.
+    {".h",     Language::Cpp},
     {".cpp",   Language::Cpp},
     {".cxx",   Language::Cpp},
     {".cc",    Language::Cpp},
     {".hpp",   Language::Cpp},
+    {".hh",    Language::Cpp},
+    {".hxx",   Language::Cpp},
     {".rs",    Language::Rust},
     {".java",  Language::Java},
     {".cs",    Language::CSharp},

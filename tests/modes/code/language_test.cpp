@@ -21,11 +21,14 @@ TEST(LanguageTest, DetectsKnownExtensions)
     EXPECT_EQ(detect_language("/tmp/foo.ts"),     Language::TypeScript);
     EXPECT_EQ(detect_language("/tmp/foo.tsx"),    Language::TypeScript);
     EXPECT_EQ(detect_language("/tmp/foo.c"),      Language::C);
-    EXPECT_EQ(detect_language("/tmp/foo.h"),      Language::C);
+    // .h is C++ — matches GitHub Linguist and most C++ codebases.
+    EXPECT_EQ(detect_language("/tmp/foo.h"),      Language::Cpp);
     EXPECT_EQ(detect_language("/tmp/foo.cpp"),    Language::Cpp);
     EXPECT_EQ(detect_language("/tmp/foo.cxx"),    Language::Cpp);
     EXPECT_EQ(detect_language("/tmp/foo.cc"),     Language::Cpp);
     EXPECT_EQ(detect_language("/tmp/foo.hpp"),    Language::Cpp);
+    EXPECT_EQ(detect_language("/tmp/foo.hh"),     Language::Cpp);
+    EXPECT_EQ(detect_language("/tmp/foo.hxx"),    Language::Cpp);
     EXPECT_EQ(detect_language("/tmp/foo.rs"),     Language::Rust);
     EXPECT_EQ(detect_language("/tmp/foo.java"),   Language::Java);
     EXPECT_EQ(detect_language("/tmp/foo.cs"),     Language::CSharp);

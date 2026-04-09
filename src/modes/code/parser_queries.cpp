@@ -35,15 +35,56 @@ constexpr std::string_view k_query_c = R"(
 )";
 
 constexpr std::string_view k_query_cpp = R"(
+; Free function: `void foo() { ... }`
 (function_definition
   declarator: (function_declarator
     declarator: (identifier) @name)) @function
+
+; In-class inline method: `void foo() { ... }` inside a class body
 (function_definition
   declarator: (function_declarator
     declarator: (field_identifier) @name)) @method
+
+; Out-of-line method definition: `void Class::foo() { ... }`
+(function_definition
+  declarator: (function_declarator
+    declarator: (qualified_identifier
+      name: (identifier) @name))) @method
+
+; Out-of-line method with nested qualifiers: `void ns::Class::foo()`
+(function_definition
+  declarator: (function_declarator
+    declarator: (qualified_identifier
+      name: (qualified_identifier
+        name: (identifier) @name)))) @method
+
+; Pointer-return method: `int* Class::foo()`
+(function_definition
+  declarator: (pointer_declarator
+    declarator: (function_declarator
+      declarator: (qualified_identifier
+        name: (identifier) @name)))) @method
+
+; Reference-return method: `int& Class::foo()`
+(function_definition
+  declarator: (reference_declarator
+    (function_declarator
+      declarator: (qualified_identifier
+        name: (identifier) @name)))) @method
+
+; In-class method DECLARATION (no body): `void foo();`
+(field_declaration
+  declarator: (function_declarator
+    declarator: (field_identifier) @name)) @method
+
+; Class / struct / namespace declarations
 (class_specifier      name: (type_identifier) @name) @class
 (struct_specifier     name: (type_identifier) @name) @struct
 (namespace_definition name: (namespace_identifier) @name) @namespace
+
+; Type aliases and enums
+(alias_declaration    name: (type_identifier) @name) @type
+(enum_specifier       name: (type_identifier) @name) @enum
 )";
 
 constexpr std::string_view k_query_rust = R"(
