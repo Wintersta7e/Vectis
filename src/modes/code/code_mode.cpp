@@ -23,6 +23,7 @@
 #include "core/service_registry.h"
 #include "core/task_queue.h"
 #include "modes/code/code_index.h"
+#include "modes/code/digest_exporter.h"
 #include "modes/code/language.h"
 #include "modes/code/parser.h"
 #include "modes/code/scanner.h"
@@ -90,6 +91,25 @@ void CodeMode::on_open_folder_clicked()
         return;
     }
     start_scan(*picked);
+}
+
+void CodeMode::on_export_digest_clicked(DigestFormat format)
+{
+    m_last_export_path.clear();
+    m_last_export_error.clear();
+
+    ExportOptions options;
+    options.format       = format;
+    options.project_root = m_project_root;
+    options.project_name = m_project_root.filename().string();
+
+    auto result = export_digest(*m_index, options);
+    if (result) {
+        m_last_export_path = result->string();
+    } else {
+        m_last_export_error = result.error().message;
+        VECTIS_LOG_ERROR("Digest export failed: {}", m_last_export_error);
+    }
 }
 
 void CodeMode::start_scan(const std::filesystem::path& root)
@@ -297,10 +317,38 @@ void CodeMode::render_file_tree_panel()
         return;
     }
 
-    // Header: Open Folder button + project root label.
+    // Header row: Open Folder + Export Digest + project root label.
     if (ImGui::Button("Open Folder...")) {
         on_open_folder_clicked();
     }
+    ImGui::SameLine();
+
+    const bool export_disabled = m_project_root.empty() ||
+                                 m_index->file_count() == 0;
+    ImGui::BeginDisabled(export_disabled);
+    if (ImGui::Button("Export Digest...")) {
+        ImGui::OpenPopup("##export_digest_popup");
+    }
+    ImGui::EndDisabled();
+
+    if (ImGui::BeginPopup("##export_digest_popup")) {
+        ImGui::TextDisabled("Choose format:");
+        ImGui::Separator();
+        if (ImGui::Button("JSON (full)", ImVec2(160.0F, 0.0F))) {
+            on_export_digest_clicked(DigestFormat::Json);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::Button("Markdown", ImVec2(160.0F, 0.0F))) {
+            on_export_digest_clicked(DigestFormat::Markdown);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::Button("Slim JSON", ImVec2(160.0F, 0.0F))) {
+            on_export_digest_clicked(DigestFormat::SlimJson);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     ImGui::SameLine();
     if (m_project_root.empty()) {
         ImGui::TextDisabled("(no folder loaded)");
@@ -309,6 +357,17 @@ void CodeMode::render_file_tree_panel()
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", m_project_root.string().c_str());
         }
+    }
+
+    // Last-export feedback line (success or error).
+    if (!m_last_export_path.empty()) {
+        ImGui::TextColored(
+            ImVec4(0.45F, 0.82F, 0.52F, 1.0F),
+            "exported: %s", m_last_export_path.c_str());
+    } else if (!m_last_export_error.empty()) {
+        ImGui::TextColored(
+            ImVec4(0.93F, 0.33F, 0.35F, 1.0F),
+            "export failed: %s", m_last_export_error.c_str());
     }
 
     ImGui::Separator();

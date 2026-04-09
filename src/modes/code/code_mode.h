@@ -12,6 +12,7 @@
 #include "core/context_bus.h"
 #include "core/mode.h"
 #include "modes/code/code_index.h"
+#include "modes/code/digest_exporter.h"
 #include "modes/code/file_tree_view.h"
 #include "modes/code/parser.h"
 #include "modes/code/symbol.h"
@@ -54,6 +55,7 @@ public:
 private:
     // Actions
     void on_open_folder_clicked();
+    void on_export_digest_clicked(DigestFormat format);
     void start_scan(const std::filesystem::path& root);
     void show_symbol(std::int64_t symbol_id);
     void show_file(std::int64_t file_id);
@@ -91,6 +93,10 @@ private:
     std::mutex  m_progress_mutex;
     std::size_t m_progress_scanned_files = 0;
     std::string m_progress_current_path;
+
+    // Last digest export outcome, shown briefly under the file tree.
+    std::string m_last_export_path;
+    std::string m_last_export_error;
 
     // Docking layout is rebuilt once on first render.
     bool m_dock_layout_built = false;

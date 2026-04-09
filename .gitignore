@@ -19,6 +19,14 @@ vectis
 vectis.exe
 vectis-data/
 
+# ImGui writes this next to the working directory on shutdown
+imgui.ini
+
+# Generated digests (Vectis produces these next to scanned projects)
+vectis-digest.json
+vectis-digest.md
+vectis-digest-slim.json
+
 # OS
 .DS_Store
 Thumbs.db
