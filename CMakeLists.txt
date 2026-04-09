@@ -153,7 +153,9 @@ function(vectis_add_ts_grammar stem repo_var subdir)
 endfunction()
 
 # --- Tree-sitter grammars ----------------------------------------------------
-# Download-only, for the same reason as tree-sitter core above.
+# Download-only, for the same reason as tree-sitter core above. Every
+# declaration is paired with a pinned SHA so fresh clones are reproducible.
+
 FetchContent_Declare(
     ts_python
     GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-python.git
@@ -165,6 +167,82 @@ if(NOT ts_python_POPULATED)
     FetchContent_Populate(ts_python)
 endif()
 vectis_add_ts_grammar(python ts_python "")
+
+FetchContent_Declare(
+    ts_javascript
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-javascript.git
+    # v0.23.1 (resolved 2026-04-09)
+    GIT_TAG        3a837b6f3658ca3618f2022f8707e29739c91364
+)
+FetchContent_GetProperties(ts_javascript)
+if(NOT ts_javascript_POPULATED)
+    FetchContent_Populate(ts_javascript)
+endif()
+vectis_add_ts_grammar(javascript ts_javascript "")
+
+FetchContent_Declare(
+    ts_typescript
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-typescript.git
+    # v0.23.2 (resolved 2026-04-09)
+    GIT_TAG        f975a621f4e7f532fe322e13c4f79495e0a7b2e7
+)
+FetchContent_GetProperties(ts_typescript)
+if(NOT ts_typescript_POPULATED)
+    FetchContent_Populate(ts_typescript)
+endif()
+# The TypeScript repo nests the parser sources under typescript/src; the
+# tsx parser (typescript-repo's tsx/src) is intentionally not wired —
+# .tsx files detect as TypeScript and parse with this grammar acceptably
+# for symbol extraction, which is all Step 2 needs.
+vectis_add_ts_grammar(typescript ts_typescript "typescript")
+
+FetchContent_Declare(
+    ts_c
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c.git
+    # v0.24.1 (resolved 2026-04-09)
+    GIT_TAG        7fa1be1b694b6e763686793d97da01f36a0e5c12
+)
+FetchContent_GetProperties(ts_c)
+if(NOT ts_c_POPULATED)
+    FetchContent_Populate(ts_c)
+endif()
+vectis_add_ts_grammar(c ts_c "")
+
+FetchContent_Declare(
+    ts_cpp
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
+    # v0.23.4 (resolved 2026-04-09)
+    GIT_TAG        f41e1a044c8a84ea9fa8577fdd2eab92ec96de02
+)
+FetchContent_GetProperties(ts_cpp)
+if(NOT ts_cpp_POPULATED)
+    FetchContent_Populate(ts_cpp)
+endif()
+vectis_add_ts_grammar(cpp ts_cpp "")
+
+FetchContent_Declare(
+    ts_rust
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-rust.git
+    # v0.24.2 (resolved 2026-04-09)
+    GIT_TAG        77a3747266f4d621d0757825e6b11edcbf991ca5
+)
+FetchContent_GetProperties(ts_rust)
+if(NOT ts_rust_POPULATED)
+    FetchContent_Populate(ts_rust)
+endif()
+vectis_add_ts_grammar(rust ts_rust "")
+
+FetchContent_Declare(
+    ts_java
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-java.git
+    # v0.23.5 (resolved 2026-04-09)
+    GIT_TAG        94703d5a6bed02b98e438d7cad1136c01a60ba2c
+)
+FetchContent_GetProperties(ts_java)
+if(NOT ts_java_POPULATED)
+    FetchContent_Populate(ts_java)
+endif()
+vectis_add_ts_grammar(java ts_java "")
 
 # --- portable-file-dialogs (header-only, download-only) ----------------------
 # We deliberately skip FetchContent_MakeAvailable() because the upstream
@@ -245,6 +323,12 @@ target_link_libraries(vectis_core PUBLIC
     pfd
     tree_sitter_lib
     ts_grammar_python
+    ts_grammar_javascript
+    ts_grammar_typescript
+    ts_grammar_c
+    ts_grammar_cpp
+    ts_grammar_rust
+    ts_grammar_java
     SDL2::SDL2
     OpenGL::GL
     ${VECTIS_SQLITE3_TARGET}
