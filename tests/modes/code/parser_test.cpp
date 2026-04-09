@@ -43,6 +43,11 @@ TEST(ParserTest, SupportsAllBuiltinLanguages)
     EXPECT_TRUE(parser->supports(Language::Cpp));
     EXPECT_TRUE(parser->supports(Language::Rust));
     EXPECT_TRUE(parser->supports(Language::Java));
+    EXPECT_TRUE(parser->supports(Language::CSharp));
+    EXPECT_TRUE(parser->supports(Language::Go));
+    EXPECT_TRUE(parser->supports(Language::Ruby));
+    EXPECT_TRUE(parser->supports(Language::Php));
+    EXPECT_TRUE(parser->supports(Language::Sql));
     EXPECT_FALSE(parser->supports(Language::Unknown));
 }
 
@@ -175,6 +180,141 @@ TEST(ParserTest, UnknownLanguageReturnsNoSymbols)
     auto parser = make_parser();
     const auto result = parser->parse_file(Language::Unknown, "def foo(): pass");
     EXPECT_TRUE(result.symbols.empty());
+}
+
+TEST(ParserTest, ExtractsCSharpClassesAndMethods)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+namespace MyApp.Services
+{
+    public interface IUserService
+    {
+        User FindById(string id);
+    }
+
+    public class UserService : IUserService
+    {
+        public User FindById(string id) { return null; }
+    }
+
+    public enum UserStatus
+    {
+        Active,
+        Inactive,
+    }
+}
+)";
+    const auto result = parser->parse_file(Language::CSharp, source);
+    EXPECT_TRUE(has_symbol(result.symbols, "IUserService", SymbolKind::Interface));
+    EXPECT_TRUE(has_symbol(result.symbols, "UserService",  SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "FindById",     SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "UserStatus",   SymbolKind::Enum));
+}
+
+TEST(ParserTest, ExtractsGoFunctionsMethodsAndTypes)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+package main
+
+type User struct {
+    ID   string
+    Name string
+}
+
+type Service interface {
+    Greet() string
+}
+
+func NewUser(id string) *User {
+    return &User{ID: id}
+}
+
+func (u *User) Greet() string {
+    return "hello, " + u.Name
+}
+)";
+    const auto result = parser->parse_file(Language::Go, source);
+    EXPECT_TRUE(has_symbol(result.symbols, "NewUser", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "Greet",   SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "User",    SymbolKind::Type));
+    EXPECT_TRUE(has_symbol(result.symbols, "Service", SymbolKind::Type));
+}
+
+TEST(ParserTest, ExtractsRubyClassesAndMethods)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+module Greetings
+  class Greeter
+    def initialize(name)
+      @name = name
+    end
+
+    def hello
+      "hello, #{@name}"
+    end
+  end
+end
+)";
+    const auto result = parser->parse_file(Language::Ruby, source);
+    EXPECT_TRUE(has_symbol(result.symbols, "Greetings",  SymbolKind::Namespace));
+    EXPECT_TRUE(has_symbol(result.symbols, "Greeter",    SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "initialize", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "hello",      SymbolKind::Method));
+}
+
+TEST(ParserTest, ExtractsPhpClassesAndFunctions)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(<?php
+
+namespace App\Services;
+
+interface UserRepository {
+    public function findById(string $id): ?User;
+}
+
+class EloquentUserRepository implements UserRepository {
+    public function findById(string $id): ?User {
+        return null;
+    }
+}
+
+function bootstrap(): void {
+}
+)";
+    const auto result = parser->parse_file(Language::Php, source);
+    EXPECT_TRUE(has_symbol(result.symbols, "UserRepository",          SymbolKind::Interface));
+    EXPECT_TRUE(has_symbol(result.symbols, "EloquentUserRepository",  SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "findById",                SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "bootstrap",               SymbolKind::Function));
+}
+
+TEST(ParserTest, ExtractsSqlTablesViewsAndFunctions)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+CREATE TABLE users (
+    id   SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE VIEW active_users AS
+    SELECT * FROM users WHERE active = true;
+
+CREATE OR REPLACE FUNCTION greet(target TEXT) RETURNS TEXT AS $$
+    SELECT 'hello, ' || target;
+$$ LANGUAGE SQL;
+)";
+    const auto result = parser->parse_file(Language::Sql, source);
+    // Lower bound: tree-sitter-sql's node types are more complex than
+    // the other grammars, so we just require at least one CREATE
+    // statement was recognized. If this ever drops to zero, tune the
+    // query in parser_queries.cpp.
+    EXPECT_GE(result.symbols.size(), 1U)
+        << "expected at least one CREATE-statement symbol from SQL grammar";
 }
 
 } // namespace

@@ -32,6 +32,11 @@ const TSLanguage* tree_sitter_c();
 const TSLanguage* tree_sitter_cpp();
 const TSLanguage* tree_sitter_rust();
 const TSLanguage* tree_sitter_java();
+const TSLanguage* tree_sitter_c_sharp();
+const TSLanguage* tree_sitter_go();
+const TSLanguage* tree_sitter_ruby();
+const TSLanguage* tree_sitter_php();
+const TSLanguage* tree_sitter_sql();
 }
 
 namespace vectis::modes::code {
@@ -128,7 +133,7 @@ std::size_t TreeSitterParser::register_builtin_languages()
         Language          lang;
         const TSLanguage* grammar;
     };
-    const std::array<Entry, 7> builtins = {{
+    const std::array<Entry, 12> builtins = {{
         {Language::Python,     tree_sitter_python()},
         {Language::JavaScript, tree_sitter_javascript()},
         {Language::TypeScript, tree_sitter_typescript()},
@@ -136,6 +141,11 @@ std::size_t TreeSitterParser::register_builtin_languages()
         {Language::Cpp,        tree_sitter_cpp()},
         {Language::Rust,       tree_sitter_rust()},
         {Language::Java,       tree_sitter_java()},
+        {Language::CSharp,     tree_sitter_c_sharp()},
+        {Language::Go,         tree_sitter_go()},
+        {Language::Ruby,       tree_sitter_ruby()},
+        {Language::Php,        tree_sitter_php()},
+        {Language::Sql,        tree_sitter_sql()},
     }};
 
     std::size_t registered = 0;

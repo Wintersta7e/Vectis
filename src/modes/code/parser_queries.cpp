@@ -60,6 +60,48 @@ constexpr std::string_view k_query_java = R"(
 (enum_declaration      name: (identifier) @name) @enum
 )";
 
+constexpr std::string_view k_query_csharp = R"(
+(class_declaration     name: (identifier) @name) @class
+(interface_declaration name: (identifier) @name) @interface
+(struct_declaration    name: (identifier) @name) @struct
+(enum_declaration      name: (identifier) @name) @enum
+(method_declaration    name: (identifier) @name) @method
+(namespace_declaration name: (identifier) @name) @namespace
+)";
+
+constexpr std::string_view k_query_go = R"(
+(function_declaration name: (identifier) @name) @function
+(method_declaration   name: (field_identifier) @name) @method
+(type_declaration
+  (type_spec name: (type_identifier) @name)) @type
+)";
+
+constexpr std::string_view k_query_ruby = R"(
+(method           name: (identifier) @name) @method
+(singleton_method name: (identifier) @name) @method
+(class            name: (constant) @name) @class
+(module           name: (constant) @name) @namespace
+)";
+
+constexpr std::string_view k_query_php = R"(
+(function_definition   name: (name) @name) @function
+(method_declaration    name: (name) @name) @method
+(class_declaration     name: (name) @name) @class
+(interface_declaration name: (name) @name) @interface
+(trait_declaration     name: (name) @name) @interface
+(enum_declaration      name: (name) @name) @enum
+)";
+
+// SQL — m-novikov's PostgreSQL-flavoured grammar exposes unnamed
+// `_identifier` children under create_* statements. The underscore rule
+// is hidden, so the tree actually holds either `identifier` or
+// `dotted_name` as the child — we accept both via a capture alternation.
+constexpr std::string_view k_query_sql = R"(
+(create_table_statement [(identifier) (dotted_name)] @name) @struct
+(create_view_statement  [(identifier) (dotted_name)] @name) @type
+(create_function_statement [(identifier) (dotted_name)] @name) @function
+)";
+
 } // namespace
 
 std::string_view query_for(Language language) noexcept
@@ -72,14 +114,11 @@ std::string_view query_for(Language language) noexcept
         case Language::Cpp:        return k_query_cpp;
         case Language::Rust:       return k_query_rust;
         case Language::Java:       return k_query_java;
-        // Queries for the remaining languages are added in the next
-        // commit; until then they fall through and the parser skips
-        // them (register_one() treats an empty query as "unsupported").
-        case Language::CSharp:     return {};
-        case Language::Go:         return {};
-        case Language::Ruby:       return {};
-        case Language::Php:        return {};
-        case Language::Sql:        return {};
+        case Language::CSharp:     return k_query_csharp;
+        case Language::Go:         return k_query_go;
+        case Language::Ruby:       return k_query_ruby;
+        case Language::Php:        return k_query_php;
+        case Language::Sql:        return k_query_sql;
         case Language::Unknown:    return {};
     }
     return {};
