@@ -146,6 +146,25 @@ namespace {
     return kind == SymbolKind::Function || kind == SymbolKind::Method;
 }
 
+/// True if `node` is (transitively) inside a `compound_statement`,
+/// i.e. it lives inside a function body rather than at namespace /
+/// translation-unit scope. Used to reject false-positive matches for
+/// local constructor-style declarations like
+/// `std::scoped_lock lock(m_mutex);` which tree-sitter-cpp
+/// represents as a `declaration` with a `function_declarator` child.
+[[nodiscard]] bool is_inside_function_body(TSNode node) noexcept
+{
+    TSNode parent = ts_node_parent(node);
+    while (!ts_node_is_null(parent)) {
+        const std::string_view type{ts_node_type(parent)};
+        if (type == "compound_statement") {
+            return true;
+        }
+        parent = ts_node_parent(parent);
+    }
+    return false;
+}
+
 /// Return the bytes of `node` as a freshly-allocated string, or an
 /// empty string if the node's range falls outside `content`.
 [[nodiscard]] std::string node_text(TSNode node, std::string_view content)
@@ -384,6 +403,7 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
         Symbol symbol;
         bool   has_name = false;
         bool   has_kind = false;
+        bool   skip_this_match = false;  // set for local-scope false positives
 
         for (std::uint16_t i = 0; i < match.capture_count; ++i) {
             const TSQueryCapture& capture       = match.captures[i];
@@ -409,9 +429,19 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
                     symbol.line_start = static_cast<int>(start_pt.row) + 1;
                     symbol.line_end   = static_cast<int>(end_pt.row) + 1;
 
-                    // Capture the node for post-match processing —
-                    // we can't call extract_signature yet because we
-                    // may not have seen the @name capture.
+                    // Reject local-scope declarations that look like
+                    // function declarations to tree-sitter but are
+                    // actually constructor-style variable decls (e.g.
+                    // `std::scoped_lock lock(m_mutex);` inside a
+                    // function body). These only affect the C/C++
+                    // `declaration` → `function` patterns.
+                    if (kind == SymbolKind::Function &&
+                        std::string_view{ts_node_type(capture.node)} == "declaration" &&
+                        is_inside_function_body(capture.node))
+                    {
+                        skip_this_match = true;
+                    }
+
                     if (kind_has_signature(kind)) {
                         symbol.signature = extract_signature(capture.node, content);
                     }
@@ -424,7 +454,7 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
             }
         }
 
-        if (has_name && has_kind && !symbol.name.empty()) {
+        if (has_name && has_kind && !symbol.name.empty() && !skip_this_match) {
             result.symbols.push_back(std::move(symbol));
         }
     }
