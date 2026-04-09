@@ -130,6 +130,7 @@ add_library(vectis_core STATIC
     src/core/context_bus.cpp
     src/core/log.cpp
     src/core/service_registry.cpp
+    src/core/task_queue.cpp
     src/platform/file_io.cpp
     src/platform/process.cpp
     src/ui/theme.cpp

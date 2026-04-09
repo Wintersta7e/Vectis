@@ -7,6 +7,7 @@ include(GoogleTest)
 add_executable(vectis_tests
     core/config_manager_test.cpp
     core/context_bus_test.cpp
+    core/task_queue_test.cpp
     platform/file_io_test.cpp
 )
 
