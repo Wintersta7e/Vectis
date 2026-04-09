@@ -146,6 +146,101 @@ namespace {
     return kind == SymbolKind::Function || kind == SymbolKind::Method;
 }
 
+/// Return the bytes of `node` as a freshly-allocated string, or an
+/// empty string if the node's range falls outside `content`.
+[[nodiscard]] std::string node_text(TSNode node, std::string_view content)
+{
+    const std::uint32_t start = ts_node_start_byte(node);
+    const std::uint32_t end   = ts_node_end_byte(node);
+    if (start > content.size() || end > content.size() || end < start) {
+        return {};
+    }
+    return std::string{content.substr(start, end - start)};
+}
+
+/// Walk an `enum_specifier` node and append the name of every
+/// enumerator (enum value) to `out`. Tree-sitter-cpp represents these
+/// as `enum_specifier > enumerator_list > enumerator > identifier`.
+void collect_enum_values(TSNode enum_node, std::string_view content,
+                         std::vector<std::string>& out)
+{
+    const std::uint32_t n = ts_node_named_child_count(enum_node);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const TSNode child = ts_node_named_child(enum_node, i);
+        if (std::string_view{ts_node_type(child)} != "enumerator_list") {
+            continue;
+        }
+        const std::uint32_t en = ts_node_named_child_count(child);
+        for (std::uint32_t j = 0; j < en; ++j) {
+            const TSNode enumerator = ts_node_named_child(child, j);
+            if (std::string_view{ts_node_type(enumerator)} != "enumerator") {
+                continue;
+            }
+            // An enumerator's first named child is its name identifier.
+            // Some enumerators have a following expression (for `= 1`);
+            // we want only the first identifier.
+            if (ts_node_named_child_count(enumerator) == 0) {
+                continue;
+            }
+            const TSNode name_node = ts_node_named_child(enumerator, 0);
+            if (std::string_view{ts_node_type(name_node)} == "identifier") {
+                std::string name = node_text(name_node, content);
+                if (!name.empty()) {
+                    out.push_back(std::move(name));
+                }
+            }
+        }
+        return;
+    }
+}
+
+/// Recursively walk a `field_declaration` subtree and append every
+/// bare `field_identifier` encountered to `out`. Skips anything
+/// nested inside a `function_declarator` (methods — those are
+/// reported via the method queries, not as members).
+void collect_field_identifiers_rec(TSNode node, std::string_view content,
+                                   std::vector<std::string>& out)
+{
+    const std::string_view type{ts_node_type(node)};
+    if (type == "function_declarator") {
+        return;
+    }
+    if (type == "field_identifier") {
+        std::string name = node_text(node, content);
+        if (!name.empty()) {
+            out.push_back(std::move(name));
+        }
+        return;
+    }
+    const std::uint32_t n = ts_node_named_child_count(node);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        collect_field_identifiers_rec(ts_node_named_child(node, i), content, out);
+    }
+}
+
+/// Walk a `struct_specifier` node and append the name of every
+/// data-member field to `out`. Methods are deliberately skipped —
+/// they appear as separate symbols via the method query patterns.
+void collect_struct_fields(TSNode struct_node, std::string_view content,
+                           std::vector<std::string>& out)
+{
+    const std::uint32_t n = ts_node_named_child_count(struct_node);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const TSNode child = ts_node_named_child(struct_node, i);
+        if (std::string_view{ts_node_type(child)} != "field_declaration_list") {
+            continue;
+        }
+        const std::uint32_t fn = ts_node_named_child_count(child);
+        for (std::uint32_t j = 0; j < fn; ++j) {
+            const TSNode field = ts_node_named_child(child, j);
+            if (std::string_view{ts_node_type(field)} == "field_declaration") {
+                collect_field_identifiers_rec(field, content, out);
+            }
+        }
+        return;
+    }
+}
+
 } // namespace
 
 struct TreeSitterParser::Impl {
@@ -319,6 +414,11 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
                     // may not have seen the @name capture.
                     if (kind_has_signature(kind)) {
                         symbol.signature = extract_signature(capture.node, content);
+                    }
+                    if (kind == SymbolKind::Enum) {
+                        collect_enum_values(capture.node, content, symbol.members);
+                    } else if (kind == SymbolKind::Struct) {
+                        collect_struct_fields(capture.node, content, symbol.members);
                     }
                 }
             }

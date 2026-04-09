@@ -234,6 +234,121 @@ const std::string& default_name();
     EXPECT_TRUE(saw_make_buffer);
 }
 
+TEST(ParserTest, ExtractsEnumValuesAsMembers)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+namespace demo {
+enum class Color {
+    Red,
+    Green,
+    Blue,
+};
+
+enum Flavor {
+    Sweet = 1,
+    Salty = 2,
+    Umami = 3,
+};
+}  // namespace demo
+)";
+    const auto result = parser->parse_file(Language::Cpp, source);
+
+    bool saw_color = false;
+    bool saw_flavor = false;
+    for (const auto& sym : result.symbols) {
+        if (sym.kind != SymbolKind::Enum) {
+            continue;
+        }
+        if (sym.name == "Color") {
+            saw_color = true;
+            ASSERT_EQ(sym.members.size(), 3U);
+            EXPECT_EQ(sym.members[0], "Red");
+            EXPECT_EQ(sym.members[1], "Green");
+            EXPECT_EQ(sym.members[2], "Blue");
+        }
+        if (sym.name == "Flavor") {
+            saw_flavor = true;
+            ASSERT_EQ(sym.members.size(), 3U);
+            EXPECT_EQ(sym.members[0], "Sweet");
+            EXPECT_EQ(sym.members[1], "Salty");
+            EXPECT_EQ(sym.members[2], "Umami");
+        }
+    }
+    EXPECT_TRUE(saw_color);
+    EXPECT_TRUE(saw_flavor);
+}
+
+TEST(ParserTest, ExtractsStructFieldsAsMembers)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+struct Point {
+    int x;
+    int y;
+};
+
+struct User {
+    std::string id;
+    std::string name;
+    int         age;
+
+    // Methods on a struct should NOT appear as members.
+    std::string greeting() const;
+};
+)";
+    const auto result = parser->parse_file(Language::Cpp, source);
+
+    bool saw_point = false;
+    bool saw_user  = false;
+    for (const auto& sym : result.symbols) {
+        if (sym.kind != SymbolKind::Struct) {
+            continue;
+        }
+        if (sym.name == "Point") {
+            saw_point = true;
+            ASSERT_EQ(sym.members.size(), 2U);
+            EXPECT_EQ(sym.members[0], "x");
+            EXPECT_EQ(sym.members[1], "y");
+        }
+        if (sym.name == "User") {
+            saw_user = true;
+            // Three data members; `greeting()` is filtered out because
+            // it's a function_declarator inside the field_declaration.
+            ASSERT_EQ(sym.members.size(), 3U);
+            EXPECT_EQ(sym.members[0], "id");
+            EXPECT_EQ(sym.members[1], "name");
+            EXPECT_EQ(sym.members[2], "age");
+        }
+    }
+    EXPECT_TRUE(saw_point);
+    EXPECT_TRUE(saw_user);
+}
+
+TEST(ParserTest, ClassesDoNotReportMembers)
+{
+    // Classes have private state by default; exposing it would leak
+    // implementation details. The public surface is already captured
+    // via method symbols, so class `members` should remain empty.
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+class Widget {
+public:
+    Widget();
+    void render();
+private:
+    int m_width;
+    int m_height;
+};
+)";
+    const auto result = parser->parse_file(Language::Cpp, source);
+    for (const auto& sym : result.symbols) {
+        if (sym.kind == SymbolKind::Class && sym.name == "Widget") {
+            EXPECT_TRUE(sym.members.empty());
+        }
+    }
+}
+
 TEST(ParserTest, NonFunctionSymbolsHaveEmptySignature)
 {
     auto parser = make_parser();

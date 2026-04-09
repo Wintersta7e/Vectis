@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "modes/code/language.h"
 
@@ -62,18 +63,28 @@ struct FileEntry {
 /// One symbol extracted from a source file.
 ///
 /// `file_id` references `FileEntry::id`. Line numbers are 1-based to
-/// match what editors and error messages use. `signature` is optional
-/// — Step 2's parser leaves it empty; later steps will populate it
-/// from tree-sitter node byte ranges.
+/// match what editors and error messages use.
+///
+/// `signature` is populated for function and method kinds with the
+/// source text between the node start and the body (or trailing
+/// semicolon for declarations), whitespace-normalized. Empty for
+/// everything else.
+///
+/// `members` is populated for enum-like symbols (holding enumerator
+/// names) and plain-old-data struct symbols (holding public field
+/// names). Empty for classes (whose public surface is already
+/// exposed via their method symbols), for free functions, and for
+/// namespaces.
 struct Symbol {
-    std::int64_t id = 0;
-    std::int64_t file_id = 0;
-    std::string  name;
-    SymbolKind   kind = SymbolKind::Unknown;
-    int          line_start = 0;
-    int          line_end = 0;
-    std::int64_t parent_id = 0;   // 0 if top-level
-    std::string  signature;       // empty in Step 2
+    std::int64_t             id = 0;
+    std::int64_t             file_id = 0;
+    std::string              name;
+    SymbolKind               kind = SymbolKind::Unknown;
+    int                      line_start = 0;
+    int                      line_end = 0;
+    std::int64_t             parent_id = 0;   // 0 if top-level
+    std::string              signature;
+    std::vector<std::string> members;
 };
 
 } // namespace vectis::modes::code
