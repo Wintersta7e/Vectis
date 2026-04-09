@@ -14,6 +14,7 @@ add_executable(vectis_tests
     modes/code/dependency_resolver_test.cpp
     modes/code/digest_exporter_test.cpp
     modes/code/fixtures_test.cpp
+    modes/code/hotspot_detector_test.cpp
     modes/code/language_test.cpp
     modes/code/parser_test.cpp
     modes/code/scanner_test.cpp

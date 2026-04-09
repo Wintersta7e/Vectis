@@ -381,6 +381,7 @@ add_library(vectis_core STATIC
     src/modes/code/dependency_resolver.cpp
     src/modes/code/digest_exporter.cpp
     src/modes/code/file_tree_view.cpp
+    src/modes/code/hotspot_detector.cpp
     src/modes/code/language.cpp
     src/modes/code/parser.cpp
     src/modes/code/parser_queries.cpp
