@@ -12,6 +12,7 @@
 #include <tree_sitter/api.h>
 
 #include "core/log.h"
+#include "modes/code/complexity_analyzer.h"
 #include "modes/code/language.h"
 #include "modes/code/parser_queries.h"
 #include "modes/code/symbol.h"
@@ -473,6 +474,8 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
 
                     if (kind_has_signature(kind)) {
                         symbol.signature = extract_signature(capture.node, content);
+                        symbol.complexity = compute_cyclomatic_complexity(
+                            capture.node, language);
                     }
                     if (kind == SymbolKind::Enum) {
                         collect_enum_values(capture.node, content, symbol.members);
