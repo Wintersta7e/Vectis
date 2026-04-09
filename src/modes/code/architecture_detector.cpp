@@ -116,11 +116,23 @@ detect_architecture(const CodeIndex& index,
     }
 
     // --- Layered / MVC indicators ----------------------------------
-    // Any of controllers/, services/, repositories/, models/,
-    // domain/, handlers/, dao/, routes/ signals a layered design.
+    //
+    // Any of these top-level/second-level directory names signals a
+    // layered design. The list covers three patterns:
+    //   - Classic "controllers/services/repositories/models" layering
+    //   - Hexagonal / clean architecture ("adapters", "ports",
+    //     "domain", "infrastructure")
+    //   - Plugin / modular layering ("core", "modes", "plugins",
+    //     "ui", "platform") — this is the shape Vectis itself has
+    //     and which the original list was missing.
     const std::vector<std::string_view> layered_signals = {
+        // Classic layered
         "controllers", "services", "repositories", "models",
-        "domain", "handlers", "dao", "routes", "core", "platform"};
+        "domain", "handlers", "dao", "routes",
+        // Plugin / modular layering
+        "core", "modes", "plugins", "ui", "platform",
+        // Hexagonal / clean architecture
+        "adapters", "ports", "infrastructure", "infra", "engine"};
     std::size_t layered_matches = 0;
     std::string layered_reason  = "found: ";
     bool        first_match     = true;

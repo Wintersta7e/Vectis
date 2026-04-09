@@ -98,6 +98,47 @@ TEST(ArchitectureDetectorTest, Monorepo_DetectsPackagesPlusMultipleMains)
     EXPECT_GE(result.confidence, 80);
 }
 
+TEST(ArchitectureDetectorTest, PluginModularLayering_DetectedAsLayered)
+{
+    // Regression guard for the bug the Codex digest-review surfaced.
+    // Vectis's own src/ layout (core/ + modes/ + platform/ + ui/) is
+    // a plugin-modular layered architecture. Before this fix the
+    // detector only knew "core" and "platform" from the signal list
+    // and missed "modes" and "ui", bringing the match count below the
+    // threshold and mislabeling the project as Monolith.
+    CodeIndex idx;
+    add_file(idx, "core/app.cpp");
+    add_file(idx, "core/config_manager.cpp");
+    add_file(idx, "modes/code/code_mode.cpp");
+    add_file(idx, "modes/code/scanner.cpp");
+    add_file(idx, "platform/file_io.cpp");
+    add_file(idx, "ui/theme.cpp");
+    add_file(idx, "main.cpp");
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_EQ(result.label, ArchitectureLabel::Layered);
+    EXPECT_GE(result.confidence, 70);
+    EXPECT_NE(result.reasoning.find("core"),     std::string::npos);
+    EXPECT_NE(result.reasoning.find("modes"),    std::string::npos);
+    EXPECT_NE(result.reasoning.find("platform"), std::string::npos);
+    EXPECT_NE(result.reasoning.find("ui"),       std::string::npos);
+}
+
+TEST(ArchitectureDetectorTest, HexagonalArchitecture_DetectedAsLayered)
+{
+    // Hexagonal / clean architecture: adapters + ports + domain.
+    CodeIndex idx;
+    add_file(idx, "src/domain/user.rs",              Language::Rust);
+    add_file(idx, "src/adapters/http/handler.rs",    Language::Rust);
+    add_file(idx, "src/ports/user_repository.rs",    Language::Rust);
+    add_file(idx, "src/infrastructure/db.rs",        Language::Rust);
+    add_file(idx, "src/main.rs",                     Language::Rust);
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_EQ(result.label, ArchitectureLabel::Layered);
+    EXPECT_NE(result.reasoning.find("adapters"), std::string::npos);
+}
+
 TEST(ArchitectureDetectorTest, SmallProject_DefaultsToMonolith)
 {
     CodeIndex idx;
