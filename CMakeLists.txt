@@ -83,6 +83,89 @@ if(NOT tl-expected_FOUND)
     FetchContent_MakeAvailable(tl_expected)
 endif()
 
+# --- Tree-sitter core --------------------------------------------------------
+# Download only — upstream's CMakeLists.txt wants to invoke the tree-sitter
+# CLI tool to regenerate parsers from grammars, which we don't need and which
+# breaks our build with "TREE_SITTER_CLI-NOTFOUND". Compile the core
+# runtime ourselves from lib.c.
+FetchContent_Declare(
+    tree_sitter
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
+    # v0.25.9 (resolved 2026-04-09) — pinned SHA for reproducible clones.
+    GIT_TAG        a467ea8502d95562171f97953a6dc5b2a8622609
+)
+FetchContent_GetProperties(tree_sitter)
+if(NOT tree_sitter_POPULATED)
+    FetchContent_Populate(tree_sitter)
+endif()
+
+add_library(tree_sitter_lib STATIC
+    ${tree_sitter_SOURCE_DIR}/lib/src/lib.c
+)
+target_include_directories(tree_sitter_lib
+    PUBLIC  ${tree_sitter_SOURCE_DIR}/lib/include
+    PRIVATE ${tree_sitter_SOURCE_DIR}/lib/src
+)
+set_target_properties(tree_sitter_lib PROPERTIES
+    C_STANDARD     11
+    C_CLANG_TIDY   ""
+    CXX_CLANG_TIDY ""
+)
+if(MSVC)
+    target_compile_options(tree_sitter_lib PRIVATE /w)
+else()
+    target_compile_options(tree_sitter_lib PRIVATE -w)
+endif()
+
+# Reusable grammar-target helper. Given a stem name, the FetchContent
+# project variable, and an optional subdirectory inside the repo, builds
+# a static library ts_grammar_<stem> from parser.c (always) and
+# scanner.c/scanner.cc (whichever exists). All grammar targets get
+# warnings silenced and clang-tidy disabled — the generated parser.c
+# sources routinely fail every strict check Vectis enables.
+function(vectis_add_ts_grammar stem repo_var subdir)
+    if(subdir STREQUAL "")
+        set(src_dir ${${repo_var}_SOURCE_DIR}/src)
+    else()
+        set(src_dir ${${repo_var}_SOURCE_DIR}/${subdir}/src)
+    endif()
+
+    set(sources ${src_dir}/parser.c)
+    foreach(ext IN ITEMS c cc)
+        if(EXISTS ${src_dir}/scanner.${ext})
+            list(APPEND sources ${src_dir}/scanner.${ext})
+        endif()
+    endforeach()
+
+    add_library(ts_grammar_${stem} STATIC ${sources})
+    target_include_directories(ts_grammar_${stem}
+        PRIVATE ${src_dir} ${tree_sitter_SOURCE_DIR}/lib/include
+    )
+    set_target_properties(ts_grammar_${stem} PROPERTIES
+        C_CLANG_TIDY   ""
+        CXX_CLANG_TIDY ""
+    )
+    if(MSVC)
+        target_compile_options(ts_grammar_${stem} PRIVATE /w)
+    else()
+        target_compile_options(ts_grammar_${stem} PRIVATE -w)
+    endif()
+endfunction()
+
+# --- Tree-sitter grammars ----------------------------------------------------
+# Download-only, for the same reason as tree-sitter core above.
+FetchContent_Declare(
+    ts_python
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-python.git
+    # v0.23.6 (resolved 2026-04-09)
+    GIT_TAG        bffb65a8cfe4e46290331dfef0dbf0ef3679de11
+)
+FetchContent_GetProperties(ts_python)
+if(NOT ts_python_POPULATED)
+    FetchContent_Populate(ts_python)
+endif()
+vectis_add_ts_grammar(python ts_python "")
+
 # --- portable-file-dialogs (header-only, download-only) ----------------------
 # We deliberately skip FetchContent_MakeAvailable() because the upstream
 # CMakeLists would add example/demo targets to our build.
@@ -160,6 +243,8 @@ target_include_directories(vectis_core PUBLIC
 target_link_libraries(vectis_core PUBLIC
     imgui_lib
     pfd
+    tree_sitter_lib
+    ts_grammar_python
     SDL2::SDL2
     OpenGL::GL
     ${VECTIS_SQLITE3_TARGET}
