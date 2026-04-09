@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "modes/code/dependency.h"
 #include "modes/code/symbol.h"
 
 namespace vectis::modes::code {
@@ -45,8 +46,13 @@ public:
     /// already exist in the index.
     void add_symbols(std::span<const Symbol> symbols);
 
-    /// Drop every file and symbol. Safe to call from any thread as
-    /// long as no mutation is in flight.
+    /// Register one dependency edge. Called by the dependency
+    /// resolver after a scan completes. Updates both the outgoing and
+    /// incoming indexes for O(1) later lookup.
+    void add_dependency(Dependency dep);
+
+    /// Drop every file, symbol, and dependency. Safe to call from any
+    /// thread as long as no mutation is in flight.
     void clear();
 
     // ----- Queries (reader thread) ------------------------------------
@@ -65,6 +71,18 @@ public:
     [[nodiscard]] std::vector<Symbol>
     search_symbols(std::string_view query, std::size_t limit = 500) const;
 
+    /// Outgoing edges for the given file (what this file depends on).
+    [[nodiscard]] std::vector<Dependency>
+    dependencies_of(std::int64_t file_id) const;
+
+    /// Incoming edges for the given file (what depends on this file).
+    [[nodiscard]] std::vector<Dependency>
+    dependents_of(std::int64_t file_id) const;
+
+    /// Snapshot of every dependency edge in the project.
+    [[nodiscard]] std::vector<Dependency>
+    all_dependencies() const;
+
     // ----- Stats (lock-free atomic reads) -----------------------------
 
     [[nodiscard]] std::size_t file_count() const noexcept
@@ -81,14 +99,27 @@ public:
     /// `Unknown`). Read from a bitmask so it's always O(1).
     [[nodiscard]] std::size_t language_count() const noexcept;
 
+    /// Total number of dependency edges registered.
+    [[nodiscard]] std::size_t dependency_count() const noexcept
+    {
+        return m_dependency_count.load(std::memory_order_acquire);
+    }
+
 private:
     mutable std::shared_mutex m_mutex;
     std::vector<FileEntry>    m_files;   // index == file_id - 1
     std::vector<Symbol>       m_symbols;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_by_file;
 
+    // Dependency graph — edges are stored once in `m_dependencies`
+    // and indexed twice (by source and target) for O(1) lookup.
+    std::vector<Dependency>                                    m_dependencies;
+    std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_outgoing;
+    std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_incoming;
+
     std::atomic<std::size_t>   m_file_count{0};
     std::atomic<std::size_t>   m_symbol_count{0};
+    std::atomic<std::size_t>   m_dependency_count{0};
     std::atomic<std::uint32_t> m_language_bits{0};
     std::int64_t               m_next_symbol_id = 1;
 };

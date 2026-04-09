@@ -75,6 +75,11 @@ struct FileEntry {
 /// names). Empty for classes (whose public surface is already
 /// exposed via their method symbols), for free functions, and for
 /// namespaces.
+///
+/// `complexity` holds the cyclomatic complexity for Function and
+/// Method kinds — 1 for a straight-line function, incrementing for
+/// each decision point (if/while/for/case/&&/||/?:). Zero for every
+/// non-function kind.
 struct Symbol {
     std::int64_t             id = 0;
     std::int64_t             file_id = 0;
@@ -85,6 +90,7 @@ struct Symbol {
     std::int64_t             parent_id = 0;   // 0 if top-level
     std::string              signature;
     std::vector<std::string> members;
+    int                      complexity = 0;
 };
 
 } // namespace vectis::modes::code

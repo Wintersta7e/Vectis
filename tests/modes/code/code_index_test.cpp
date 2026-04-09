@@ -8,12 +8,14 @@
 
 #include <gtest/gtest.h>
 
+#include "modes/code/dependency.h"
 #include "modes/code/language.h"
 #include "modes/code/symbol.h"
 
 namespace {
 
 using vectis::modes::code::CodeIndex;
+using vectis::modes::code::Dependency;
 using vectis::modes::code::FileEntry;
 using vectis::modes::code::Language;
 using vectis::modes::code::Symbol;
@@ -150,6 +152,64 @@ TEST(CodeIndexTest, Clear_ResetsEverything)
     // After clear, new ids start from 1 again.
     const auto fid = idx.add_file(make_file("fresh.py", Language::Python));
     EXPECT_EQ(fid, 1);
+}
+
+TEST(CodeIndexTest, Dependencies_RoundTripOutgoingAndIncoming)
+{
+    CodeIndex idx;
+    const auto fa = idx.add_file(make_file("a.cpp", Language::Cpp));
+    const auto fb = idx.add_file(make_file("b.cpp", Language::Cpp));
+    const auto fc = idx.add_file(make_file("c.cpp", Language::Cpp));
+
+    idx.add_dependency(Dependency{fa, fb, "b.h",        "include"});
+    idx.add_dependency(Dependency{fa, fc, "c.h",        "include"});
+    idx.add_dependency(Dependency{fb, fc, "c.h",        "include"});
+    // External — target 0
+    idx.add_dependency(Dependency{fa, 0,  "<vector>",   "include"});
+
+    EXPECT_EQ(idx.dependency_count(), 4U);
+
+    // fa depends on fb, fc, and one external.
+    const auto fa_deps = idx.dependencies_of(fa);
+    EXPECT_EQ(fa_deps.size(), 3U);
+
+    // fb depends on fc only.
+    const auto fb_deps = idx.dependencies_of(fb);
+    ASSERT_EQ(fb_deps.size(), 1U);
+    EXPECT_EQ(fb_deps[0].target_file_id, fc);
+
+    // fc has no outgoing deps.
+    EXPECT_TRUE(idx.dependencies_of(fc).empty());
+
+    // fc has two incoming (fa and fb).
+    const auto fc_dependents = idx.dependents_of(fc);
+    EXPECT_EQ(fc_dependents.size(), 2U);
+
+    // fb has one incoming (fa).
+    const auto fb_dependents = idx.dependents_of(fb);
+    ASSERT_EQ(fb_dependents.size(), 1U);
+    EXPECT_EQ(fb_dependents[0].source_file_id, fa);
+
+    // External dep does NOT appear in any dependents_of (target is 0).
+    EXPECT_TRUE(idx.dependents_of(0).empty());
+}
+
+TEST(CodeIndexTest, Clear_AlsoClearsDependencies)
+{
+    CodeIndex idx;
+    const std::int64_t fa = idx.add_file(make_file("a.cpp", Language::Cpp));
+    const std::int64_t fb = idx.add_file(make_file("b.cpp", Language::Cpp));
+    Dependency dep;
+    dep.source_file_id = fa;
+    dep.target_file_id = fb;
+    dep.import_string  = "b.h";
+    dep.kind           = "include";
+    idx.add_dependency(std::move(dep));
+    EXPECT_EQ(idx.dependency_count(), 1U);
+
+    idx.clear();
+    EXPECT_EQ(idx.dependency_count(), 0U);
+    EXPECT_TRUE(idx.all_dependencies().empty());
 }
 
 TEST(CodeIndexTest, LanguageCount_CountsDistinctLanguages)

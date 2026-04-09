@@ -95,14 +95,32 @@ void CodeIndex::add_symbols(std::span<const Symbol> symbols)
     m_symbol_count.store(m_symbols.size(), std::memory_order_release);
 }
 
+void CodeIndex::add_dependency(Dependency dep)
+{
+    const std::unique_lock lock(m_mutex);
+    const std::size_t index = m_dependencies.size();
+    const std::int64_t source = dep.source_file_id;
+    const std::int64_t target = dep.target_file_id;
+    m_dependencies.push_back(std::move(dep));
+    m_deps_outgoing[source].push_back(index);
+    if (target != 0) {
+        m_deps_incoming[target].push_back(index);
+    }
+    m_dependency_count.store(m_dependencies.size(), std::memory_order_release);
+}
+
 void CodeIndex::clear()
 {
     const std::unique_lock lock(m_mutex);
     m_files.clear();
     m_symbols.clear();
     m_by_file.clear();
+    m_dependencies.clear();
+    m_deps_outgoing.clear();
+    m_deps_incoming.clear();
     m_file_count.store(0, std::memory_order_release);
     m_symbol_count.store(0, std::memory_order_release);
+    m_dependency_count.store(0, std::memory_order_release);
     m_language_bits.store(0, std::memory_order_release);
     m_next_symbol_id = 1;
 }
@@ -173,6 +191,42 @@ std::size_t CodeIndex::language_count() const noexcept
 {
     const std::uint32_t bits = m_language_bits.load(std::memory_order_acquire);
     return static_cast<std::size_t>(std::popcount(bits));
+}
+
+std::vector<Dependency> CodeIndex::dependencies_of(std::int64_t file_id) const
+{
+    const std::shared_lock lock(m_mutex);
+    const auto it = m_deps_outgoing.find(file_id);
+    if (it == m_deps_outgoing.end()) {
+        return {};
+    }
+    std::vector<Dependency> out;
+    out.reserve(it->second.size());
+    for (const std::size_t idx : it->second) {
+        out.push_back(m_dependencies[idx]);
+    }
+    return out;
+}
+
+std::vector<Dependency> CodeIndex::dependents_of(std::int64_t file_id) const
+{
+    const std::shared_lock lock(m_mutex);
+    const auto it = m_deps_incoming.find(file_id);
+    if (it == m_deps_incoming.end()) {
+        return {};
+    }
+    std::vector<Dependency> out;
+    out.reserve(it->second.size());
+    for (const std::size_t idx : it->second) {
+        out.push_back(m_dependencies[idx]);
+    }
+    return out;
+}
+
+std::vector<Dependency> CodeIndex::all_dependencies() const
+{
+    const std::shared_lock lock(m_mutex);
+    return m_dependencies;
 }
 
 } // namespace vectis::modes::code
