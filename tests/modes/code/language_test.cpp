@@ -28,6 +28,15 @@ TEST(LanguageTest, DetectsKnownExtensions)
     EXPECT_EQ(detect_language("/tmp/foo.hpp"),    Language::Cpp);
     EXPECT_EQ(detect_language("/tmp/foo.rs"),     Language::Rust);
     EXPECT_EQ(detect_language("/tmp/foo.java"),   Language::Java);
+    EXPECT_EQ(detect_language("/tmp/foo.cs"),     Language::CSharp);
+    EXPECT_EQ(detect_language("/tmp/foo.go"),     Language::Go);
+    EXPECT_EQ(detect_language("/tmp/foo.rb"),     Language::Ruby);
+    EXPECT_EQ(detect_language("/tmp/foo.php"),    Language::Php);
+    EXPECT_EQ(detect_language("/tmp/foo.phtml"),  Language::Php);
+    EXPECT_EQ(detect_language("/tmp/foo.sql"),    Language::Sql);
+    EXPECT_EQ(detect_language("/tmp/foo.ddl"),    Language::Sql);
+    EXPECT_EQ(detect_language("/tmp/foo.pks"),    Language::Sql);
+    EXPECT_EQ(detect_language("/tmp/foo.pkb"),    Language::Sql);
 }
 
 TEST(LanguageTest, DetectionIsCaseInsensitive)
@@ -56,6 +65,11 @@ TEST(LanguageTest, NameMatchesEnum)
     EXPECT_EQ(language_name(Language::Cpp),        "C++");
     EXPECT_EQ(language_name(Language::Rust),       "Rust");
     EXPECT_EQ(language_name(Language::Java),       "Java");
+    EXPECT_EQ(language_name(Language::CSharp),     "C#");
+    EXPECT_EQ(language_name(Language::Go),         "Go");
+    EXPECT_EQ(language_name(Language::Ruby),       "Ruby");
+    EXPECT_EQ(language_name(Language::Php),        "PHP");
+    EXPECT_EQ(language_name(Language::Sql),        "SQL");
     EXPECT_EQ(language_name(Language::Unknown),    "Unknown");
 }
 

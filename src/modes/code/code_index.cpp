@@ -41,6 +41,11 @@ namespace {
         case Language::Cpp:        return 1U << 4U;
         case Language::Rust:       return 1U << 5U;
         case Language::Java:       return 1U << 6U;
+        case Language::CSharp:     return 1U << 7U;
+        case Language::Go:         return 1U << 8U;
+        case Language::Ruby:       return 1U << 9U;
+        case Language::Php:        return 1U << 10U;
+        case Language::Sql:        return 1U << 11U;
         case Language::Unknown:    return 0U;
     }
     return 0U;

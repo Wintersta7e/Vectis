@@ -10,10 +10,10 @@ namespace vectis::modes::code {
 
 /// Source languages Vectis knows how to detect and parse.
 ///
-/// Step 2 supports the seven grammars wired through CMake: Python,
-/// JavaScript (incl. `.jsx`), TypeScript (incl. `.tsx`), C, C++, Rust,
-/// and Java. All other languages fall into `Unknown` and are skipped
-/// by the scanner.
+/// Step 2 ships with twelve built-in grammars wired through CMake:
+/// Python, JavaScript (incl. `.jsx`), TypeScript (incl. `.tsx`), C,
+/// C++, Rust, Java, C#, Go, Ruby, PHP, and SQL. All other languages
+/// fall into `Unknown` and are skipped by the scanner.
 enum class Language : std::uint8_t {
     Unknown = 0,
     Python,
@@ -23,11 +23,16 @@ enum class Language : std::uint8_t {
     Cpp,
     Rust,
     Java,
+    CSharp,
+    Go,
+    Ruby,
+    Php,
+    Sql,
 };
 
 /// Count of real language entries (excludes `Unknown`). Handy for
 /// sizing bitmasks and arrays.
-inline constexpr std::size_t k_language_count = 7;
+inline constexpr std::size_t k_language_count = 12;
 
 /// Detect language from a file's extension.
 ///

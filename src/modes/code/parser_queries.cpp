@@ -72,6 +72,14 @@ std::string_view query_for(Language language) noexcept
         case Language::Cpp:        return k_query_cpp;
         case Language::Rust:       return k_query_rust;
         case Language::Java:       return k_query_java;
+        // Queries for the remaining languages are added in the next
+        // commit; until then they fall through and the parser skips
+        // them (register_one() treats an empty query as "unsupported").
+        case Language::CSharp:     return {};
+        case Language::Go:         return {};
+        case Language::Ruby:       return {};
+        case Language::Php:        return {};
+        case Language::Sql:        return {};
         case Language::Unknown:    return {};
     }
     return {};
