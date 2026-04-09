@@ -308,6 +308,8 @@ add_library(vectis_core STATIC
     src/core/service_registry.cpp
     src/core/task_queue.cpp
     src/modes/code/code_index.cpp
+    src/modes/code/code_mode.cpp
+    src/modes/code/file_tree_view.cpp
     src/modes/code/language.cpp
     src/modes/code/parser.cpp
     src/modes/code/parser_queries.cpp
