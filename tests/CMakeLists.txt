@@ -10,6 +10,7 @@ add_executable(vectis_tests
     core/task_queue_test.cpp
     modes/code/code_index_test.cpp
     modes/code/language_test.cpp
+    modes/code/parser_test.cpp
     platform/file_io_test.cpp
 )
 
