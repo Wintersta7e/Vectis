@@ -244,6 +244,73 @@ if(NOT ts_java_POPULATED)
 endif()
 vectis_add_ts_grammar(java ts_java "")
 
+FetchContent_Declare(
+    ts_csharp
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-c-sharp.git
+    # v0.23.1 (resolved 2026-04-09)
+    GIT_TAG        362a8a41b265056592a0c3771664a21d23a71392
+)
+FetchContent_GetProperties(ts_csharp)
+if(NOT ts_csharp_POPULATED)
+    FetchContent_Populate(ts_csharp)
+endif()
+vectis_add_ts_grammar(csharp ts_csharp "")
+
+FetchContent_Declare(
+    ts_go
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-go.git
+    # v0.25.0 (resolved 2026-04-09)
+    GIT_TAG        6048bfc6e5238eaf062c2221bd934489c39fbb61
+)
+FetchContent_GetProperties(ts_go)
+if(NOT ts_go_POPULATED)
+    FetchContent_Populate(ts_go)
+endif()
+vectis_add_ts_grammar(go ts_go "")
+
+FetchContent_Declare(
+    ts_ruby
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-ruby.git
+    # v0.23.1 (resolved 2026-04-09)
+    GIT_TAG        71bd32fb7607035768799732addba884a37a6210
+)
+FetchContent_GetProperties(ts_ruby)
+if(NOT ts_ruby_POPULATED)
+    FetchContent_Populate(ts_ruby)
+endif()
+vectis_add_ts_grammar(ruby ts_ruby "")
+
+FetchContent_Declare(
+    ts_php
+    GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-php.git
+    # v0.24.2 (resolved 2026-04-09)
+    GIT_TAG        094172694b05589f8b394017d6821a07055c1a61
+)
+FetchContent_GetProperties(ts_php)
+if(NOT ts_php_POPULATED)
+    FetchContent_Populate(ts_php)
+endif()
+# tree-sitter-php nests the main parser under `php/src/`. There's also a
+# `php_only/` variant for pure PHP (no embedded HTML) which we skip —
+# the main grammar handles both regular .php and pure scripts.
+vectis_add_ts_grammar(php ts_php "php")
+
+FetchContent_Declare(
+    ts_sql
+    GIT_REPOSITORY https://github.com/m-novikov/tree-sitter-sql.git
+    # master @ 587f30d (resolved 2026-04-09). This fork has no tags but
+    # ships a pre-generated parser.c + scanner.cc (PostgreSQL dialect,
+    # which handles Oracle PL/SQL top-level CREATE statements well
+    # enough for symbol extraction). DerekStride's fork requires running
+    # `tree-sitter generate` and so can't be used via FetchContent alone.
+    GIT_TAG        587f30d184b058450be2a2330878210c5f33b3f9
+)
+FetchContent_GetProperties(ts_sql)
+if(NOT ts_sql_POPULATED)
+    FetchContent_Populate(ts_sql)
+endif()
+vectis_add_ts_grammar(sql ts_sql "")
+
 # --- portable-file-dialogs (header-only, download-only) ----------------------
 # We deliberately skip FetchContent_MakeAvailable() because the upstream
 # CMakeLists would add example/demo targets to our build.
@@ -336,6 +403,11 @@ target_link_libraries(vectis_core PUBLIC
     ts_grammar_cpp
     ts_grammar_rust
     ts_grammar_java
+    ts_grammar_csharp
+    ts_grammar_go
+    ts_grammar_ruby
+    ts_grammar_php
+    ts_grammar_sql
     SDL2::SDL2
     OpenGL::GL
     ${VECTIS_SQLITE3_TARGET}
