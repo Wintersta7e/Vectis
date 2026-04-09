@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -17,7 +18,11 @@
 
 #include "core/log.h"
 #include "core/result.h"
+#include "modes/code/architecture_detector.h"
 #include "modes/code/code_index.h"
+#include "modes/code/dependency.h"
+#include "modes/code/dependency_graph.h"
+#include "modes/code/hotspot_detector.h"
 #include "modes/code/language.h"
 #include "modes/code/symbol.h"
 #include "platform/file_io.h"
@@ -119,10 +124,128 @@ constexpr const char* k_vectis_version = "0.1.0";
             // `enum` symbols, public field names for `struct` symbols.
             symbol_node["members"] = sym.members;
         }
+        if (sym.complexity > 0) {
+            symbol_node["complexity"] = sym.complexity;
+        }
         symbols_array.push_back(std::move(symbol_node));
     }
     node["symbols"] = std::move(symbols_array);
 
+    return node;
+}
+
+/// Map a file_id to its relative path using a precomputed lookup.
+/// Used by the dep-graph and hotspot serializers so we don't
+/// re-walk the file list on every lookup.
+using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
+
+[[nodiscard]] FileIdToPath build_file_id_to_path(
+    const std::vector<FileEntry>& files)
+{
+    FileIdToPath out;
+    out.reserve(files.size());
+    for (const FileEntry& file : files) {
+        out.emplace(file.id, file.path_relative.generic_string());
+    }
+    return out;
+}
+
+[[nodiscard]] std::string path_for(
+    const FileIdToPath& lookup, std::int64_t file_id)
+{
+    const auto it = lookup.find(file_id);
+    return it == lookup.end() ? std::string{} : it->second;
+}
+
+/// Build the dependency_graph JSON block.
+/// - `edges`: array of `{source, target, kind}` where source/target
+///   are relative paths. External (unresolved) edges use a target of
+///   null with the raw import_string carried on the edge.
+/// - `cycles`: array of arrays of paths, one per detected cycle.
+/// - `stats`: totals for quick scanning.
+[[nodiscard]] nlohmann::json build_dependency_graph_json(
+    const CodeIndex&         index,
+    const FileIdToPath&      lookup,
+    bool                     include_externals)
+{
+    nlohmann::json graph;
+    nlohmann::json edges_array = nlohmann::json::array();
+
+    std::size_t internal_count = 0;
+    std::size_t external_count = 0;
+
+    for (const Dependency& dep : index.all_dependencies()) {
+        if (dep.target_file_id == 0) {
+            ++external_count;
+            if (!include_externals) {
+                continue;
+            }
+            nlohmann::json edge;
+            edge["source"]         = path_for(lookup, dep.source_file_id);
+            edge["target"]         = nullptr;
+            edge["target_external"] = dep.import_string;
+            edge["kind"]           = dep.kind;
+            edges_array.push_back(std::move(edge));
+        } else {
+            ++internal_count;
+            nlohmann::json edge;
+            edge["source"] = path_for(lookup, dep.source_file_id);
+            edge["target"] = path_for(lookup, dep.target_file_id);
+            edge["kind"]   = dep.kind;
+            edges_array.push_back(std::move(edge));
+        }
+    }
+    graph["edges"] = std::move(edges_array);
+
+    // Cycles — only emitted in the full format.
+    if (include_externals) {
+        nlohmann::json cycles_array = nlohmann::json::array();
+        for (const DependencyCycle& cycle : detect_cycles(index)) {
+            nlohmann::json cycle_json = nlohmann::json::array();
+            for (const std::int64_t id : cycle.file_ids) {
+                cycle_json.push_back(path_for(lookup, id));
+            }
+            cycles_array.push_back(std::move(cycle_json));
+        }
+        graph["cycles"] = std::move(cycles_array);
+    }
+
+    nlohmann::json stats;
+    stats["total_edges"]    = internal_count + external_count;
+    stats["internal_edges"] = internal_count;
+    stats["external_edges"] = external_count;
+    graph["stats"] = std::move(stats);
+
+    return graph;
+}
+
+[[nodiscard]] nlohmann::json build_hotspots_json(
+    const CodeIndex&     index,
+    const FileIdToPath&  lookup)
+{
+    nlohmann::json arr = nlohmann::json::array();
+    for (const Hotspot& h : detect_hotspots(index)) {
+        nlohmann::json node;
+        node["file"]     = path_for(lookup, h.file_id);
+        node["reason"]   = h.reason;
+        node["severity"] = h.severity;
+        if (h.symbol_id != 0) {
+            node["symbol_id"] = h.symbol_id;
+        }
+        arr.push_back(std::move(node));
+    }
+    return arr;
+}
+
+[[nodiscard]] nlohmann::json build_architecture_json(
+    const CodeIndex&                   index,
+    const std::filesystem::path&       project_root)
+{
+    const ArchitectureDescription desc = detect_architecture(index, project_root);
+    nlohmann::json node;
+    node["label"]      = std::string{architecture_label_name(desc.label)};
+    node["reasoning"]  = desc.reasoning;
+    node["confidence"] = desc.confidence;
     return node;
 }
 
@@ -133,25 +256,39 @@ constexpr const char* k_vectis_version = "0.1.0";
     const ExportOptions&  options,
     bool                  include_file_details)
 {
-    const std::vector<FileEntry> files = index.snapshot_files();
+    const std::vector<FileEntry> files  = index.snapshot_files();
+    const FileIdToPath           lookup = build_file_id_to_path(files);
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
     root["generated_at"]   = current_utc_rfc3339();
 
     nlohmann::json project;
-    project["name"]         = effective_project_name(options);
-    project["root"]         = options.project_root.generic_string();
-    project["file_count"]   = files.size();
-    project["symbol_count"] = index.symbol_count();
-    project["languages"]    = distinct_language_names(files);
-    root["project"]         = std::move(project);
+    project["name"]             = effective_project_name(options);
+    project["root"]             = options.project_root.generic_string();
+    project["file_count"]       = files.size();
+    project["symbol_count"]     = index.symbol_count();
+    project["dependency_count"] = index.dependency_count();
+    project["languages"]        = distinct_language_names(files);
+    root["project"]             = std::move(project);
 
     nlohmann::json files_array = nlohmann::json::array();
     for (const FileEntry& file : files) {
         files_array.push_back(file_to_json(file, index, include_file_details));
     }
     root["files"] = std::move(files_array);
+
+    // Dependency graph: full format includes externals + cycles;
+    // slim includes only resolved edges (no cycles, no externals).
+    root["dependency_graph"] =
+        build_dependency_graph_json(index, lookup, include_file_details);
+
+    // Hotspots and architecture are full-format-only — they're
+    // analytical summaries, not structural facts.
+    if (include_file_details) {
+        root["hotspots"]     = build_hotspots_json(index, lookup);
+        root["architecture"] = build_architecture_json(index, options.project_root);
+    }
 
     return root;
 }
@@ -174,6 +311,7 @@ constexpr const char* k_vectis_version = "0.1.0";
     out << "- Root: `" << options.project_root.generic_string() << "`\n";
     out << "- Files: " << files.size() << "\n";
     out << "- Symbols: " << index.symbol_count() << "\n";
+    out << "- Dependencies: " << index.dependency_count() << "\n";
     out << "- Languages: ";
     for (std::size_t i = 0; i < langs.size(); ++i) {
         if (i > 0) {
@@ -182,6 +320,64 @@ constexpr const char* k_vectis_version = "0.1.0";
         out << langs[i];
     }
     out << "\n\n";
+
+    // --- Architecture ---------------------------------------------
+    const ArchitectureDescription arch = detect_architecture(index, options.project_root);
+    out << "## Architecture\n\n";
+    out << "**" << architecture_label_name(arch.label) << "** "
+        << "(confidence " << static_cast<int>(arch.confidence) << "/100)  \n";
+    if (!arch.reasoning.empty()) {
+        out << "_" << arch.reasoning << "_\n";
+    }
+    out << "\n";
+
+    // --- Hotspots --------------------------------------------------
+    const auto hotspots = detect_hotspots(index);
+    out << "## Hotspots\n\n";
+    if (hotspots.empty()) {
+        out << "_(none — nothing crossed a complexity, size, or fan-out threshold)_\n\n";
+    } else {
+        out << "| Severity | File | Reason |\n";
+        out << "|---|---|---|\n";
+        const FileIdToPath lookup = build_file_id_to_path(files);
+        for (const auto& h : hotspots) {
+            out << "| " << h.severity
+                << " | `" << path_for(lookup, h.file_id) << "`"
+                << " | " << h.reason << " |\n";
+        }
+        out << "\n";
+    }
+
+    // --- Dependency graph ------------------------------------------
+    out << "## Dependency Graph\n\n";
+    {
+        const auto all_deps = index.all_dependencies();
+        std::size_t internal_count = 0;
+        std::size_t external_count = 0;
+        for (const auto& d : all_deps) {
+            if (d.target_file_id == 0) { ++external_count; } else { ++internal_count; }
+        }
+        const auto cycles = detect_cycles(index);
+        out << "- Edges: " << all_deps.size()
+            << " (" << internal_count << " internal, " << external_count << " external)\n";
+        out << "- Cycles: " << cycles.size() << "\n";
+        if (!cycles.empty()) {
+            const FileIdToPath lookup = build_file_id_to_path(files);
+            out << "\n**Detected cycles:**\n\n";
+            for (std::size_t i = 0; i < cycles.size(); ++i) {
+                out << (i + 1) << ". ";
+                const auto& file_ids = cycles[i].file_ids;
+                for (std::size_t j = 0; j < file_ids.size(); ++j) {
+                    if (j > 0) {
+                        out << " ↔ ";
+                    }
+                    out << "`" << path_for(lookup, file_ids[j]) << "`";
+                }
+                out << "\n";
+            }
+        }
+        out << "\n";
+    }
 
     out << "## Files\n\n";
     if (files.empty()) {

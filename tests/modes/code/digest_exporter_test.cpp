@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "modes/code/code_index.h"
+#include "modes/code/dependency.h"
 #include "modes/code/language.h"
 #include "modes/code/symbol.h"
 
@@ -19,6 +20,7 @@ namespace {
 using vectis::modes::code::build_digest_string;
 using vectis::modes::code::CodeIndex;
 using vectis::modes::code::default_output_path;
+using vectis::modes::code::Dependency;
 using vectis::modes::code::DigestFormat;
 using vectis::modes::code::ExportOptions;
 using vectis::modes::code::export_digest;
@@ -254,6 +256,74 @@ TEST(DigestExporterTest, DefaultOutputPath_ForEachFormat)
               root / "vectis-digest.md");
     EXPECT_EQ(default_output_path(root, DigestFormat::SlimJson),
               root / "vectis-digest-slim.json");
+}
+
+TEST(DigestExporterTest, Json_ContainsDependencyGraphAndHotspots)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    // Register a dependency so the graph isn't empty.
+    Dependency dep;
+    dep.source_file_id = 1;  // app.cpp
+    dep.target_file_id = 2;  // scanner.cpp
+    dep.import_string  = "scanner.h";
+    dep.kind           = "include";
+    index.add_dependency(std::move(dep));
+
+    const ExportOptions options = make_options(DigestFormat::Json, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    // dependency_graph block exists with the expected shape.
+    ASSERT_TRUE(parsed.contains("dependency_graph"));
+    const auto& graph = parsed["dependency_graph"];
+    ASSERT_TRUE(graph.contains("edges"));
+    ASSERT_TRUE(graph.contains("stats"));
+    ASSERT_TRUE(graph.contains("cycles"));
+    EXPECT_EQ(graph["stats"]["total_edges"], 1);
+    EXPECT_EQ(graph["stats"]["internal_edges"], 1);
+
+    // hotspots array exists (empty for this synthetic index).
+    ASSERT_TRUE(parsed.contains("hotspots"));
+    EXPECT_TRUE(parsed["hotspots"].is_array());
+
+    // architecture block exists.
+    ASSERT_TRUE(parsed.contains("architecture"));
+    EXPECT_TRUE(parsed["architecture"].contains("label"));
+    EXPECT_TRUE(parsed["architecture"].contains("confidence"));
+
+    // project block grew a dependency_count.
+    EXPECT_EQ(parsed["project"]["dependency_count"], 1);
+}
+
+TEST(DigestExporterTest, SlimJson_StaysSlim_NoHotspotsOrArchitecture)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    // Slim does NOT include hotspots or architecture (analytical
+    // summaries), but DOES include a lightweight dep graph.
+    EXPECT_FALSE(parsed.contains("hotspots"));
+    EXPECT_FALSE(parsed.contains("architecture"));
+    EXPECT_TRUE(parsed.contains("dependency_graph"));
+}
+
+TEST(DigestExporterTest, Markdown_ContainsDependencyGraphAndHotspotSections)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+
+    EXPECT_NE(content.find("## Architecture"),   std::string::npos);
+    EXPECT_NE(content.find("## Hotspots"),       std::string::npos);
+    EXPECT_NE(content.find("## Dependency Graph"), std::string::npos);
 }
 
 } // namespace
