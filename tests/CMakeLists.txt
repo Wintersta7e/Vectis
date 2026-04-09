@@ -9,6 +9,7 @@ add_executable(vectis_tests
     core/context_bus_test.cpp
     core/task_queue_test.cpp
     modes/code/code_index_test.cpp
+    modes/code/digest_exporter_test.cpp
     modes/code/fixtures_test.cpp
     modes/code/language_test.cpp
     modes/code/parser_test.cpp
