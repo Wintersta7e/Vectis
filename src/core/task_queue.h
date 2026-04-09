@@ -21,6 +21,11 @@ class TaskQueue; // forward declaration — `TaskQueue::submit` mints tokens.
 /// same token observe the same stop flag.
 class CancellationToken {
 public:
+    /// Default-construct a never-cancelled token. Useful in tests and
+    /// in call sites that want to invoke a cancellation-aware function
+    /// without exposing a real cancel channel.
+    CancellationToken() : m_flag(std::make_shared<std::atomic<bool>>(false)) {}
+
     /// True if any holder of this token has called `request_stop()`.
     [[nodiscard]] bool stop_requested() const noexcept
     {

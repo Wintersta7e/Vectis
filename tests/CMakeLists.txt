@@ -11,6 +11,7 @@ add_executable(vectis_tests
     modes/code/code_index_test.cpp
     modes/code/language_test.cpp
     modes/code/parser_test.cpp
+    modes/code/scanner_test.cpp
     platform/file_io_test.cpp
 )
 
