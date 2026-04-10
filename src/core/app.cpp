@@ -21,6 +21,7 @@
 #include "core/mode.h"
 #include "core/service_registry.h"
 #include "platform/file_io.h"
+#include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 #include "ui/theme.h"
 #include "ui/widgets.h"
@@ -192,6 +193,8 @@ bool App::initialize()
             return false;
         }
         m_impl->mark_stage(Stage_Storage);
+
+        m_impl->services->index().initialize(m_impl->services->storage());
     }
 
     // 5. SDL2 --------------------------------------------------------------

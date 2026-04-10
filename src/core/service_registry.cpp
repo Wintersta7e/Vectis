@@ -7,6 +7,7 @@
 #include "core/config_manager.h"
 #include "core/context_bus.h"
 #include "core/log.h"
+#include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 
 namespace vectis::core {
@@ -15,6 +16,7 @@ struct ServiceRegistry::Impl {
     ConfigManager              config;
     ContextBus                 context;
     services::StorageEngine    storage;
+    services::IndexEngine      index;
 };
 
 namespace {
@@ -56,7 +58,7 @@ services::AIEngine& ServiceRegistry::ai()
 
 services::IndexEngine& ServiceRegistry::index()
 {
-    abort_unwired("index");
+    return m_impl->index;
 }
 
 services::StorageEngine& ServiceRegistry::storage()
