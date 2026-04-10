@@ -20,6 +20,7 @@ add_executable(vectis_tests
     modes/code/parser_test.cpp
     modes/code/scanner_test.cpp
     platform/file_io_test.cpp
+    services/storage_engine_test.cpp
 )
 
 # Fixture test needs to find the sample projects in the source tree
