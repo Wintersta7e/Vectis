@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/hash.h"
 #include "core/log.h"
 #include "modes/code/code_index.h"
 #include "modes/code/dependency_resolver.h"
@@ -249,9 +250,10 @@ Scanner::run(const ScanConfig&                           config,
             file_entry.path_relative = path;
             ec.clear();
         }
-        file_entry.language   = language;
-        file_entry.size       = size;
-        file_entry.line_count = count_lines(content);
+        file_entry.language      = language;
+        file_entry.size          = size;
+        file_entry.line_count    = count_lines(content);
+        file_entry.content_hash  = vectis::core::fnv1a_hex(content);
         const auto last_write = entry.last_write_time(ec);
         if (!ec) {
             file_entry.last_modified = last_write;

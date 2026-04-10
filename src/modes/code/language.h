@@ -46,6 +46,10 @@ inline constexpr std::size_t k_language_count = 12;
 /// Short human-readable name for a language, e.g. "TypeScript".
 [[nodiscard]] std::string_view language_name(Language language) noexcept;
 
+/// Reverse of `language_name`: parses a string back to a Language.
+/// Returns `Language::Unknown` if the name is not recognized.
+[[nodiscard]] Language language_from_name(std::string_view name) noexcept;
+
 /// UI accent color for the language, used by the file tree to tint
 /// filenames or draw a small colored dot next to the entry.
 [[nodiscard]] ImVec4 language_color(Language language) noexcept;

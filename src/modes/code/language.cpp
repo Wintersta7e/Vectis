@@ -108,6 +108,23 @@ std::string_view language_name(Language language) noexcept
     return "Unknown";
 }
 
+Language language_from_name(std::string_view name) noexcept
+{
+    if (name == "Python")     return Language::Python;
+    if (name == "JavaScript") return Language::JavaScript;
+    if (name == "TypeScript") return Language::TypeScript;
+    if (name == "C")          return Language::C;
+    if (name == "C++")        return Language::Cpp;
+    if (name == "Rust")       return Language::Rust;
+    if (name == "Java")       return Language::Java;
+    if (name == "C#")         return Language::CSharp;
+    if (name == "Go")         return Language::Go;
+    if (name == "Ruby")       return Language::Ruby;
+    if (name == "PHP")        return Language::Php;
+    if (name == "SQL")        return Language::Sql;
+    return Language::Unknown;
+}
+
 ImVec4 language_color(Language language) noexcept
 {
     // Palette borrowed from common IDE/GitHub language colors.
