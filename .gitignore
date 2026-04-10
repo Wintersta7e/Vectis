@@ -41,6 +41,10 @@ vectis.toml
 # CLAUDE.md is local project instructions only
 CLAUDE.md
 
+# External project references (local-only)
+external-project-notes.txt
+tests/fixtures/code/sample-multimodule/
+
 # Internal planning docs (not for the repo)
 docs/design/
 docs/BUILD.md
