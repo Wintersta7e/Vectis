@@ -69,9 +69,14 @@ private:
     void refresh_filtered_symbols();
     void ensure_docking_layout(ImGuiID dockspace_id);
 
+    // Cache helpers
+    bool try_load_cache(const std::filesystem::path& root);
+    void persist_index(const std::filesystem::path& root);
+
     // Services (borrowed, owned by App)
-    vectis::core::ConfigManager* m_config = nullptr;
-    vectis::core::ContextBus*    m_bus    = nullptr;
+    vectis::core::ServiceRegistry* m_services = nullptr;
+    vectis::core::ConfigManager*   m_config   = nullptr;
+    vectis::core::ContextBus*      m_bus      = nullptr;
 
     // Owned
     std::unique_ptr<vectis::core::TaskQueue> m_task_queue;

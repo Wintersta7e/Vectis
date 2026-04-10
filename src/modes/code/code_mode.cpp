@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -26,10 +27,13 @@
 #include "modes/code/digest_exporter.h"
 #include "modes/code/language.h"
 #include "modes/code/parser.h"
+#include "modes/code/code_index_store.h"
 #include "modes/code/scanner.h"
 #include "modes/code/symbol.h"
 #include "platform/file_dialog.h"
 #include "platform/file_io.h"
+#include "services/index_engine/index_engine.h"
+#include "services/storage_engine/storage_engine.h"
 
 namespace vectis::modes::code {
 
@@ -63,8 +67,9 @@ CodeMode::~CodeMode() = default;
 
 void CodeMode::initialize(vectis::core::ServiceRegistry& services)
 {
-    m_config = &services.config();
-    m_bus    = &services.context();
+    m_services = &services;
+    m_config   = &services.config();
+    m_bus      = &services.context();
     VECTIS_LOG_INFO("CodeMode initialized");
 }
 
@@ -113,6 +118,74 @@ void CodeMode::on_export_digest_clicked(DigestFormat format)
     }
 }
 
+bool CodeMode::try_load_cache(const std::filesystem::path& root)
+{
+    if (m_services == nullptr) return false;
+    if (!has_cache_for(m_services->storage(), root)) return false;
+
+    auto result = load_index(m_services->storage(), *m_index);
+    if (!result) {
+        VECTIS_LOG_WARN("CodeMode: cache load failed: {}", result.error().message);
+        m_index->clear();
+        return false;
+    }
+
+    VECTIS_LOG_INFO(
+        "CodeMode: loaded from cache — {} files, {} symbols, {} deps",
+        m_index->file_count(), m_index->symbol_count(), m_index->dependency_count());
+
+    // Rebuild UI caches.
+    m_cached_files = m_index->snapshot_files();
+    m_tree_view.rebuild(m_cached_files);
+    m_dep_view.rebuild(*m_index);
+    refresh_filtered_symbols();
+
+    // Publish the indexed event so other modes (future) can react.
+    if (m_bus != nullptr) {
+        ScanSummary summary;
+        summary.file_count     = m_index->file_count();
+        summary.symbol_count   = m_index->symbol_count();
+        summary.language_count = m_index->language_count();
+        m_bus->publish("codebase.indexed", vectis::core::ContextData{summary});
+    }
+    return true;
+}
+
+void CodeMode::persist_index(const std::filesystem::path& root)
+{
+    if (m_services == nullptr) return;
+
+    CacheMetadata meta;
+    meta.project_root   = root;
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    meta.scan_timestamp = std::to_string(now);
+
+    auto r = save_index(m_services->storage(), *m_index, meta);
+    if (!r) {
+        VECTIS_LOG_ERROR("CodeMode: persist_index failed: {}", r.error().message);
+        return;
+    }
+
+    // Index file contents into FTS.
+    auto& idx_engine = m_services->index();
+    const auto files = m_index->snapshot_files();
+    for (const auto& file : files) {
+        const std::filesystem::path full = root / file.path_relative;
+        auto content = vectis::platform::read_file(full);
+        if (content) {
+            idx_engine.index_file(file.id, file.path_relative.string(), *content);
+        }
+    }
+    // Index symbols into FTS.
+    for (const auto& file : files) {
+        auto syms = m_index->symbols_in_file(file.id);
+        if (!syms.empty()) {
+            idx_engine.index_symbols(file.id, syms);
+        }
+    }
+}
+
 void CodeMode::start_scan(const std::filesystem::path& root)
 {
     // Bump the epoch so any in-flight scan exits on its next batch boundary.
@@ -136,6 +209,11 @@ void CodeMode::start_scan(const std::filesystem::path& root)
         m_progress_current_path.clear();
     }
 
+    // Try loading from cache first.
+    if (try_load_cache(root)) {
+        return; // Incremental scan added in commit 8.
+    }
+
     // Load exclude list from config (or defaults).
     std::vector<std::string> excludes_vec =
         m_config->get_string_array("code.exclude", k_default_excludes);
@@ -153,13 +231,14 @@ void CodeMode::start_scan(const std::filesystem::path& root)
     // destroyed while the task is running. But the task is cancelled
     // in shutdown() before m_task_queue is reset, so by contract the
     // pointers here outlive the task.
-    CodeIndex*               index_ptr = m_index.get();
-    vectis::core::ContextBus* bus_ptr  = m_bus;
-    auto                     epoch_ptr = &m_scan_epoch;
-    auto                     progress_mutex_ptr = &m_progress_mutex;
-    auto                     progress_count_ptr = &m_progress_scanned_files;
-    auto                     progress_path_ptr  = &m_progress_current_path;
-    auto                     running_ptr        = &m_scan_running;
+    CodeIndex*                      index_ptr    = m_index.get();
+    vectis::core::ContextBus*       bus_ptr      = m_bus;
+    vectis::core::ServiceRegistry*  services_ptr = m_services;
+    auto                            epoch_ptr    = &m_scan_epoch;
+    auto                            progress_mutex_ptr = &m_progress_mutex;
+    auto                            progress_count_ptr = &m_progress_scanned_files;
+    auto                            progress_path_ptr  = &m_progress_current_path;
+    auto                            running_ptr        = &m_scan_running;
 
     ScanConfig cfg;
     cfg.root              = root;
@@ -169,6 +248,7 @@ void CodeMode::start_scan(const std::filesystem::path& root)
     m_task_queue->submit([cfg,
                           index_ptr,
                           bus_ptr,
+                          services_ptr,
                           epoch_ptr,
                           progress_mutex_ptr,
                           progress_count_ptr,
@@ -205,6 +285,36 @@ void CodeMode::start_scan(const std::filesystem::path& root)
                     "Scan failed: [{}] {}",
                     vectis::core::error_kind_to_string(err.kind),
                     err.message);
+            }
+        } else if (services_ptr != nullptr) {
+            // Persist the index to SQLite and index into FTS.
+            CacheMetadata meta;
+            meta.project_root   = cfg.root;
+            const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            meta.scan_timestamp = std::to_string(now);
+
+            auto save_r = save_index(services_ptr->storage(), *index_ptr, meta);
+            if (!save_r) {
+                VECTIS_LOG_ERROR("Persist after scan failed: {}", save_r.error().message);
+            } else {
+                // Index file contents into FTS.
+                const auto files = index_ptr->snapshot_files();
+                for (const auto& file : files) {
+                    const std::filesystem::path full = cfg.root / file.path_relative;
+                    auto content = vectis::platform::read_file(full);
+                    if (content) {
+                        services_ptr->index().index_file(
+                            file.id, file.path_relative.string(), *content);
+                    }
+                }
+                // Index symbols into FTS.
+                for (const auto& file : files) {
+                    auto syms = index_ptr->symbols_in_file(file.id);
+                    if (!syms.empty()) {
+                        services_ptr->index().index_symbols(file.id, syms);
+                    }
+                }
             }
         }
         running_ptr->store(false, std::memory_order_release);
