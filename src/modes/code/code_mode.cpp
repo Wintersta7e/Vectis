@@ -232,9 +232,65 @@ void CodeMode::start_scan(const std::filesystem::path& root)
         m_progress_current_path.clear();
     }
 
-    // Try loading from cache first.
+    // Try loading from cache first. If successful, kick off an
+    // incremental scan to detect changes since the cache was written.
     if (try_load_cache(root)) {
-        return; // Incremental scan added in commit 8.
+        // Kick off incremental scan on the worker thread.
+        m_scan_running.store(true, std::memory_order_release);
+
+        CodeIndex*                      idx_ptr      = m_index.get();
+        vectis::core::ServiceRegistry*  svc_ptr      = m_services;
+        auto                            ep_ptr       = &m_scan_epoch;
+        auto                            pm_ptr       = &m_progress_mutex;
+        auto                            pc_ptr       = &m_progress_scanned_files;
+        auto                            pp_ptr       = &m_progress_current_path;
+        auto                            rn_ptr       = &m_scan_running;
+
+        // Load exclude list for incremental scan.
+        std::vector<std::string> excl =
+            m_config->get_string_array("code.exclude", k_default_excludes);
+        std::unordered_set<std::string> excl_set(excl.begin(), excl.end());
+
+        ScanConfig inc_cfg;
+        inc_cfg.root              = root;
+        inc_cfg.exclude_dir_names = std::move(excl_set);
+        inc_cfg.epoch             = new_epoch;
+
+        m_task_queue->submit([inc_cfg, idx_ptr, svc_ptr, ep_ptr,
+                              pm_ptr, pc_ptr, pp_ptr, rn_ptr]
+                             (const vectis::core::CancellationToken& token) {
+            TreeSitterParser parser;
+            parser.register_builtin_languages();
+
+            const auto on_progress = [&](const ScanProgress& progress) {
+                {
+                    const std::scoped_lock lock(*pm_ptr);
+                    *pc_ptr = progress.files_scanned;
+                    *pp_ptr = progress.current_path;
+                }
+            };
+
+            auto result = Scanner::run_incremental(
+                inc_cfg, *idx_ptr, parser, on_progress, token, *ep_ptr);
+
+            if (result) {
+                const auto& r = *result;
+                if (r.files_added + r.files_updated + r.files_deleted > 0 && svc_ptr != nullptr) {
+                    // Re-persist the index since something changed.
+                    CacheMetadata meta;
+                    meta.project_root   = inc_cfg.root;
+                    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+                    meta.scan_timestamp = std::to_string(now);
+                    (void)save_index(svc_ptr->storage(), *idx_ptr, meta);
+                }
+            } else if (result.error().kind != vectis::core::ErrorKind::Cancelled) {
+                VECTIS_LOG_ERROR("Incremental scan failed: {}", result.error().message);
+            }
+
+            rn_ptr->store(false, std::memory_order_release);
+        });
+        return;
     }
 
     // Load exclude list from config (or defaults).

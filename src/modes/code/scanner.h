@@ -41,6 +41,14 @@ struct ScanConfig {
     std::int64_t             epoch = 0;
 };
 
+/// Summary of an incremental scan (how many files were changed).
+struct IncrementalScanResult {
+    std::size_t files_added     = 0;
+    std::size_t files_updated   = 0;
+    std::size_t files_deleted   = 0;
+    std::size_t files_unchanged = 0;
+};
+
 /// Runs a recursive directory walk on a background thread, detecting
 /// languages, parsing source files with `TreeSitterParser`, and
 /// populating a `CodeIndex`. Designed to be invoked as a single-shot
@@ -87,6 +95,18 @@ public:
         const CompletionCallback&                   on_complete,
         const vectis::core::CancellationToken&      cancel_token,
         const std::atomic<std::int64_t>&            current_epoch);
+
+    /// Incremental scan: walks the directory, compares content hashes
+    /// against the existing index, and re-parses only changed/new files.
+    /// Deleted files are removed from the index. Dependencies are
+    /// re-resolved after all changes are applied.
+    [[nodiscard]] static vectis::core::Result<IncrementalScanResult>
+    run_incremental(const ScanConfig&                      config,
+                    CodeIndex&                             index,
+                    TreeSitterParser&                      parser,
+                    const ProgressCallback&                on_progress,
+                    const vectis::core::CancellationToken& cancel_token,
+                    const std::atomic<std::int64_t>&       current_epoch);
 };
 
 } // namespace vectis::modes::code

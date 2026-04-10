@@ -227,4 +227,47 @@ TEST(CodeIndexTest, LanguageCount_CountsDistinctLanguages)
         << "Unknown should not contribute to the language count";
 }
 
+TEST(CodeIndexTest, RemoveFile_ClearsSymbolsAndDeps)
+{
+    CodeIndex idx;
+    const auto fa = idx.add_file(make_file("a.cpp", Language::Cpp));
+    const auto fb = idx.add_file(make_file("b.cpp", Language::Cpp));
+
+    const std::array<Symbol, 2> syms = {
+        make_symbol(fa, "func_a", SymbolKind::Function),
+        make_symbol(fa, "func_a2", SymbolKind::Function),
+    };
+    idx.add_symbols(syms);
+
+    const std::array<Symbol, 1> syms_b = {
+        make_symbol(fb, "func_b", SymbolKind::Function),
+    };
+    idx.add_symbols(syms_b);
+
+    Dependency dep;
+    dep.source_file_id = fa;
+    dep.target_file_id = fb;
+    dep.import_string  = "b.h";
+    dep.kind           = "include";
+    idx.add_dependency(std::move(dep));
+
+    EXPECT_EQ(idx.file_count(), 2U);
+    EXPECT_EQ(idx.symbol_count(), 3U);
+    EXPECT_EQ(idx.dependency_count(), 1U);
+
+    idx.remove_file(fa);
+
+    EXPECT_EQ(idx.file_count(), 1U);
+    // Symbols from file a should be gone.
+    EXPECT_TRUE(idx.symbols_in_file(fa).empty());
+    // File b's symbols should remain.
+    EXPECT_EQ(idx.symbols_in_file(fb).size(), 1U);
+    // Snapshot should only contain file b.
+    const auto files = idx.snapshot_files();
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0].path_relative, "b.cpp");
+    // The dependency from a→b should be gone.
+    EXPECT_TRUE(idx.all_dependencies().empty());
+}
+
 } // namespace

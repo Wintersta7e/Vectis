@@ -51,6 +51,10 @@ public:
     /// incoming indexes for O(1) later lookup.
     void add_dependency(Dependency dep);
 
+    /// Remove a single file and all its symbols and dependencies.
+    /// Used by incremental re-indexing when a file is deleted or updated.
+    void remove_file(std::int64_t file_id);
+
     /// Drop every file, symbol, and dependency. Safe to call from any
     /// thread as long as no mutation is in flight.
     void clear();

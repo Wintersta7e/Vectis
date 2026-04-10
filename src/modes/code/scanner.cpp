@@ -347,4 +347,250 @@ Scanner::run(const ScanConfig&                           config,
     return summary;
 }
 
+// ============================================================================
+// Incremental scan
+// ============================================================================
+
+vectis::core::Result<IncrementalScanResult>
+Scanner::run_incremental(const ScanConfig&                      config,
+                         CodeIndex&                             index,
+                         TreeSitterParser&                      parser,
+                         const ProgressCallback&                on_progress,
+                         const vectis::core::CancellationToken& cancel_token,
+                         const std::atomic<std::int64_t>&       current_epoch)
+{
+    using vectis::core::ErrorKind;
+    using vectis::core::make_error;
+
+    VECTIS_LOG_INFO("Scanner: starting incremental scan of '{}'", config.root.string());
+
+    // Build a map of existing files: relative_path → (file_id, content_hash).
+    const auto existing_files = index.snapshot_files();
+    std::unordered_map<std::string, std::pair<std::int64_t, std::string>> path_to_info;
+    path_to_info.reserve(existing_files.size());
+    for (const auto& f : existing_files) {
+        path_to_info[f.path_relative.string()] = {f.id, f.content_hash};
+    }
+
+    // Track which existing paths were visited.
+    std::unordered_set<std::string> visited_paths;
+    visited_paths.reserve(existing_files.size());
+
+    IncrementalScanResult result;
+    std::size_t files_seen = 0;
+    auto last_publish = std::chrono::steady_clock::now();
+
+    // Imports collected for the dependency resolver pass.
+    std::vector<FileImports> per_file_imports;
+
+    const auto preemption_reason = [&]() -> std::string_view {
+        if (cancel_token.stop_requested()) return "cancelled by token";
+        if (current_epoch.load(std::memory_order_acquire) != config.epoch)
+            return "pre-empted by epoch bump";
+        return {};
+    };
+
+    const auto is_excluded_dir_name = [&](const std::filesystem::path& dir) {
+        return config.exclude_dir_names.find(dir.filename().string()) !=
+               config.exclude_dir_names.end();
+    };
+
+    std::error_code ec;
+    if (!std::filesystem::is_directory(config.root, ec) || ec) {
+        return make_error(ErrorKind::IoError, "scan root is not a directory", config.root.string());
+    }
+
+    using Iter = std::filesystem::recursive_directory_iterator;
+    const auto options = std::filesystem::directory_options::skip_permission_denied;
+
+    Iter it{};
+    try { it = Iter{config.root, options, ec}; }
+    catch (const std::exception& e) {
+        return make_error(ErrorKind::PlatformError,
+                          std::string{"recursive_directory_iterator threw: "} + e.what(),
+                          config.root.string());
+    }
+    if (ec) {
+        return make_error(ErrorKind::IoError,
+                          "recursive_directory_iterator init failed: " + ec.message(),
+                          config.root.string());
+    }
+
+    const Iter end_it{};
+    for (; it != end_it; ) {
+        if (const std::string_view reason = preemption_reason(); !reason.empty()) {
+            VECTIS_LOG_INFO("Scanner: incremental scan {}", reason);
+            return make_error(ErrorKind::Cancelled, std::string{reason}, config.root.string());
+        }
+
+        const std::filesystem::directory_entry& entry = *it;
+
+        if (entry.is_directory(ec)) {
+            if (is_excluded_dir_name(entry.path())) {
+                it.disable_recursion_pending();
+            }
+            try { it.increment(ec); } catch (...) { ec.clear(); break; }
+            if (ec) { ec.clear(); }
+            continue;
+        }
+
+        if (!entry.is_regular_file(ec) || ec) {
+            ec.clear();
+            try { it.increment(ec); } catch (...) { ec.clear(); break; }
+            continue;
+        }
+
+        const std::filesystem::path& path = entry.path();
+        const Language language = detect_language(path);
+        if (language == Language::Unknown) {
+            try { it.increment(ec); } catch (...) { ec.clear(); break; }
+            continue;
+        }
+
+        const std::uint64_t size = entry.file_size(ec);
+        if (ec || size > k_max_file_size_bytes) {
+            ec.clear();
+            try { it.increment(ec); } catch (...) { ec.clear(); break; }
+            continue;
+        }
+
+        auto read_result = vectis::platform::read_file(path);
+        if (!read_result) {
+            try { it.increment(ec); } catch (...) { ec.clear(); break; }
+            continue;
+        }
+
+        const std::string& content = *read_result;
+        if (looks_binary(content)) {
+            try { it.increment(ec); } catch (...) { ec.clear(); break; }
+            continue;
+        }
+
+        const auto rel = std::filesystem::relative(path, config.root, ec);
+        if (ec) { ec.clear(); try { it.increment(ec); } catch (...) { break; } continue; }
+        const std::string rel_str = rel.string();
+
+        visited_paths.insert(rel_str);
+        const auto new_hash = vectis::core::fnv1a_hex(content);
+
+        const auto existing_it = path_to_info.find(rel_str);
+        if (existing_it != path_to_info.end()) {
+            if (existing_it->second.second == new_hash) {
+                // Unchanged — skip.
+                ++result.files_unchanged;
+
+                // Still collect imports for the resolver pass since
+                // dependencies may need re-resolution.
+                auto raw_imports = parser.extract_imports(language, content);
+                if (!raw_imports.empty()) {
+                    FileImports fi;
+                    fi.file_id       = existing_it->second.first;
+                    fi.language      = language;
+                    fi.relative_path = rel;
+                    fi.imports       = std::move(raw_imports);
+                    per_file_imports.push_back(std::move(fi));
+                }
+            } else {
+                // Modified — remove old, re-add.
+                index.remove_file(existing_it->second.first);
+
+                FileEntry file_entry;
+                file_entry.path_relative = rel;
+                file_entry.language      = language;
+                file_entry.size          = size;
+                file_entry.line_count    = count_lines(content);
+                file_entry.content_hash  = new_hash;
+                const auto last_write = entry.last_write_time(ec);
+                if (!ec) file_entry.last_modified = last_write;
+                ec.clear();
+
+                const std::int64_t file_id = index.add_file(std::move(file_entry));
+
+                auto parse_result = parser.parse_file(language, content);
+                if (!parse_result.symbols.empty()) {
+                    for (Symbol& sym : parse_result.symbols) sym.file_id = file_id;
+                    index.add_symbols(parse_result.symbols);
+                }
+
+                auto raw_imports = parser.extract_imports(language, content);
+                if (!raw_imports.empty()) {
+                    FileImports fi;
+                    fi.file_id       = file_id;
+                    fi.language      = language;
+                    fi.relative_path = rel;
+                    fi.imports       = std::move(raw_imports);
+                    per_file_imports.push_back(std::move(fi));
+                }
+
+                ++result.files_updated;
+            }
+        } else {
+            // New file — add.
+            FileEntry file_entry;
+            file_entry.path_relative = rel;
+            file_entry.language      = language;
+            file_entry.size          = size;
+            file_entry.line_count    = count_lines(content);
+            file_entry.content_hash  = new_hash;
+            const auto last_write = entry.last_write_time(ec);
+            if (!ec) file_entry.last_modified = last_write;
+            ec.clear();
+
+            const std::int64_t file_id = index.add_file(std::move(file_entry));
+
+            auto parse_result = parser.parse_file(language, content);
+            if (!parse_result.symbols.empty()) {
+                for (Symbol& sym : parse_result.symbols) sym.file_id = file_id;
+                index.add_symbols(parse_result.symbols);
+            }
+
+            auto raw_imports = parser.extract_imports(language, content);
+            if (!raw_imports.empty()) {
+                FileImports fi;
+                fi.file_id       = file_id;
+                fi.language      = language;
+                fi.relative_path = rel;
+                fi.imports       = std::move(raw_imports);
+                per_file_imports.push_back(std::move(fi));
+            }
+
+            ++result.files_added;
+        }
+
+        ++files_seen;
+
+        const auto now = std::chrono::steady_clock::now();
+        if (files_seen % k_progress_file_stride == 0 ||
+            (now - last_publish) >= k_progress_time_stride)
+        {
+            ScanProgress progress;
+            progress.files_scanned = files_seen;
+            progress.current_path  = rel_str;
+            if (on_progress) on_progress(progress);
+            last_publish = now;
+        }
+
+        try { it.increment(ec); } catch (...) { ec.clear(); break; }
+    }
+
+    // Detect deleted files.
+    for (const auto& [path_str, info] : path_to_info) {
+        if (visited_paths.find(path_str) == visited_paths.end()) {
+            index.remove_file(info.first);
+            ++result.files_deleted;
+        }
+    }
+
+    // Re-resolve dependencies with the updated file table.
+    if (!per_file_imports.empty()) {
+        resolve_all(index, config.root, per_file_imports);
+    }
+
+    VECTIS_LOG_INFO(
+        "Scanner: incremental scan done — {} added, {} updated, {} deleted, {} unchanged",
+        result.files_added, result.files_updated, result.files_deleted, result.files_unchanged);
+
+    return result;
+}
+
 } // namespace vectis::modes::code

@@ -109,6 +109,62 @@ void CodeIndex::add_dependency(Dependency dep)
     m_dependency_count.store(m_dependencies.size(), std::memory_order_release);
 }
 
+void CodeIndex::remove_file(std::int64_t file_id)
+{
+    const std::unique_lock lock(m_mutex);
+
+    // Null out the file entry (0-based index = file_id - 1).
+    const auto file_idx = static_cast<std::size_t>(file_id - 1);
+    bool found_file = false;
+    if (file_idx < m_files.size() && m_files[file_idx].id == file_id) {
+        m_files[file_idx].id = 0; // marks as removed
+        m_files[file_idx].path_relative.clear();
+        found_file = true;
+    }
+
+    // Remove symbols belonging to this file.
+    std::size_t symbols_removed = 0;
+    const auto by_file_it = m_by_file.find(file_id);
+    if (by_file_it != m_by_file.end()) {
+        for (const std::size_t sym_idx : by_file_it->second) {
+            m_symbols[sym_idx].file_id = 0; // marks as removed
+            ++symbols_removed;
+        }
+        m_by_file.erase(by_file_it);
+    }
+
+    // Remove dependencies where this file is source or target.
+    std::size_t deps_removed = 0;
+    auto remove_deps = [&](std::unordered_map<std::int64_t, std::vector<std::size_t>>& index,
+                           std::int64_t key) {
+        const auto it = index.find(key);
+        if (it != index.end()) {
+            for (const std::size_t dep_idx : it->second) {
+                m_dependencies[dep_idx].source_file_id = 0;
+                m_dependencies[dep_idx].target_file_id = 0;
+                ++deps_removed;
+            }
+            index.erase(it);
+        }
+    };
+    remove_deps(m_deps_outgoing, file_id);
+    remove_deps(m_deps_incoming, file_id);
+
+    // Update counters.
+    if (found_file) {
+        m_file_count.store(m_file_count.load(std::memory_order_relaxed) - 1,
+                           std::memory_order_release);
+    }
+    m_symbol_count.store(m_symbol_count.load(std::memory_order_relaxed) - symbols_removed,
+                         std::memory_order_release);
+    // deps_removed may double-count because outgoing+incoming can overlap,
+    // but the atomic counter is approximate — fine for status bar display.
+    const auto dep_count = m_dependency_count.load(std::memory_order_relaxed);
+    m_dependency_count.store(
+        dep_count > deps_removed ? dep_count - deps_removed : 0,
+        std::memory_order_release);
+}
+
 void CodeIndex::clear()
 {
     const std::unique_lock lock(m_mutex);
@@ -130,7 +186,12 @@ std::vector<FileEntry> CodeIndex::snapshot_files() const
     std::vector<FileEntry> copy;
     {
         const std::shared_lock lock(m_mutex);
-        copy = m_files;
+        copy.reserve(m_files.size());
+        for (const auto& f : m_files) {
+            if (f.id != 0) { // skip removed entries
+                copy.push_back(f);
+            }
+        }
     }
     std::sort(copy.begin(), copy.end(), [](const FileEntry& a, const FileEntry& b) {
         return a.path_relative < b.path_relative;
@@ -166,6 +227,7 @@ std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_
             // blank while the user clears the filter.
             matches.reserve(std::min(limit, m_symbols.size()));
             for (std::size_t i = 0; i < m_symbols.size() && matches.size() < limit; ++i) {
+                if (m_symbols[i].file_id == 0) continue; // skip removed
                 matches.push_back(m_symbols[i]);
             }
         } else {
@@ -173,6 +235,7 @@ std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_
                 if (matches.size() >= limit) {
                     break;
                 }
+                if (sym.file_id == 0) continue; // skip removed
                 const std::string lower_name = to_lower_ascii(sym.name);
                 if (lower_name.find(needle) != std::string::npos) {
                     matches.push_back(sym);
@@ -226,7 +289,14 @@ std::vector<Dependency> CodeIndex::dependents_of(std::int64_t file_id) const
 std::vector<Dependency> CodeIndex::all_dependencies() const
 {
     const std::shared_lock lock(m_mutex);
-    return m_dependencies;
+    std::vector<Dependency> out;
+    out.reserve(m_dependencies.size());
+    for (const auto& d : m_dependencies) {
+        if (d.source_file_id != 0) { // skip removed
+            out.push_back(d);
+        }
+    }
+    return out;
 }
 
 } // namespace vectis::modes::code
