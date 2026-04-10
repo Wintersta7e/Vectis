@@ -376,6 +376,7 @@ add_library(vectis_core STATIC
     src/core/task_queue.cpp
     src/modes/code/architecture_detector.cpp
     src/modes/code/code_index.cpp
+    src/modes/code/code_index_store.cpp
     src/modes/code/code_mode.cpp
     src/modes/code/complexity_analyzer.cpp
     src/modes/code/dep_view.cpp

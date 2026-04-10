@@ -10,6 +10,7 @@ add_executable(vectis_tests
     core/hash_test.cpp
     core/task_queue_test.cpp
     modes/code/architecture_detector_test.cpp
+    modes/code/code_index_store_test.cpp
     modes/code/code_index_test.cpp
     modes/code/complexity_analyzer_test.cpp
     modes/code/dependency_graph_test.cpp
