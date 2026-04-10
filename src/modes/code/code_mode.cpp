@@ -75,6 +75,12 @@ void CodeMode::initialize(vectis::core::ServiceRegistry& services)
 
 void CodeMode::shutdown()
 {
+    // Stop the file watcher first so it doesn't fire during teardown.
+    if (m_watcher) {
+        m_watcher->stop();
+        m_watcher.reset();
+    }
+
     // Cancel any running scan so the task queue joins cleanly.
     m_scan_epoch.fetch_add(1, std::memory_order_acq_rel);
     if (m_task_queue) {
@@ -148,6 +154,23 @@ bool CodeMode::try_load_cache(const std::filesystem::path& root)
         summary.language_count = m_index->language_count();
         m_bus->publish("codebase.indexed", vectis::core::ContextData{summary});
     }
+
+    // Start watching for changes.
+    m_watcher = std::make_unique<vectis::platform::FileWatcher>();
+    auto wr = m_watcher->watch(root,
+        [this](const std::filesystem::path& rel_path, vectis::platform::FileChangeType type) {
+            VECTIS_LOG_DEBUG(
+                "FileWatcher: {} {}",
+                type == vectis::platform::FileChangeType::Deleted ? "deleted" :
+                type == vectis::platform::FileChangeType::Created ? "created" : "modified",
+                rel_path.string());
+            // File change handling will be completed in commit 8 (incremental re-indexing).
+            (void)type;
+        });
+    if (!wr) {
+        VECTIS_LOG_WARN("FileWatcher: failed to start: {}", wr.error().message);
+    }
+
     return true;
 }
 
@@ -414,6 +437,11 @@ void CodeMode::ensure_docking_layout(ImGuiID dockspace_id)
 
 void CodeMode::render()
 {
+    // Poll the file watcher for pending events (no-op if not watching).
+    if (m_watcher) {
+        m_watcher->poll();
+    }
+
     // Drain any completed-scan state that the worker thread left for us.
     // We check the epoch + running flag cheaply every frame; only when
     // the UI snapshot is stale do we grab the index lock.

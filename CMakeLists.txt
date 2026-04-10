@@ -393,6 +393,7 @@ add_library(vectis_core STATIC
     src/services/storage_engine/storage_engine.cpp
     src/platform/file_dialog.cpp
     src/platform/file_io.cpp
+    src/platform/file_watcher.cpp
     src/platform/process.cpp
     src/ui/theme.cpp
     src/ui/widgets.cpp

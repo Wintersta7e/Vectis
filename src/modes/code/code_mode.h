@@ -12,6 +12,7 @@
 #include "core/context_bus.h"
 #include "core/mode.h"
 #include "modes/code/code_index.h"
+#include "platform/file_watcher.h"
 #include "modes/code/dep_view.h"
 #include "modes/code/digest_exporter.h"
 #include "modes/code/file_tree_view.h"
@@ -79,8 +80,9 @@ private:
     vectis::core::ContextBus*      m_bus      = nullptr;
 
     // Owned
-    std::unique_ptr<vectis::core::TaskQueue> m_task_queue;
-    std::unique_ptr<CodeIndex>               m_index;
+    std::unique_ptr<vectis::core::TaskQueue>    m_task_queue;
+    std::unique_ptr<CodeIndex>                  m_index;
+    std::unique_ptr<vectis::platform::FileWatcher> m_watcher;
 
     // Scan state
     std::atomic<std::int64_t>                m_scan_epoch{0};
