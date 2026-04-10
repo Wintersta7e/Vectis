@@ -7,12 +7,14 @@
 #include "core/config_manager.h"
 #include "core/context_bus.h"
 #include "core/log.h"
+#include "services/storage_engine/storage_engine.h"
 
 namespace vectis::core {
 
 struct ServiceRegistry::Impl {
-    ConfigManager config;
-    ContextBus    context;
+    ConfigManager              config;
+    ContextBus                 context;
+    services::StorageEngine    storage;
 };
 
 namespace {
@@ -59,7 +61,7 @@ services::IndexEngine& ServiceRegistry::index()
 
 services::StorageEngine& ServiceRegistry::storage()
 {
-    abort_unwired("storage");
+    return m_impl->storage;
 }
 
 } // namespace vectis::core

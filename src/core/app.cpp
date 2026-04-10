@@ -21,6 +21,7 @@
 #include "core/mode.h"
 #include "core/service_registry.h"
 #include "platform/file_io.h"
+#include "services/storage_engine/storage_engine.h"
 #include "ui/theme.h"
 #include "ui/widgets.h"
 
@@ -44,13 +45,14 @@ enum InitStage : std::uint32_t {
     Stage_Log         = 1U << 1U,
     Stage_Services    = 1U << 2U,
     Stage_Config      = 1U << 3U,
-    Stage_Sdl         = 1U << 4U,
-    Stage_Window      = 1U << 5U,
-    Stage_GlContext   = 1U << 6U,
-    Stage_ImGui       = 1U << 7U,
-    Stage_ImGuiSdl    = 1U << 8U,
-    Stage_ImGuiGl     = 1U << 9U,
-    Stage_Modes       = 1U << 10U,
+    Stage_Storage     = 1U << 4U,
+    Stage_Sdl         = 1U << 5U,
+    Stage_Window      = 1U << 6U,
+    Stage_GlContext   = 1U << 7U,
+    Stage_ImGui       = 1U << 8U,
+    Stage_ImGuiSdl    = 1U << 9U,
+    Stage_ImGuiGl     = 1U << 10U,
+    Stage_Modes       = 1U << 11U,
 };
 
 } // namespace
@@ -174,6 +176,22 @@ bool App::initialize()
         VECTIS_LOG_WARN(
             "general.data_dir='{}' is ignored in this build step; using '{}'",
             override_dir, data_dir.string());
+    }
+
+    // 4b. Storage -----------------------------------------------------------
+    {
+        const std::filesystem::path db_path = data_dir / "vectis.db";
+        if (auto r = m_impl->services->storage().open(db_path); !r) {
+            VECTIS_LOG_ERROR(
+                "storage engine open failed: {}", r.error().message);
+            return false;
+        }
+        if (auto r = m_impl->services->storage().migrate(); !r) {
+            VECTIS_LOG_ERROR(
+                "storage migration failed: {}", r.error().message);
+            return false;
+        }
+        m_impl->mark_stage(Stage_Storage);
     }
 
     // 5. SDL2 --------------------------------------------------------------
@@ -414,6 +432,9 @@ void App::shutdown_internal()
     }
     if (m_impl->has_stage(Stage_Sdl)) {
         SDL_Quit();
+    }
+    if (m_impl->has_stage(Stage_Storage)) {
+        m_impl->services->storage().close();
     }
     if (m_impl->has_stage(Stage_Services)) {
         m_impl->services.reset();
