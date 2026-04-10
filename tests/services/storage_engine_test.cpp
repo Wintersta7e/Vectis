@@ -91,6 +91,9 @@ TEST_F(StorageEngineTest, MigrateCreatesSchema)
     EXPECT_NE(std::find(tables.begin(), tables.end(), "dependencies"),   tables.end());
     EXPECT_NE(std::find(tables.begin(), tables.end(), "kv_store"),       tables.end());
     EXPECT_NE(std::find(tables.begin(), tables.end(), "schema_version"), tables.end());
+    // v2 tables
+    EXPECT_NE(std::find(tables.begin(), tables.end(), "conversations"),  tables.end());
+    EXPECT_NE(std::find(tables.begin(), tables.end(), "messages"),       tables.end());
 }
 
 TEST_F(StorageEngineTest, MigrateIsIdempotent)
@@ -101,12 +104,12 @@ TEST_F(StorageEngineTest, MigrateIsIdempotent)
     auto r = m_engine.migrate();
     ASSERT_TRUE(r) << r.error().message;
 
-    // Verify version recorded once.
+    // Verify both migration versions recorded.
     auto stmt = m_engine.prepare("SELECT COUNT(*) FROM schema_version");
     ASSERT_TRUE(stmt);
     auto rows = stmt->query();
     ASSERT_TRUE(rows);
-    EXPECT_EQ((*rows)[0].get_int(0), 1);
+    EXPECT_EQ((*rows)[0].get_int(0), 2);
 }
 
 // ---- Raw execute + query ---------------------------------------------------
