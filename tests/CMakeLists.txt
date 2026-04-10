@@ -23,6 +23,7 @@ add_executable(vectis_tests
     modes/code/scanner_test.cpp
     platform/file_io_test.cpp
     platform/file_watcher_test.cpp
+    platform/http_client_test.cpp
     services/index_engine_test.cpp
     services/storage_engine_test.cpp
 )
