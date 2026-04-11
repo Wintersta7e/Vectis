@@ -109,6 +109,14 @@ public:
         return m_dependency_count.load(std::memory_order_acquire);
     }
 
+    /// Monotonic generation counter — incremented on every write
+    /// operation. UI code compares against a local snapshot to detect
+    /// when a cache rebuild is needed.
+    [[nodiscard]] std::uint64_t generation() const noexcept
+    {
+        return m_generation.load(std::memory_order_acquire);
+    }
+
 private:
     mutable std::shared_mutex m_mutex;
     std::vector<FileEntry>    m_files;   // index == file_id - 1
@@ -121,11 +129,13 @@ private:
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_outgoing;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_incoming;
 
-    std::atomic<std::size_t>   m_file_count{0};
-    std::atomic<std::size_t>   m_symbol_count{0};
-    std::atomic<std::size_t>   m_dependency_count{0};
-    std::atomic<std::uint32_t> m_language_bits{0};
-    std::int64_t               m_next_symbol_id = 1;
+    std::atomic<std::size_t>    m_file_count{0};
+    std::atomic<std::size_t>    m_symbol_count{0};
+    std::atomic<std::size_t>    m_dependency_count{0};
+    std::atomic<std::uint32_t>  m_language_bits{0};
+    std::atomic<std::uint64_t>  m_generation{0};
+    std::int64_t                m_next_file_id   = 1;
+    std::int64_t                m_next_symbol_id = 1;
 };
 
 } // namespace vectis::modes::code

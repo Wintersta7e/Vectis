@@ -476,20 +476,10 @@ Scanner::run_incremental(const ScanConfig&                      config,
         const auto existing_it = path_to_info.find(rel_str);
         if (existing_it != path_to_info.end()) {
             if (existing_it->second.second == new_hash) {
-                // Unchanged — skip.
+                // Unchanged — skip. Existing dependency edges in the
+                // index are already correct; no need to re-extract
+                // imports or re-resolve.
                 ++result.files_unchanged;
-
-                // Still collect imports for the resolver pass since
-                // dependencies may need re-resolution.
-                auto raw_imports = parser.extract_imports(language, content);
-                if (!raw_imports.empty()) {
-                    FileImports fi;
-                    fi.file_id       = existing_it->second.first;
-                    fi.language      = language;
-                    fi.relative_path = rel;
-                    fi.imports       = std::move(raw_imports);
-                    per_file_imports.push_back(std::move(fi));
-                }
             } else {
                 // Modified — remove old, re-add.
                 index.remove_file(existing_it->second.first);

@@ -499,15 +499,17 @@ void CodeMode::render()
     }
 
     // Drain any completed-scan state that the worker thread left for us.
-    // We check the epoch + running flag cheaply every frame; only when
-    // the UI snapshot is stale do we grab the index lock.
+    // Compare the generation counter — it's bumped on every write to the
+    // index, catching content-only updates that don't change file count.
+    const auto current_gen = m_index->generation();
     if (!m_scan_running.load(std::memory_order_acquire) &&
-        m_index->file_count() != m_cached_files.size())
+        current_gen != m_last_generation)
     {
         m_cached_files = m_index->snapshot_files();
         m_tree_view.rebuild(m_cached_files);
         m_dep_view.rebuild(*m_index);
         refresh_filtered_symbols();
+        m_last_generation = current_gen;
     }
 
     // Set up the three-panel docking layout the first time this mode

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <span>
+#include <unordered_set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -57,7 +58,7 @@ std::int64_t CodeIndex::add_file(FileEntry file)
 {
     const std::unique_lock lock(m_mutex);
 
-    const std::int64_t assigned_id = static_cast<std::int64_t>(m_files.size()) + 1;
+    const std::int64_t assigned_id = m_next_file_id++;
     file.id = assigned_id;
 
     const std::uint32_t bit = language_bit(file.language);
@@ -66,12 +67,10 @@ std::int64_t CodeIndex::add_file(FileEntry file)
     m_file_count.store(m_files.size(), std::memory_order_release);
 
     if (bit != 0U) {
-        // Fetch-or so we never lose a bit if another mutator somehow
-        // updates concurrently (we hold the unique lock, but belt +
-        // braces keeps the field self-consistent w.r.t. reads).
         m_language_bits.fetch_or(bit, std::memory_order_acq_rel);
     }
 
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
     return assigned_id;
 }
 
@@ -93,6 +92,7 @@ void CodeIndex::add_symbols(std::span<const Symbol> symbols)
         m_symbols.push_back(std::move(copy));
     }
     m_symbol_count.store(m_symbols.size(), std::memory_order_release);
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void CodeIndex::add_dependency(Dependency dep)
@@ -107,19 +107,22 @@ void CodeIndex::add_dependency(Dependency dep)
         m_deps_incoming[target].push_back(index);
     }
     m_dependency_count.store(m_dependencies.size(), std::memory_order_release);
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void CodeIndex::remove_file(std::int64_t file_id)
 {
     const std::unique_lock lock(m_mutex);
 
-    // Null out the file entry (0-based index = file_id - 1).
-    const auto file_idx = static_cast<std::size_t>(file_id - 1);
+    // Find and null out the file entry by scanning (IDs may not be positional).
     bool found_file = false;
-    if (file_idx < m_files.size() && m_files[file_idx].id == file_id) {
-        m_files[file_idx].id = 0; // marks as removed
-        m_files[file_idx].path_relative.clear();
-        found_file = true;
+    for (auto& f : m_files) {
+        if (f.id == file_id) {
+            f.id = 0;
+            f.path_relative.clear();
+            found_file = true;
+            break;
+        }
     }
 
     // Remove symbols belonging to this file.
@@ -127,42 +130,52 @@ void CodeIndex::remove_file(std::int64_t file_id)
     const auto by_file_it = m_by_file.find(file_id);
     if (by_file_it != m_by_file.end()) {
         for (const std::size_t sym_idx : by_file_it->second) {
-            m_symbols[sym_idx].file_id = 0; // marks as removed
+            m_symbols[sym_idx].file_id = 0;
             ++symbols_removed;
         }
         m_by_file.erase(by_file_it);
     }
 
-    // Remove dependencies where this file is source or target.
-    std::size_t deps_removed = 0;
-    auto remove_deps = [&](std::unordered_map<std::int64_t, std::vector<std::size_t>>& index,
-                           std::int64_t key) {
+    // Remove dependencies — track unique dep indices to avoid double-counting.
+    std::unordered_set<std::size_t> removed_dep_indices;
+    auto collect_deps = [&](std::unordered_map<std::int64_t, std::vector<std::size_t>>& index,
+                            std::int64_t key) {
         const auto it = index.find(key);
         if (it != index.end()) {
             for (const std::size_t dep_idx : it->second) {
                 m_dependencies[dep_idx].source_file_id = 0;
                 m_dependencies[dep_idx].target_file_id = 0;
-                ++deps_removed;
+                removed_dep_indices.insert(dep_idx);
             }
             index.erase(it);
         }
     };
-    remove_deps(m_deps_outgoing, file_id);
-    remove_deps(m_deps_incoming, file_id);
+    collect_deps(m_deps_outgoing, file_id);
+    collect_deps(m_deps_incoming, file_id);
 
     // Update counters.
     if (found_file) {
-        m_file_count.store(m_file_count.load(std::memory_order_relaxed) - 1,
-                           std::memory_order_release);
+        const auto fc = m_file_count.load(std::memory_order_relaxed);
+        m_file_count.store(fc > 0 ? fc - 1 : 0, std::memory_order_release);
     }
-    m_symbol_count.store(m_symbol_count.load(std::memory_order_relaxed) - symbols_removed,
+    const auto sc = m_symbol_count.load(std::memory_order_relaxed);
+    m_symbol_count.store(sc >= symbols_removed ? sc - symbols_removed : 0,
                          std::memory_order_release);
-    // deps_removed may double-count because outgoing+incoming can overlap,
-    // but the atomic counter is approximate — fine for status bar display.
-    const auto dep_count = m_dependency_count.load(std::memory_order_relaxed);
+    const auto dc = m_dependency_count.load(std::memory_order_relaxed);
     m_dependency_count.store(
-        dep_count > deps_removed ? dep_count - deps_removed : 0,
+        dc >= removed_dep_indices.size() ? dc - removed_dep_indices.size() : 0,
         std::memory_order_release);
+
+    // Recompute language bitmask from live files.
+    std::uint32_t new_bits = 0;
+    for (const auto& f : m_files) {
+        if (f.id != 0) {
+            new_bits |= language_bit(f.language);
+        }
+    }
+    m_language_bits.store(new_bits, std::memory_order_release);
+
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void CodeIndex::clear()
@@ -178,7 +191,9 @@ void CodeIndex::clear()
     m_symbol_count.store(0, std::memory_order_release);
     m_dependency_count.store(0, std::memory_order_release);
     m_language_bits.store(0, std::memory_order_release);
+    m_next_file_id   = 1;
     m_next_symbol_id = 1;
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 std::vector<FileEntry> CodeIndex::snapshot_files() const

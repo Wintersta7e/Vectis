@@ -109,7 +109,8 @@ private:
     std::string m_last_export_error;
 
     // Docking layout is rebuilt once on first render.
-    bool m_dock_layout_built = false;
+    bool          m_dock_layout_built = false;
+    std::uint64_t m_last_generation   = 0;
 };
 
 } // namespace vectis::modes::code
