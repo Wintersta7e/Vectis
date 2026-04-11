@@ -145,14 +145,13 @@ Result<void> StorageEngine::migrate()
             "StorageEngine: applying migration v{} '{}'",
             migration.version, migration.name);
 
-        const std::scoped_lock lock(m_impl->write_mutex);
-
-        if (auto r = execute("BEGIN TRANSACTION"); !r) {
+        // Use begin_transaction/commit which manage the write_mutex.
+        if (auto r = begin_transaction(); !r) {
             return r;
         }
 
         if (auto r = execute(migration.sql); !r) {
-            (void)execute("ROLLBACK"); // best-effort
+            (void)rollback();
             return r;
         }
 
@@ -160,7 +159,7 @@ Result<void> StorageEngine::migrate()
         auto ins = prepare(
             "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)");
         if (!ins) {
-            (void)execute("ROLLBACK"); // best-effort
+            (void)rollback();
             return tl::unexpected(ins.error());
         }
         const auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -168,11 +167,12 @@ Result<void> StorageEngine::migrate()
         ins->bind(1, static_cast<std::int64_t>(migration.version));
         ins->bind(2, static_cast<std::int64_t>(now));
         if (auto r = ins->execute(); !r) {
-            (void)execute("ROLLBACK"); // best-effort
+            (void)rollback();
             return r;
         }
 
-        if (auto r = execute("COMMIT"); !r) {
+        if (auto r = commit(); !r) {
+            // commit() internally rolls back on failure.
             return r;
         }
     }
@@ -413,6 +413,11 @@ Result<void> StorageEngine::begin_transaction()
 Result<void> StorageEngine::commit()
 {
     auto r = execute("COMMIT");
+    if (!r) {
+        // COMMIT failed — SQLite transaction is still open. Roll it back
+        // so the connection is usable again, then unlock.
+        (void)execute("ROLLBACK");
+    }
     m_impl->write_mutex.unlock();
     return r;
 }
@@ -460,6 +465,7 @@ StorageEngine::Transaction& StorageEngine::Transaction::operator=(Transaction&& 
     if (this != &other) {
         if (m_active) {
             (void)m_engine->rollback(); // best-effort
+            m_active = false;
         }
         m_engine       = other.m_engine;
         m_active       = other.m_active;
@@ -473,8 +479,11 @@ Result<void> StorageEngine::Transaction::commit()
     if (!m_active) {
         return make_error(ErrorKind::StorageError, "transaction already finalized");
     }
+    auto r = m_engine->commit();
+    // Always mark inactive — commit() internally rolls back on failure
+    // and unlocks the mutex, so the transaction is finalized either way.
     m_active = false;
-    return m_engine->commit();
+    return r;
 }
 
 } // namespace vectis::services

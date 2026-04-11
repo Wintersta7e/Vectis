@@ -83,6 +83,9 @@ Result<void> save_index(StorageEngine&       storage,
                         const CacheMetadata& metadata)
 {
     StorageEngine::Transaction txn(storage);
+    if (!txn.is_active()) {
+        return make_error(ErrorKind::StorageError, "failed to begin transaction for save_index");
+    }
 
     // Clear existing data.
     if (auto r = storage.execute("DELETE FROM dependencies"); !r) return r;
@@ -324,6 +327,9 @@ bool has_cache_for(StorageEngine&               storage,
 Result<void> clear_cache(StorageEngine& storage)
 {
     StorageEngine::Transaction txn(storage);
+    if (!txn.is_active()) {
+        return make_error(ErrorKind::StorageError, "failed to begin transaction for clear_cache");
+    }
     if (auto r = storage.execute("DELETE FROM dependencies"); !r) return r;
     if (auto r = storage.execute("DELETE FROM symbols"); !r) return r;
     if (auto r = storage.execute("DELETE FROM files"); !r) return r;

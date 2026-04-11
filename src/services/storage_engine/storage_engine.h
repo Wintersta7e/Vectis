@@ -135,6 +135,10 @@ public:
 
         [[nodiscard]] vectis::core::Result<void> commit();
 
+        /// Whether the transaction was successfully started.
+        /// Callers should check this after construction.
+        [[nodiscard]] bool is_active() const { return m_active; }
+
     private:
         StorageEngine* m_engine  = nullptr;
         bool           m_active  = false;
