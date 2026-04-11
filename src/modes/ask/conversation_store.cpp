@@ -39,10 +39,18 @@ std::string serialize_sources(const std::vector<SourceCitation>& sources)
 }
 
 /// Deserialize sources from JSON string.
+/// Maximum size of sources JSON we'll attempt to parse (1 MB).
+constexpr std::size_t k_max_sources_json_bytes = 1024 * 1024;
+
 std::vector<SourceCitation> deserialize_sources(const std::string& json_str)
 {
     std::vector<SourceCitation> result;
     if (json_str.empty()) return result;
+    if (json_str.size() > k_max_sources_json_bytes) {
+        VECTIS_LOG_WARN("ConversationStore: sources JSON too large ({} bytes), skipping",
+                        json_str.size());
+        return result;
+    }
     try {
         auto arr = nlohmann::json::parse(json_str);
         for (const auto& item : arr) {
