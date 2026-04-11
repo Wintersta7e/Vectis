@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/mode.h"
+#include "core/task_queue.h"
 #include "modes/ask/conversation.h"
 #include "modes/ask/web_search.h"
 #include "services/index_engine/index_engine.h"
@@ -69,6 +70,7 @@ private:
     vectis::core::ContextBus*      m_bus      = nullptr;
 
     // Owned
+    std::unique_ptr<vectis::core::TaskQueue>        m_task_queue;
     std::unique_ptr<ConversationStore>              m_store;
     std::unique_ptr<WebSearch>                      m_web_search;
     std::unique_ptr<vectis::platform::HttpClient>   m_http;
@@ -79,6 +81,7 @@ private:
     std::int64_t              m_active_conversation_id = 0;
     char                      m_input_buffer[1024] = {};
     std::atomic<bool>         m_codebase_available{false};
+    std::atomic<bool>         m_search_running{false};
     std::uint64_t             m_bus_sub_id = 0;
     bool                      m_scroll_to_bottom = false;
 

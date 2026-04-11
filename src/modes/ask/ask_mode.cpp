@@ -102,6 +102,7 @@ void AskMode::initialize(vectis::core::ServiceRegistry& services)
     m_config   = &services.config();
     m_bus      = &services.context();
 
+    m_task_queue = std::make_unique<vectis::core::TaskQueue>(1);
     m_store = std::make_unique<ConversationStore>(services.storage());
     m_http  = std::make_unique<vectis::platform::HttpClient>();
     m_web_search = std::make_unique<WebSearch>(*m_http, *m_config);
@@ -124,6 +125,10 @@ void AskMode::shutdown()
         m_bus->unsubscribe(m_bus_sub_id);
         m_bus_sub_id = 0;
     }
+    if (m_task_queue) {
+        m_task_queue->cancel_all();
+    }
+    m_task_queue.reset();
     m_web_search.reset();
     m_http.reset();
     m_store.reset();
@@ -171,7 +176,7 @@ void AskMode::on_delete_conversation(std::int64_t conversation_id)
 void AskMode::on_submit_question()
 {
     const std::string question(m_input_buffer);
-    if (question.empty()) return;
+    if (question.empty() || m_search_running.load(std::memory_order_acquire)) return;
 
     // Create a conversation if none is active.
     if (m_active_conversation_id == 0) {
@@ -183,48 +188,68 @@ void AskMode::on_submit_question()
         m_active_conversation_id = *r;
         refresh_conversation_list();
     } else if (m_current_conversation.messages.empty()) {
-        // Auto-title from first question.
         (void)m_store->update_title(m_active_conversation_id, question.substr(0, 50));
         refresh_conversation_list();
     }
 
-    // Save user message.
+    // Save user message on UI thread (fast, local DB).
     (void)m_store->add_message(m_active_conversation_id, "user", question);
 
-    // Clear input.
-    std::memset(m_input_buffer, 0, sizeof(m_input_buffer));
-
-    // Execute search and create assistant response.
-    execute_search(question);
-
-    // Reload the conversation.
+    // Reload to show the user message immediately.
     if (auto loaded = m_store->load_conversation(m_active_conversation_id); loaded) {
         m_current_conversation = std::move(*loaded);
     }
     m_scroll_to_bottom = true;
+
+    // Clear input.
+    std::memset(m_input_buffer, 0, sizeof(m_input_buffer));
+
+    // Dispatch search to background worker so the render loop stays responsive.
+    m_search_running.store(true, std::memory_order_release);
+
+    const std::int64_t conv_id = m_active_conversation_id;
+    auto* web_search_ptr = m_web_search.get();
+    auto* services_ptr   = m_services;
+    auto* store_ptr      = m_store.get();
+    const bool codebase  = m_codebase_available.load(std::memory_order_acquire);
+    auto* running_ptr    = &m_search_running;
+
+    m_task_queue->submit([question, conv_id, web_search_ptr, services_ptr,
+                          store_ptr, codebase, running_ptr]
+                         (const vectis::core::CancellationToken& token) {
+        if (token.stop_requested()) {
+            running_ptr->store(false, std::memory_order_release);
+            return;
+        }
+
+        // Code search.
+        std::vector<vectis::services::SearchResult> code_results;
+        if (codebase && services_ptr != nullptr) {
+            code_results = services_ptr->index().search(question, 5);
+        }
+
+        // Web search.
+        std::vector<WebSearchResult> web_results;
+        auto web_r = web_search_ptr->search(question, 5);
+        if (web_r) {
+            web_results = std::move(*web_r);
+        } else {
+            VECTIS_LOG_WARN("Web search failed: {}", web_r.error().message);
+        }
+
+        // Build and save assistant message.
+        const auto content  = format_results(web_results, code_results);
+        const auto citations = build_citations(web_results, code_results);
+        (void)store_ptr->add_message(conv_id, "assistant", content, citations);
+
+        running_ptr->store(false, std::memory_order_release);
+    });
 }
 
-void AskMode::execute_search(std::string_view query)
+void AskMode::execute_search(std::string_view /*query*/)
 {
-    // Code search.
-    std::vector<vectis::services::SearchResult> code_results;
-    if (m_codebase_available.load(std::memory_order_acquire) && m_services != nullptr) {
-        code_results = m_services->index().search(query, 5);
-    }
-
-    // Web search.
-    std::vector<WebSearchResult> web_results;
-    auto web_r = m_web_search->search(query, 5);
-    if (web_r) {
-        web_results = std::move(*web_r);
-    } else {
-        VECTIS_LOG_WARN("Web search failed: {}", web_r.error().message);
-    }
-
-    // Build and save assistant message.
-    const auto content  = format_results(web_results, code_results);
-    const auto citations = build_citations(web_results, code_results);
-    (void)m_store->add_message(m_active_conversation_id, "assistant", content, citations);
+    // Search is now dispatched to the TaskQueue in on_submit_question().
+    // This method is kept as a no-op for interface compatibility.
 }
 
 void AskMode::refresh_conversation_list()
@@ -261,6 +286,17 @@ void AskMode::ensure_docking_layout(unsigned int dockspace_id)
 
 void AskMode::render()
 {
+    // Check if a background search just completed — reload conversation.
+    if (!m_search_running.load(std::memory_order_acquire) &&
+        m_active_conversation_id != 0)
+    {
+        auto loaded = m_store->load_conversation(m_active_conversation_id);
+        if (loaded && loaded->messages.size() != m_current_conversation.messages.size()) {
+            m_current_conversation = std::move(*loaded);
+            m_scroll_to_bottom = true;
+        }
+    }
+
     const ImGuiID dockspace_id = ImGui::GetID(k_dockspace);
     ensure_docking_layout(dockspace_id);
 
@@ -337,6 +373,10 @@ void AskMode::render_chat_area()
             for (const auto& msg : m_current_conversation.messages) {
                 render_message(msg);
             }
+            if (m_search_running.load(std::memory_order_relaxed)) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("Searching...");
+            }
             if (m_scroll_to_bottom) {
                 ImGui::SetScrollHereY(1.0F);
                 m_scroll_to_bottom = false;
@@ -400,9 +440,12 @@ void AskMode::render_input_bar()
     ImGui::PopItemWidth();
 
     ImGui::SameLine();
-    if (ImGui::Button("Send", ImVec2(button_w, 0.0F)) || submitted) {
+    const bool searching = m_search_running.load(std::memory_order_relaxed);
+    ImGui::BeginDisabled(searching);
+    if ((ImGui::Button("Send", ImVec2(button_w, 0.0F)) || submitted) && !searching) {
         on_submit_question();
     }
+    ImGui::EndDisabled();
 }
 
 } // namespace vectis::modes::ask
