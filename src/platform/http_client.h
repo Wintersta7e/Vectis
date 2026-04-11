@@ -17,6 +17,7 @@ struct HttpRequest {
     std::map<std::string, std::string> headers;
     std::string                        body;
     int                                timeout_ms = 30000;
+    std::size_t                        max_body_bytes = 32ULL * 1024 * 1024; // 32 MB
 };
 
 /// HTTP response returned from HttpClient::send().

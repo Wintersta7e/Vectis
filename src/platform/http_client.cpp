@@ -34,13 +34,25 @@ void ensure_curl_init()
     });
 }
 
+/// State passed to the write callback for body size enforcement.
+struct WriteState {
+    std::string* body       = nullptr;
+    std::size_t  max_bytes  = 0;
+};
+
 // libcurl write callback — appends received data to a std::string.
+// Returns 0 (abort) if the accumulated body exceeds the configured cap.
 std::size_t write_callback(char* ptr, std::size_t size, std::size_t nmemb,
                            void* userdata)
 {
     const std::size_t total = size * nmemb;
-    auto* body = static_cast<std::string*>(userdata);
-    body->append(ptr, total);
+    auto* state = static_cast<WriteState*>(userdata);
+    if (state->max_bytes > 0 &&
+        state->body->size() + total > state->max_bytes)
+    {
+        return 0; // signals abort to libcurl
+    }
+    state->body->append(ptr, total);
     return total;
 }
 
@@ -154,24 +166,35 @@ Result<HttpResponse> HttpClient::send(const HttpRequest& req)
     // Timeout
     curl_easy_setopt(h, CURLOPT_TIMEOUT_MS, static_cast<long>(req.timeout_ms));
 
+    // TLS verification — always enforce, even on minimal systems.
+    curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 2L);
+
     // Follow redirects
     curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(h, CURLOPT_MAXREDIRS, 5L);
 
-    // Headers
+    // Headers — check each append for OOM.
     curl_slist* header_list = nullptr;
     for (const auto& [key, value] : req.headers) {
         const std::string header_line = key + ": " + value;
-        header_list = curl_slist_append(header_list, header_line.c_str());
+        curl_slist* appended = curl_slist_append(header_list, header_line.c_str());
+        if (appended == nullptr) {
+            curl_slist_free_all(header_list);
+            return make_error(ErrorKind::NetworkError,
+                              "curl_slist_append allocation failed");
+        }
+        header_list = appended;
     }
     if (header_list != nullptr) {
         curl_easy_setopt(h, CURLOPT_HTTPHEADER, header_list);
     }
 
-    // Response body
+    // Response body with size cap.
     std::string response_body;
+    WriteState write_state{&response_body, req.max_body_bytes};
     curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(h, CURLOPT_WRITEDATA, &response_body);
+    curl_easy_setopt(h, CURLOPT_WRITEDATA, &write_state);
 
     // Response headers
     std::map<std::string, std::string> response_headers;
