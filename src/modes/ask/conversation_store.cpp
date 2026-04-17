@@ -175,9 +175,16 @@ Result<Conversation> ConversationStore::load_conversation(std::int64_t conversat
     c.created_at = (*conv_rows)[0].get_int(2);
 
     // Load messages.
+    // `id ASC` breaks ties on created_at. The timestamp has 1-second
+    // resolution, so rapid follow-ups (API backend with sub-second
+    // latency) otherwise get an undefined sort between messages
+    // inserted in the same second — which means AskMode's
+    // history_snapshot "drop last" heuristic can drop the wrong turn.
+    // With the id tiebreaker, insertion order becomes a total order.
     auto msg_stmt = m_storage->prepare(
         "SELECT id, conversation_id, role, content, sources, created_at "
-        "FROM messages WHERE conversation_id = ? ORDER BY created_at ASC");
+        "FROM messages WHERE conversation_id = ? "
+        "ORDER BY created_at ASC, id ASC");
     if (!msg_stmt) return tl::unexpected(msg_stmt.error());
     msg_stmt->bind(1, conversation_id);
 
