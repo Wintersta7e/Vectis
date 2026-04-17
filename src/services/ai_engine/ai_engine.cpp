@@ -125,16 +125,42 @@ std::future<Result<AIResponse>> AIEngine::query_async(const AIRequest& request)
                       [this, request]() { return query(request); });
 }
 
-void AIEngine::query_stream(const AIRequest& /*request*/,
-                            StreamCallback   /*on_token*/,
+void AIEngine::query_stream(const AIRequest& request,
+                            StreamCallback   on_token,
                             StreamComplete   on_complete)
 {
-    // Wiring lands in commit 9. For now, the sync path is live and
-    // streaming still short-circuits with the "no backend" error.
-    if (on_complete) {
-        on_complete(make_error(ErrorKind::AIError,
-                               "streaming dispatch not yet wired"));
+    IBackend* backend = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock(m_impl->mutex);
+        backend = m_impl->select_backend_locked();
     }
+    if (backend == nullptr) {
+        if (on_complete) {
+            on_complete(make_error(ErrorKind::AIError,
+                                   "no AI backend available"));
+        }
+        return;
+    }
+
+    // Honor a cancel that fired BEFORE this call started — e.g., a
+    // shutdown path that calls cancel_stream() while the worker was
+    // still in context-assembly. Without this check the next line
+    // would clobber the flag and let the backend run to completion
+    // (or HTTP timeout) despite the caller's intent.
+    if (m_impl->cancel_flag.load(std::memory_order_acquire)) {
+        if (on_complete) {
+            on_complete(make_error(ErrorKind::Cancelled,
+                                   "stream cancelled before start"));
+        }
+        return;
+    }
+
+    // Reset cancellation for this stream. cancel_stream() will flip
+    // this back to true; each backend polls it between tokens.
+    m_impl->cancel_flag.store(false, std::memory_order_release);
+
+    backend->generate_stream(request, std::move(on_token),
+                             m_impl->cancel_flag, std::move(on_complete));
 }
 
 void AIEngine::cancel_stream()

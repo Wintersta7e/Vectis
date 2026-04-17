@@ -2,10 +2,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -59,30 +62,48 @@ public:
     }
 
     void generate_stream(const AIRequest& /*req*/,
-                         StreamCallback     /*on_token*/,
-                         std::atomic<bool>& /*cancel_flag*/,
+                         StreamCallback     on_token,
+                         std::atomic<bool>& cancel_flag,
                          StreamComplete     on_complete) override
     {
         ++m_stream_calls;
+
+        // Emit the canned reply one character at a time so tests can
+        // observe per-token invocation and mid-stream cancellation.
+        std::string emitted;
+        for (const char ch : m_reply) {
+            if (cancel_flag.load(std::memory_order_acquire)) {
+                break;
+            }
+            const std::string token(1, ch);
+            if (on_token) on_token(token);
+            emitted.append(token);
+            if (m_stream_sleep_ms > 0) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(m_stream_sleep_ms));
+            }
+        }
+
         if (on_complete) {
             AIResponse resp;
-            resp.text         = m_reply;
+            resp.text         = std::move(emitted);
             resp.backend_used = m_kind;
             on_complete(std::move(resp));
         }
     }
 
-    int generate_calls() const { return m_generate_calls; }
-    int stream_calls()   const { return m_stream_calls; }
-
-    void set_available(bool a) { m_available = a; }
+    int  generate_calls() const { return m_generate_calls; }
+    int  stream_calls()   const { return m_stream_calls; }
+    void set_available(bool a)       { m_available = a; }
+    void set_stream_sleep_ms(int ms) { m_stream_sleep_ms = ms; }
 
 private:
     AIBackend   m_kind;
     bool        m_available;
     std::string m_reply;
-    int         m_generate_calls = 0;
-    int         m_stream_calls   = 0;
+    int         m_generate_calls  = 0;
+    int         m_stream_calls    = 0;
+    int         m_stream_sleep_ms = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -249,6 +270,143 @@ TEST(AIEngineDispatchTest, NoBackendAvailableReturnsError)
     auto r = engine.query(req);
     ASSERT_FALSE(r.has_value());
     EXPECT_EQ(r.error().kind, ErrorKind::AIError);
+}
+
+// ---------------------------------------------------------------------------
+// Streaming tests
+// ---------------------------------------------------------------------------
+
+TEST(AIEngineStreamTest, EmitsAllTokensAndCompletesOnce)
+{
+    auto mock = std::make_unique<MockBackend>(AIBackend::Ollama, true, "hello");
+
+    std::vector<std::unique_ptr<IBackend>> backends;
+    backends.emplace_back(std::move(mock));
+    AIEngine engine(std::move(backends));
+
+    std::string         emitted;
+    int                 complete_count = 0;
+    vectis::core::Result<AIResponse> final_result = AIResponse{};
+
+    AIRequest req;
+    engine.query_stream(
+        req,
+        [&](std::string_view tok) { emitted.append(tok); },
+        [&](vectis::core::Result<AIResponse> r) {
+            ++complete_count;
+            final_result = std::move(r);
+        });
+
+    EXPECT_EQ(emitted, "hello");
+    EXPECT_EQ(complete_count, 1);
+    ASSERT_TRUE(final_result.has_value());
+    EXPECT_EQ(final_result->text, "hello");
+    EXPECT_EQ(final_result->backend_used, AIBackend::Ollama);
+}
+
+TEST(AIEngineStreamTest, CancelStreamInterruptsMidStream)
+{
+    // MockBackend emits one char at a time with a small pause between
+    // tokens. Instead of sleep-and-hope timing, we synchronise via a
+    // condition variable: the test cancels the stream as soon as it
+    // observes the first token, guaranteeing that at least one
+    // subsequent token's sleep window is available for the cancel to
+    // land before completion.
+    auto mock = std::make_unique<MockBackend>(AIBackend::Ollama, true,
+                                              "abcdefghij");
+    mock->set_stream_sleep_ms(20);
+
+    std::vector<std::unique_ptr<IBackend>> backends;
+    backends.emplace_back(std::move(mock));
+    AIEngine engine(std::move(backends));
+
+    std::mutex              m;
+    std::condition_variable cv;
+    bool                    first_token_seen = false;
+    std::string             emitted;
+    std::atomic<bool>       done{false};
+
+    std::thread streamer([&] {
+        AIRequest req;
+        engine.query_stream(
+            req,
+            [&](std::string_view tok) {
+                std::lock_guard<std::mutex> lock(m);
+                emitted.append(tok);
+                if (!first_token_seen) {
+                    first_token_seen = true;
+                    cv.notify_one();
+                }
+            },
+            [&](vectis::core::Result<AIResponse> /*r*/) {
+                done.store(true, std::memory_order_release);
+            });
+    });
+
+    // Wait for the first token (no timing dependency), then cancel.
+    {
+        std::unique_lock<std::mutex> lock(m);
+        cv.wait(lock, [&] { return first_token_seen; });
+    }
+    engine.cancel_stream();
+    streamer.join();
+
+    EXPECT_TRUE(done.load(std::memory_order_acquire));
+    EXPECT_LT(emitted.size(), 10U); // aborted before full "abcdefghij"
+    EXPECT_GE(emitted.size(), 1U);  // at least the first token arrived
+}
+
+TEST(AIEngineStreamTest, NoBackendFiresCompleteWithError)
+{
+    AIEngine engine(std::vector<std::unique_ptr<IBackend>>{});
+
+    int complete_count = 0;
+    vectis::core::Result<AIResponse> final_result = AIResponse{};
+
+    AIRequest req;
+    engine.query_stream(
+        req,
+        [](std::string_view) { FAIL() << "no token should arrive"; },
+        [&](vectis::core::Result<AIResponse> r) {
+            ++complete_count;
+            final_result = std::move(r);
+        });
+
+    EXPECT_EQ(complete_count, 1);
+    ASSERT_FALSE(final_result.has_value());
+    EXPECT_EQ(final_result.error().kind, ErrorKind::AIError);
+}
+
+TEST(AIEngineStreamTest, CancelBeforeStartIsHonored)
+{
+    // Regression for the shutdown race: cancel_stream() called before
+    // query_stream() enters the backend must NOT be clobbered by the
+    // flag-reset that normally runs at stream start.
+    auto mock = std::make_unique<MockBackend>(AIBackend::Ollama, true, "abc");
+
+    std::vector<std::unique_ptr<IBackend>> backends;
+    backends.emplace_back(std::move(mock));
+    AIEngine engine(std::move(backends));
+
+    engine.cancel_stream();
+
+    int token_count    = 0;
+    int complete_count = 0;
+    vectis::core::Result<AIResponse> final_result = AIResponse{};
+
+    AIRequest req;
+    engine.query_stream(
+        req,
+        [&](std::string_view) { ++token_count; },
+        [&](vectis::core::Result<AIResponse> r) {
+            ++complete_count;
+            final_result = std::move(r);
+        });
+
+    EXPECT_EQ(token_count, 0);
+    EXPECT_EQ(complete_count, 1);
+    ASSERT_FALSE(final_result.has_value());
+    EXPECT_EQ(final_result.error().kind, ErrorKind::Cancelled);
 }
 
 } // namespace
