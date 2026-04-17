@@ -56,6 +56,53 @@ std::size_t write_callback(char* ptr, std::size_t size, std::size_t nmemb,
     return total;
 }
 
+/// State passed to the streaming write callback. Unlike `WriteState`,
+/// no buffer is accumulated — each chunk is handed to the user
+/// callback and dropped.
+struct StreamWriteState {
+    const HttpChunkCallback*  on_chunk    = nullptr;
+    const std::atomic<bool>*  cancel_flag = nullptr;
+};
+
+// libcurl streaming write callback — invokes the user callback once per
+// chunk. Returns 0 to abort libcurl when (a) cancellation was requested,
+// (b) the user callback returned false, or (c) the callback is missing.
+std::size_t stream_write_callback(char* ptr, std::size_t size,
+                                  std::size_t nmemb, void* userdata)
+{
+    const std::size_t total = size * nmemb;
+    auto* state = static_cast<StreamWriteState*>(userdata);
+
+    if (state == nullptr || state->on_chunk == nullptr || !*state->on_chunk) {
+        return 0;
+    }
+    if (state->cancel_flag != nullptr &&
+        state->cancel_flag->load(std::memory_order_acquire))
+    {
+        return 0;
+    }
+
+    const bool keep_going = (*state->on_chunk)(std::string_view(ptr, total));
+    return keep_going ? total : 0;
+}
+
+/// libcurl progress callback — fires periodically (~every few hundred ms)
+/// regardless of whether data has arrived. Lets `cancel_stream()` abort a
+/// response that is stalled between tokens. Returning nonzero aborts with
+/// CURLE_ABORTED_BY_CALLBACK.
+int stream_progress_callback(void* userdata,
+                             curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
+                             curl_off_t /*ultotal*/, curl_off_t /*ulnow*/)
+{
+    auto* state = static_cast<StreamWriteState*>(userdata);
+    if (state != nullptr && state->cancel_flag != nullptr &&
+        state->cancel_flag->load(std::memory_order_acquire))
+    {
+        return 1;
+    }
+    return 0;
+}
+
 // libcurl header callback — parses response headers into a map.
 std::size_t header_callback(char* buffer, std::size_t size, std::size_t nitems,
                             void* userdata)
@@ -216,6 +263,125 @@ Result<HttpResponse> HttpClient::send(const HttpRequest& req)
 
     HttpResponse response;
     response.body    = std::move(response_body);
+    response.headers = std::move(response_headers);
+
+    long status_code = 0;
+    curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &status_code);
+    response.status_code = static_cast<int>(status_code);
+
+    double total_time = 0.0;
+    curl_easy_getinfo(h, CURLINFO_TOTAL_TIME, &total_time);
+    response.total_time_ms = total_time * 1000.0;
+
+    return response;
+}
+
+// ============================================================================
+// send_streaming
+// ============================================================================
+
+Result<HttpResponse> HttpClient::send_streaming(const HttpStreamRequest& req)
+{
+    if (m_impl->handle == nullptr) {
+        return make_error(ErrorKind::NetworkError, "curl handle not initialized");
+    }
+    if (!req.on_chunk) {
+        return make_error(ErrorKind::NetworkError,
+                          "send_streaming requires a non-empty on_chunk callback");
+    }
+
+    CURL* h = m_impl->handle;
+    curl_easy_reset(h);
+
+    // URL
+    curl_easy_setopt(h, CURLOPT_URL, req.url.c_str());
+
+    // Method (matches the regular send() semantics).
+    if (req.method == "POST") {
+        curl_easy_setopt(h, CURLOPT_POST, 1L);
+        curl_easy_setopt(h, CURLOPT_POSTFIELDS, req.body.c_str());
+        curl_easy_setopt(h, CURLOPT_POSTFIELDSIZE,
+                         static_cast<long>(req.body.size()));
+    } else if (req.method == "PUT") {
+        curl_easy_setopt(h, CURLOPT_CUSTOMREQUEST, "PUT");
+        curl_easy_setopt(h, CURLOPT_POSTFIELDS, req.body.c_str());
+        curl_easy_setopt(h, CURLOPT_POSTFIELDSIZE,
+                         static_cast<long>(req.body.size()));
+    } else if (req.method == "DELETE") {
+        curl_easy_setopt(h, CURLOPT_CUSTOMREQUEST, "DELETE");
+    }
+
+    // Timeout — streaming requests typically need a generous budget,
+    // but we still honor the request's explicit value to let callers
+    // cap long-running streams.
+    curl_easy_setopt(h, CURLOPT_TIMEOUT_MS, static_cast<long>(req.timeout_ms));
+
+    // TLS + redirects (mirrors send()).
+    curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(h, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(h, CURLOPT_MAXREDIRS, 5L);
+
+    // Headers.
+    curl_slist* header_list = nullptr;
+    for (const auto& [key, value] : req.headers) {
+        const std::string header_line = key + ": " + value;
+        curl_slist* appended = curl_slist_append(header_list, header_line.c_str());
+        if (appended == nullptr) {
+            curl_slist_free_all(header_list);
+            return make_error(ErrorKind::NetworkError,
+                              "curl_slist_append allocation failed");
+        }
+        header_list = appended;
+    }
+    if (header_list != nullptr) {
+        curl_easy_setopt(h, CURLOPT_HTTPHEADER, header_list);
+    }
+
+    // Streaming write callback — drops each chunk into the user callback.
+    StreamWriteState write_state{&req.on_chunk, req.cancel_flag};
+    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, stream_write_callback);
+    curl_easy_setopt(h, CURLOPT_WRITEDATA, &write_state);
+
+    // Progress callback — lets cancel_stream() interrupt a stalled
+    // response that is waiting between tokens (no bytes → no write
+    // callback firing). CURLOPT_NOPROGRESS must be off for the
+    // progress callback to be invoked.
+    curl_easy_setopt(h, CURLOPT_XFERINFOFUNCTION, stream_progress_callback);
+    curl_easy_setopt(h, CURLOPT_XFERINFODATA,     &write_state);
+    curl_easy_setopt(h, CURLOPT_NOPROGRESS,       0L);
+
+    // Response headers (still collected — useful for status / content type).
+    std::map<std::string, std::string> response_headers;
+    curl_easy_setopt(h, CURLOPT_HEADERFUNCTION, header_callback);
+    curl_easy_setopt(h, CURLOPT_HEADERDATA, &response_headers);
+
+    const CURLcode res = curl_easy_perform(h);
+
+    if (header_list != nullptr) {
+        curl_slist_free_all(header_list);
+    }
+
+    // Distinguish cancellation from real network errors. Two different
+    // libcurl codes map to "caller asked us to stop":
+    //   - WRITE_ERROR: write callback returned 0 mid-chunk.
+    //   - ABORTED_BY_CALLBACK: progress callback returned nonzero.
+    if (res == CURLE_WRITE_ERROR || res == CURLE_ABORTED_BY_CALLBACK) {
+        const bool cancelled =
+            req.cancel_flag != nullptr &&
+            req.cancel_flag->load(std::memory_order_acquire);
+        if (cancelled) {
+            return make_error(ErrorKind::Cancelled,
+                              "streaming request cancelled by caller");
+        }
+    }
+
+    if (res != CURLE_OK) {
+        return make_error(ErrorKind::NetworkError,
+                          curl_easy_strerror(res), req.url);
+    }
+
+    HttpResponse response;
     response.headers = std::move(response_headers);
 
     long status_code = 0;

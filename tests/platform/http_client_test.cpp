@@ -52,4 +52,32 @@ TEST(HttpClientTest, InvalidUrl_ReturnsNetworkError)
     EXPECT_EQ(result.error().kind, vectis::core::ErrorKind::NetworkError);
 }
 
+// ---- send_streaming tests --------------------------------------------------
+
+TEST(HttpClientTest, SendStreaming_EmptyCallbackReturnsError)
+{
+    HttpClient client;
+    vectis::platform::HttpStreamRequest req;
+    req.url        = "https://example.com/";
+    req.timeout_ms = 3000;
+    // req.on_chunk deliberately left empty.
+
+    auto result = client.send_streaming(req);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().kind, vectis::core::ErrorKind::NetworkError);
+}
+
+TEST(HttpClientTest, SendStreaming_InvalidUrlReturnsNetworkError)
+{
+    HttpClient client;
+    vectis::platform::HttpStreamRequest req;
+    req.url        = "http://invalid.test.example.invalid/no-such-host";
+    req.timeout_ms = 3000;
+    req.on_chunk   = [](std::string_view) { return true; };
+
+    auto result = client.send_streaming(req);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().kind, vectis::core::ErrorKind::NetworkError);
+}
+
 } // namespace
