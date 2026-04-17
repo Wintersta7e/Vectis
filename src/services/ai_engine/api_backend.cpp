@@ -13,6 +13,7 @@
 #include "platform/http_client.h"
 #include "platform/process.h"
 #include "services/ai_engine/claude_api.h"
+#include "services/ai_engine/gemini_api.h"
 #include "services/ai_engine/openai_api.h"
 
 namespace vectis::services {
@@ -49,8 +50,19 @@ std::string_view default_model(AIBackend provider)
     switch (provider) {
         case AIBackend::Claude: return k_claude_default_model;
         case AIBackend::OpenAI: return k_openai_default_model;
+        case AIBackend::Gemini: return k_gemini_default_model;
         default:                return "";
     }
+}
+
+std::string gemini_url_for(std::string_view model, std::string_view suffix)
+{
+    std::string out;
+    out.reserve(k_gemini_endpoint_base.size() + model.size() + suffix.size());
+    out.append(k_gemini_endpoint_base);
+    out.append(model);
+    out.append(suffix);
+    return out;
 }
 
 /// Split the rolling SSE buffer on the first blank-line delimiter
@@ -145,8 +157,11 @@ Result<AIResponse> APIBackend::generate(const AIRequest& request)
         http_req.url  = std::string(k_openai_endpoint);
         http_req.body = build_openai_request(request, m_model, false).dump();
         http_req.headers["authorization"] = "Bearer " + m_api_key;
+    } else if (m_provider == AIBackend::Gemini) {
+        http_req.url  = gemini_url_for(m_model, k_gemini_gen_suffix);
+        http_req.body = build_gemini_request(request).dump();
+        http_req.headers["x-goog-api-key"] = m_api_key;
     } else {
-        // Gemini arrives in the next commit.
         return make_error(ErrorKind::AIError,
                           std::string(provider_name(m_provider)) +
                               " backend not yet implemented");
@@ -164,9 +179,13 @@ Result<AIResponse> APIBackend::generate(const AIRequest& request)
                               ": " + resp->body);
     }
 
-    auto parsed = (m_provider == AIBackend::Claude)
-                      ? parse_claude_response(resp->body)
-                      : parse_openai_response(resp->body);
+    Result<AIResponse> parsed = AIResponse{};
+    switch (m_provider) {
+        case AIBackend::Claude: parsed = parse_claude_response(resp->body); break;
+        case AIBackend::OpenAI: parsed = parse_openai_response(resp->body); break;
+        case AIBackend::Gemini: parsed = parse_gemini_response(resp->body); break;
+        default: break;
+    }
     if (!parsed) return parsed;
     parsed->backend_used = m_provider;
     const auto end = std::chrono::steady_clock::now();
@@ -219,8 +238,12 @@ void APIBackend::generate_stream(const AIRequest&   request,
         http_req.body = build_openai_request(request, m_model, true).dump();
         http_req.headers["authorization"] = "Bearer " + m_api_key;
         parser = &parse_openai_sse_frame;
+    } else if (m_provider == AIBackend::Gemini) {
+        http_req.url  = gemini_url_for(m_model, k_gemini_stream_suffix);
+        http_req.body = build_gemini_request(request).dump();
+        http_req.headers["x-goog-api-key"] = m_api_key;
+        parser = &parse_gemini_sse_frame;
     } else {
-        // Gemini arrives in the next commit.
         fail(ErrorKind::AIError,
              std::string(provider_name(m_provider)) +
                  " streaming not yet implemented");
