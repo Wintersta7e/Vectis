@@ -21,6 +21,7 @@
 #include "core/mode.h"
 #include "core/service_registry.h"
 #include "platform/file_io.h"
+#include "services/ai_engine/ai_engine.h"
 #include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 #include "ui/theme.h"
@@ -368,12 +369,14 @@ void App::render_frame()
     }
 
     ImGui::Separator();
-    ImGui::Text("Vectis v%s   |   modes: %zu   |   %s",
+    const std::string ai_status = m_impl->services->ai().status_text();
+    ImGui::Text("Vectis v%s   |   modes: %zu   |   %s   |   %s",
                 k_version,
                 m_impl->modes.size(),
                 m_impl->services->config().loaded_from_file()
                     ? "config: loaded"
-                    : "config: defaults");
+                    : "config: defaults",
+                ai_status.c_str());
 
     ImGui::End();
 }

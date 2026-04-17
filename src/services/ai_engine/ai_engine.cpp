@@ -64,20 +64,47 @@ struct AIEngine::Impl {
 // Constructors
 // -----------------------------------------------------------------------------
 
-AIEngine::AIEngine(vectis::core::ConfigManager&  /*config*/,
+namespace {
+
+/// Map the string form of `ask.ai_backend` to its enum. Unknown values
+/// (including "auto" and the empty string) → `AIBackend::Auto`.
+AIBackend parse_backend_name(std::string_view s)
+{
+    if (s == "claude") return AIBackend::Claude;
+    if (s == "openai") return AIBackend::OpenAI;
+    if (s == "gemini") return AIBackend::Gemini;
+    if (s == "ollama") return AIBackend::Ollama;
+    if (s == "ggml")   return AIBackend::GGML;
+    return AIBackend::Auto;
+}
+
+} // namespace
+
+AIEngine::AIEngine(vectis::core::ConfigManager&  config,
                    vectis::platform::HttpClient& http)
     : m_impl(std::make_unique<Impl>())
 {
+    // Ollama knobs come from config; API keys + models stay env-driven.
+    const auto ollama_endpoint = config.get_string(
+        "ask.ollama_endpoint", std::string(k_ollama_default_endpoint));
+    const auto ollama_model = config.get_string(
+        "ask.ollama_model", std::string(k_ollama_default_model));
+
     // Priority order: local Ollama (fast, private, free) first; then
     // API providers in the canonical ordering; GGML will be appended
     // by Phase G when the VECTIS_BUILD_GGML flag gates it in.
-    m_impl->backends.emplace_back(std::make_unique<OllamaBackend>(http));
+    m_impl->backends.emplace_back(
+        std::make_unique<OllamaBackend>(http, ollama_endpoint, ollama_model));
     m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Claude, http));
     m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::OpenAI, http));
     m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Gemini, http));
 
-    VECTIS_LOG_INFO("AIEngine constructed with {} backends",
-                    m_impl->backends.size());
+    // Apply user preference if the config names a specific backend.
+    const auto preferred_name = config.get_string("ask.ai_backend", "auto");
+    m_impl->preferred = parse_backend_name(preferred_name);
+
+    VECTIS_LOG_INFO("AIEngine constructed: {} backends, preference={}",
+                    m_impl->backends.size(), preferred_name);
 }
 
 AIEngine::AIEngine(std::vector<std::unique_ptr<IBackend>> backends)

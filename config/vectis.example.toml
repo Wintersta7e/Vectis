@@ -34,14 +34,21 @@ max_captures = 10000
 
 # --- Ask Mode ---
 [ask]
-# AI backend: "auto" (best available), "offline", "claude", "openai", "gemini", "ollama"
+# AI backend preference: "auto" (first available), "claude", "openai",
+# "gemini", "ollama", "ggml". "auto" picks the best of what's available.
 ai_backend = "auto"
 
-# For offline mode: path to GGUF model file
+# Ollama server endpoint and model name.
+# ollama_endpoint = "http://localhost:11434"
+# ollama_model    = "llama3"
+
+# For offline GGML mode (only if built with VECTIS_BUILD_GGML=ON):
+# path to a GGUF model file next to the binary.
 # model_path = "./models/phi-3-mini-4k-instruct.Q4_K_M.gguf"
 
-# For API backends: tokens are read from environment variables, never from this file
-# Set CLAUDE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OLLAMA_URL in your environment
+# For API backends: tokens are read from environment variables, never
+# from this file. Set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY
+# in your shell before launching Vectis.
 
 # --- Project Mode ---
 # API integrations are optional. Everything works without them.
