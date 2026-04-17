@@ -404,6 +404,7 @@ add_library(vectis_core STATIC
     src/core/service_registry.cpp
     src/core/task_queue.cpp
     src/modes/ask/ask_mode.cpp
+    src/modes/ask/context_builder.cpp
     src/modes/ask/conversation_store.cpp
     src/modes/ask/question_classifier.cpp
     src/modes/ask/web_search.cpp
