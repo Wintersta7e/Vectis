@@ -393,6 +393,8 @@ add_library(vectis_core STATIC
     src/modes/code/parser_queries.cpp
     src/modes/code/scanner.cpp
     src/services/ai_engine/ai_engine.cpp
+    src/services/ai_engine/api_backend.cpp
+    src/services/ai_engine/claude_api.cpp
     src/services/index_engine/index_engine.cpp
     src/services/storage_engine/storage_engine.cpp
     src/platform/file_dialog.cpp

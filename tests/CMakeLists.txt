@@ -28,6 +28,7 @@ add_executable(vectis_tests
     platform/file_watcher_test.cpp
     platform/http_client_test.cpp
     services/ai_engine_test.cpp
+    services/claude_api_test.cpp
     services/index_engine_test.cpp
     services/storage_engine_test.cpp
     services/token_budget_test.cpp
