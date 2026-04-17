@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -12,7 +13,9 @@
 #include "core/config_manager.h"
 #include "core/log.h"
 #include "platform/http_client.h"
+#include "services/ai_engine/api_backend.h"
 #include "services/ai_engine/backend.h"
+#include "services/ai_engine/ollama_backend.h"
 
 namespace vectis::services {
 
@@ -27,7 +30,7 @@ constexpr const char* k_status_not_configured = "AI: not configured";
 } // namespace
 
 // -----------------------------------------------------------------------------
-// AIEngine::Impl — holds backends + selection state.
+// AIEngine::Impl
 // -----------------------------------------------------------------------------
 
 struct AIEngine::Impl {
@@ -35,20 +38,46 @@ struct AIEngine::Impl {
     AIBackend                              preferred = AIBackend::Auto;
     std::atomic<bool>                      cancel_flag{false};
     mutable std::mutex                     mutex;
+
+    /// Pick a backend for dispatch. Caller must hold `mutex`.
+    IBackend* select_backend_locked()
+    {
+        // Explicit user preference wins if available.
+        if (preferred != AIBackend::Auto) {
+            for (auto& b : backends) {
+                if (b && b->kind() == preferred && b->is_available()) {
+                    return b.get();
+                }
+            }
+        }
+        // Otherwise the first available backend in declared priority order.
+        for (auto& b : backends) {
+            if (b && b->is_available()) {
+                return b.get();
+            }
+        }
+        return nullptr;
+    }
 };
 
 // -----------------------------------------------------------------------------
-// Constructors, destructor, move.
+// Constructors
 // -----------------------------------------------------------------------------
 
 AIEngine::AIEngine(vectis::core::ConfigManager&  /*config*/,
-                   vectis::platform::HttpClient& /*http*/)
+                   vectis::platform::HttpClient& http)
     : m_impl(std::make_unique<Impl>())
 {
-    // Real backends wired in subsequent commits (Claude, OpenAI, Gemini,
-    // Ollama, GGML). For now the backend list is empty and every
-    // production query returns AIError.
-    VECTIS_LOG_INFO("AIEngine constructed (no backends yet)");
+    // Priority order: local Ollama (fast, private, free) first; then
+    // API providers in the canonical ordering; GGML will be appended
+    // by Phase G when the VECTIS_BUILD_GGML flag gates it in.
+    m_impl->backends.emplace_back(std::make_unique<OllamaBackend>(http));
+    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Claude, http));
+    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::OpenAI, http));
+    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Gemini, http));
+
+    VECTIS_LOG_INFO("AIEngine constructed with {} backends",
+                    m_impl->backends.size());
 }
 
 AIEngine::AIEngine(std::vector<std::unique_ptr<IBackend>> backends)
@@ -62,14 +91,32 @@ AIEngine::AIEngine(std::vector<std::unique_ptr<IBackend>> backends)
 AIEngine::~AIEngine() = default;
 
 // -----------------------------------------------------------------------------
-// Querying — skeleton returns "no backend" until orchestration lands in
-// Phase E. Once the real dispatch is in place these bodies will grow;
-// the interface does not change.
+// Querying
 // -----------------------------------------------------------------------------
 
-Result<AIResponse> AIEngine::query(const AIRequest& /*request*/)
+Result<AIResponse> AIEngine::query(const AIRequest& request)
 {
-    return make_error(ErrorKind::AIError, "no AI backend available");
+    IBackend* backend = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock(m_impl->mutex);
+        backend = m_impl->select_backend_locked();
+    }
+    if (backend == nullptr) {
+        return make_error(ErrorKind::AIError, "no AI backend available");
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    auto result = backend->generate(request);
+    const auto end = std::chrono::steady_clock::now();
+
+    if (result) {
+        result->backend_used = backend->kind();
+        if (result->latency_ms == 0.0) {
+            result->latency_ms =
+                std::chrono::duration<double, std::milli>(end - start).count();
+        }
+    }
+    return result;
 }
 
 std::future<Result<AIResponse>> AIEngine::query_async(const AIRequest& request)
@@ -82,8 +129,11 @@ void AIEngine::query_stream(const AIRequest& /*request*/,
                             StreamCallback   /*on_token*/,
                             StreamComplete   on_complete)
 {
+    // Wiring lands in commit 9. For now, the sync path is live and
+    // streaming still short-circuits with the "no backend" error.
     if (on_complete) {
-        on_complete(make_error(ErrorKind::AIError, "no AI backend available"));
+        on_complete(make_error(ErrorKind::AIError,
+                               "streaming dispatch not yet wired"));
     }
 }
 
@@ -93,13 +143,22 @@ void AIEngine::cancel_stream()
 }
 
 // -----------------------------------------------------------------------------
-// Backend inspection.
+// Inspection
 // -----------------------------------------------------------------------------
 
 AIBackend AIEngine::active_backend() const
 {
     const std::lock_guard<std::mutex> lock(m_impl->mutex);
-    return m_impl->preferred;
+    if (m_impl->preferred != AIBackend::Auto) {
+        return m_impl->preferred;
+    }
+    // When preference is Auto, report the first available backend.
+    for (const auto& b : m_impl->backends) {
+        if (b && b->is_available()) {
+            return b->kind();
+        }
+    }
+    return AIBackend::Auto;
 }
 
 std::vector<AIBackend> AIEngine::available_backends() const
@@ -133,6 +192,19 @@ bool AIEngine::is_ready() const
 std::string AIEngine::status_text() const
 {
     const std::lock_guard<std::mutex> lock(m_impl->mutex);
+
+    // If the user set a preference, describe that backend — even if
+    // it's currently unavailable, so the user sees their choice
+    // reflected with the unavailability note.
+    if (m_impl->preferred != AIBackend::Auto) {
+        for (const auto& b : m_impl->backends) {
+            if (b && b->kind() == m_impl->preferred) {
+                return b->display_name();
+            }
+        }
+    }
+    // Otherwise name the first available backend, or the generic not-
+    // configured status.
     for (const auto& b : m_impl->backends) {
         if (b && b->is_available()) {
             return b->display_name();
