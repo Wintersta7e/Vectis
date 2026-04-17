@@ -31,6 +31,7 @@ add_executable(vectis_tests
     services/claude_api_test.cpp
     services/gemini_api_test.cpp
     services/index_engine_test.cpp
+    services/ollama_backend_test.cpp
     services/openai_api_test.cpp
     services/storage_engine_test.cpp
     services/token_budget_test.cpp
