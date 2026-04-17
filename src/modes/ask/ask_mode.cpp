@@ -129,6 +129,12 @@ void AskMode::initialize(vectis::core::ServiceRegistry& services)
 
 void AskMode::shutdown()
 {
+    // Interrupt any in-flight streaming BEFORE cancelling the TaskQueue,
+    // so the worker's query_stream call returns promptly instead of
+    // blocking the mode-shutdown sequence.
+    if (m_services != nullptr) {
+        m_services->ai().cancel_stream();
+    }
     if (m_bus != nullptr && m_bus_sub_id != 0) {
         m_bus->unsubscribe(m_bus_sub_id);
         m_bus_sub_id = 0;
@@ -179,6 +185,13 @@ void AskMode::on_delete_conversation(std::int64_t conversation_id)
         m_current_conversation = {};
     }
     refresh_conversation_list();
+}
+
+void AskMode::on_stop_streaming()
+{
+    if (m_services != nullptr) {
+        m_services->ai().cancel_stream();
+    }
 }
 
 void AskMode::on_submit_question()
@@ -316,7 +329,9 @@ void AskMode::on_submit_question()
         // on_complete is supported.
         std::atomic<bool> complete{false};
         std::string       final_content;
-        bool              succeeded = false;
+        bool              succeeded  = false;
+        vectis::core::ErrorKind error_kind =
+            vectis::core::ErrorKind::AIError;
         std::string       error_message;
 
         services_ptr->ai().query_stream(
@@ -331,6 +346,7 @@ void AskMode::on_submit_question()
                     final_content = std::move(r->text);
                     succeeded     = true;
                 } else {
+                    error_kind    = r.error().kind;
                     error_message = r.error().message;
                 }
                 complete.store(true, std::memory_order_release);
@@ -344,6 +360,21 @@ void AskMode::on_submit_question()
 
         if (succeeded) {
             finalise(std::move(final_content),
+                     build_citations(web_results, code_results));
+        } else if (error_kind == vectis::core::ErrorKind::Cancelled) {
+            // Preserve whatever the user already watched stream in.
+            // Read the buffer BEFORE finalise — finalise clears it.
+            std::string partial;
+            {
+                const std::lock_guard<std::mutex> lock(*stream_mutex);
+                partial = *stream_buffer;
+            }
+            if (partial.empty()) {
+                partial = "(stopped)";
+            } else {
+                partial.append("\n\n_(stopped)_");
+            }
+            finalise(std::move(partial),
                      build_citations(web_results, code_results));
         } else {
             finalise("Error: " + error_message, {});
@@ -416,6 +447,17 @@ void AskMode::render_conversation_sidebar()
         return;
     }
 
+    // Sidebar actions are disabled while a stream is running. Switching
+    // conversations mid-stream would bind the ghost assistant turn to
+    // whatever conversation happens to be active at render time — the
+    // tokens keep landing in the original conversation's DB row (correct),
+    // but the user would see a phantom answer appear under the new chat.
+    // Easier to just prevent the switch than to build a ghost-vs-context
+    // reconciliation path.
+    const bool busy = m_streaming.load(std::memory_order_acquire) ||
+                      m_search_running.load(std::memory_order_acquire);
+    ImGui::BeginDisabled(busy);
+
     if (ImGui::Button("New Chat", ImVec2(-1.0F, 0.0F))) {
         on_new_conversation();
     }
@@ -442,6 +484,8 @@ void AskMode::render_conversation_sidebar()
         }
     }
     ImGui::EndChild();
+
+    ImGui::EndDisabled();
 
     ImGui::End();
 }
@@ -561,19 +605,35 @@ void AskMode::render_input_bar()
     const float button_w = 60.0F;
     const float spacing  = ImGui::GetStyle().ItemSpacing.x;
 
+    const bool streaming = m_streaming.load(std::memory_order_acquire);
+    const bool searching = m_search_running.load(std::memory_order_relaxed);
+
+    // Disable the input field while a stream is running so the user
+    // can't queue a second question mid-answer. Enter-to-submit stays
+    // active only when nothing is in flight.
     ImGui::PushItemWidth(-(button_w + spacing));
+    ImGui::BeginDisabled(streaming || searching);
     const bool submitted = ImGui::InputText(
         "##ask_input", m_input_buffer, sizeof(m_input_buffer),
         ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::EndDisabled();
     ImGui::PopItemWidth();
 
     ImGui::SameLine();
-    const bool searching = m_search_running.load(std::memory_order_relaxed);
-    ImGui::BeginDisabled(searching);
-    if ((ImGui::Button("Send", ImVec2(button_w, 0.0F)) || submitted) && !searching) {
-        on_submit_question();
+    if (streaming) {
+        // Stop button replaces Send while the AI is emitting tokens.
+        if (ImGui::Button("Stop", ImVec2(button_w, 0.0F))) {
+            on_stop_streaming();
+        }
+    } else {
+        ImGui::BeginDisabled(searching);
+        if ((ImGui::Button("Send", ImVec2(button_w, 0.0F)) || submitted) &&
+            !searching)
+        {
+            on_submit_question();
+        }
+        ImGui::EndDisabled();
     }
-    ImGui::EndDisabled();
 }
 
 } // namespace vectis::modes::ask

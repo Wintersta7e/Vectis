@@ -50,6 +50,7 @@ public:
 private:
     // Actions
     void on_submit_question();
+    void on_stop_streaming();
     void on_new_conversation();
     void on_select_conversation(std::int64_t conversation_id);
     void on_delete_conversation(std::int64_t conversation_id);
