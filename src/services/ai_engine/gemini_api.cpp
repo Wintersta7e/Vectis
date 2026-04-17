@@ -137,8 +137,9 @@ parse_gemini_sse_frame(std::string_view frame)
             while (!rest.empty() && rest.front() == ' ') {
                 rest.remove_prefix(1);
             }
-            data_line.assign(rest);
-            break;
+            // Join multi-line data per SSE spec.
+            if (!data_line.empty()) data_line.push_back('\n');
+            data_line.append(rest);
         }
         if (eol == std::string_view::npos) break;
         pos = eol + 1;

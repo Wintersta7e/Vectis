@@ -156,4 +156,19 @@ TEST(OpenAIApiTest, ParseSseFrame_MalformedDataReturnsParseError)
     EXPECT_EQ(r.error().kind, vectis::core::ErrorKind::ParseError);
 }
 
+TEST(OpenAIApiTest, ParseSseFrame_JoinsMultipleDataLinesPerSpec)
+{
+    // Two `data:` lines in one frame should be joined with '\n' before
+    // JSON parsing (SSE spec). JSON tolerates internal whitespace.
+    const std::string frame =
+        R"(data: {"choices":[{"index":0,)"
+        "\n"
+        R"(data: "delta":{"content":"multi"}}]})";
+
+    auto r = parse_openai_sse_frame(frame);
+    ASSERT_TRUE(r.has_value());
+    ASSERT_TRUE(r->has_value());
+    EXPECT_EQ(**r, "multi");
+}
+
 } // namespace

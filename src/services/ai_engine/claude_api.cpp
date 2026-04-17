@@ -130,10 +130,12 @@ parse_claude_sse_frame(std::string_view frame)
             while (!rest.empty() && rest.front() == ' ') {
                 rest.remove_prefix(1);
             }
-            // Multi-line data fields get concatenated with newlines per
-            // the SSE spec; Claude uses single-line JSON so we keep it
-            // simple and overwrite rather than append.
-            data_line.assign(rest);
+            // Per SSE spec, multiple `data:` lines in one event are
+            // joined with newlines. Claude currently emits single-line
+            // JSON per event, but following the spec costs little and
+            // protects against silent breakage if that ever changes.
+            if (!data_line.empty()) data_line.push_back('\n');
+            data_line.append(rest);
         }
 
         if (eol == std::string_view::npos) break;

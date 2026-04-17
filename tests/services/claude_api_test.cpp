@@ -173,4 +173,21 @@ TEST(ClaudeApiTest, ParseSseFrame_MalformedDataReturnsParseError)
     EXPECT_EQ(r.error().kind, vectis::core::ErrorKind::ParseError);
 }
 
+TEST(ClaudeApiTest, ParseSseFrame_JoinsMultipleDataLinesPerSpec)
+{
+    // Synthesize a multi-line data frame: two halves of a JSON object
+    // split across two `data:` lines. Per SSE spec, these join with
+    // a literal newline before JSON parsing.
+    const std::string frame =
+        "event: content_block_delta\n"
+        R"(data: {"type":"content_block_delta","delta":)"
+        "\n"
+        R"(data: {"type":"text_delta","text":"joined"}})";
+
+    auto r = parse_claude_sse_frame(frame);
+    ASSERT_TRUE(r.has_value());
+    ASSERT_TRUE(r->has_value());
+    EXPECT_EQ(**r, "joined");
+}
+
 } // namespace

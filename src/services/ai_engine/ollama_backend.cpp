@@ -22,6 +22,17 @@ using vectis::core::Result;
 namespace {
 
 constexpr std::string_view k_context_separator = "\n\n---\n\n";
+constexpr std::size_t      k_error_body_preview = 512;
+
+std::string preview_body(const std::string& body)
+{
+    if (body.size() <= k_error_body_preview) return body;
+    std::string out;
+    out.reserve(k_error_body_preview + 20);
+    out.append(body, 0, k_error_body_preview);
+    out.append("...[truncated]");
+    return out;
+}
 
 std::string build_user_prompt(const AIRequest& req)
 {
@@ -172,7 +183,7 @@ Result<AIResponse> OllamaBackend::generate(const AIRequest& request)
         return make_error(ErrorKind::AIError,
                           "Ollama returned HTTP " +
                               std::to_string(resp->status_code) +
-                              ": " + resp->body);
+                              ": " + preview_body(resp->body));
     }
 
     auto parsed = parse_ollama_response(resp->body);

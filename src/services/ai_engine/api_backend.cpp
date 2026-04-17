@@ -24,6 +24,22 @@ using vectis::core::Result;
 
 namespace {
 
+/// Cap the response-body preview we echo into error messages. Keeps
+/// the log sane when a provider returns a large HTML error page and
+/// limits the blast radius if a body ever contained echoed request
+/// fragments.
+constexpr std::size_t k_error_body_preview = 512;
+
+std::string preview_body(const std::string& body)
+{
+    if (body.size() <= k_error_body_preview) return body;
+    std::string out;
+    out.reserve(k_error_body_preview + 20);
+    out.append(body, 0, k_error_body_preview);
+    out.append("...[truncated]");
+    return out;
+}
+
 /// Which env var a given API provider reads its key from.
 std::string_view env_var_for(AIBackend provider)
 {
@@ -162,9 +178,13 @@ Result<AIResponse> APIBackend::generate(const AIRequest& request)
         http_req.body = build_gemini_request(request).dump();
         http_req.headers["x-goog-api-key"] = m_api_key;
     } else {
+        // Defensive: APIBackend is constructed only with Claude / OpenAI
+        // / Gemini in production; Ollama and GGML each have their own
+        // class. If anything reaches here it means the constructor was
+        // misused — fail loudly rather than pretending to do work.
         return make_error(ErrorKind::AIError,
-                          std::string(provider_name(m_provider)) +
-                              " backend not yet implemented");
+                          "APIBackend does not handle " +
+                              std::string(provider_name(m_provider)));
     }
 
     auto resp = m_http->send(http_req);
@@ -176,7 +196,7 @@ Result<AIResponse> APIBackend::generate(const AIRequest& request)
                           std::string(provider_name(m_provider)) +
                               " API returned HTTP " +
                               std::to_string(resp->status_code) +
-                              ": " + resp->body);
+                              ": " + preview_body(resp->body));
     }
 
     Result<AIResponse> parsed = AIResponse{};
@@ -244,9 +264,11 @@ void APIBackend::generate_stream(const AIRequest&   request,
         http_req.headers["x-goog-api-key"] = m_api_key;
         parser = &parse_gemini_sse_frame;
     } else {
+        // Defensive — see note in generate(). APIBackend is only
+        // constructed for the three HTTP providers.
         fail(ErrorKind::AIError,
-             std::string(provider_name(m_provider)) +
-                 " streaming not yet implemented");
+             "APIBackend does not handle " +
+                 std::string(provider_name(m_provider)));
         return;
     }
 
