@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -84,6 +85,15 @@ private:
     std::atomic<bool>         m_search_running{false};
     std::uint64_t             m_bus_sub_id = 0;
     bool                      m_scroll_to_bottom = false;
+
+    // Live streaming state. `m_stream_buffer` is written by the AI
+    // token callback on the TaskQueue worker and read by the render
+    // loop on the main thread — always under `m_stream_mutex`.
+    // `m_streaming` is an independent atomic signal so the render
+    // path can skip the lock when no stream is active.
+    std::mutex        m_stream_mutex;
+    std::string       m_stream_buffer;
+    std::atomic<bool> m_streaming{false};
 
     // Docking
     bool m_dock_layout_built = false;

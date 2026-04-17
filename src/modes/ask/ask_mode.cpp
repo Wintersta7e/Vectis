@@ -5,9 +5,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #include <imgui.h>
@@ -228,12 +232,36 @@ void AskMode::on_submit_question()
             m_current_conversation.messages.end() - 1);
     }
 
+    // Reset the streaming buffer for this query.
+    {
+        const std::lock_guard<std::mutex> lock(m_stream_mutex);
+        m_stream_buffer.clear();
+    }
+    m_streaming.store(true, std::memory_order_release);
+
+    auto* stream_mutex   = &m_stream_mutex;
+    auto* stream_buffer  = &m_stream_buffer;
+    auto* streaming_flag = &m_streaming;
+
     m_task_queue->submit([question, conv_id, web_search_ptr, services_ptr,
                           store_ptr, codebase, running_ptr,
+                          stream_mutex, stream_buffer, streaming_flag,
                           history = std::move(history_snapshot)]
                          (const vectis::core::CancellationToken& token) {
-        if (token.stop_requested()) {
+        auto finalise = [&](std::string content,
+                            const std::vector<SourceCitation>& citations) {
+            (void)store_ptr->add_message(conv_id, "assistant",
+                                         std::move(content), citations);
+            {
+                const std::lock_guard<std::mutex> lock(*stream_mutex);
+                stream_buffer->clear();
+            }
+            streaming_flag->store(false, std::memory_order_release);
             running_ptr->store(false, std::memory_order_release);
+        };
+
+        if (token.stop_requested()) {
+            finalise("(cancelled)", {});
             return;
         }
 
@@ -263,15 +291,12 @@ void AskMode::on_submit_question()
         // No AI backend available → fall back to the Step 6 raw-results
         // path so Ask mode keeps working without any keys / Ollama.
         if (services_ptr == nullptr || !services_ptr->ai().is_ready()) {
-            const auto fallback  = format_results(web_results, code_results);
-            const auto citations = build_citations(web_results, code_results);
-            (void)store_ptr->add_message(conv_id, "assistant",
-                                         fallback, citations);
-            running_ptr->store(false, std::memory_order_release);
+            const auto fallback = format_results(web_results, code_results);
+            finalise(fallback, build_citations(web_results, code_results));
             return;
         }
 
-        // Assemble the prompt and query the AI.
+        // Assemble the prompt.
         const auto prompt = assemble_user_prompt(
             question,
             build_codebase_context(code_results),
@@ -283,21 +308,46 @@ void AskMode::on_submit_question()
         req.user_prompt   = prompt;
         req.max_tokens    = 1024;
         req.temperature   = 0.3F;
+        req.stream        = true;
 
-        auto result = services_ptr->ai().query(req);
+        // Synchronise on the on_complete callback so the TaskQueue
+        // worker doesn't return before the AI stream finishes. Any
+        // backend implementation that calls on_token followed by
+        // on_complete is supported.
+        std::atomic<bool> complete{false};
+        std::string       final_content;
+        bool              succeeded = false;
+        std::string       error_message;
 
-        std::string content;
-        std::vector<SourceCitation> citations;
-        if (result) {
-            content   = std::move(result->text);
-            citations = build_citations(web_results, code_results);
-        } else {
-            content = "Error: " + result.error().message;
+        services_ptr->ai().query_stream(
+            req,
+            [stream_mutex, stream_buffer]
+            (std::string_view tok) {
+                const std::lock_guard<std::mutex> lock(*stream_mutex);
+                stream_buffer->append(tok);
+            },
+            [&](vectis::core::Result<vectis::services::AIResponse> r) {
+                if (r) {
+                    final_content = std::move(r->text);
+                    succeeded     = true;
+                } else {
+                    error_message = r.error().message;
+                }
+                complete.store(true, std::memory_order_release);
+            });
+
+        // generate_stream is currently synchronous on this thread;
+        // the flag is future-proofing for any async implementation.
+        while (!complete.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
         }
-        (void)store_ptr->add_message(conv_id, "assistant",
-                                     content, citations);
 
-        running_ptr->store(false, std::memory_order_release);
+        if (succeeded) {
+            finalise(std::move(final_content),
+                     build_citations(web_results, code_results));
+        } else {
+            finalise("Error: " + error_message, {});
+        }
     });
 }
 
@@ -428,10 +478,33 @@ void AskMode::render_chat_area()
             for (const auto& msg : m_current_conversation.messages) {
                 render_message(msg);
             }
-            if (m_search_running.load(std::memory_order_relaxed)) {
+
+            // Ghost assistant turn: if a stream is in flight, show the
+            // accumulating text with a blinking cursor. When the stream
+            // ends, the worker clears `m_stream_buffer` and `m_streaming`
+            // becomes false; the persisted message from SQLite then takes
+            // its place on the next frame.
+            if (m_streaming.load(std::memory_order_acquire)) {
+                std::string snapshot;
+                {
+                    const std::lock_guard<std::mutex> lock(m_stream_mutex);
+                    snapshot = m_stream_buffer;
+                }
+                const bool blink =
+                    (static_cast<int>(ImGui::GetTime() * 2.0) % 2) == 0;
+                snapshot.append(blink ? "\u2588" : " ");
+
+                Message ghost;
+                ghost.role    = "assistant";
+                ghost.content = std::move(snapshot);
+                render_message(ghost);
+
+                m_scroll_to_bottom = true;
+            } else if (m_search_running.load(std::memory_order_relaxed)) {
                 ImGui::Spacing();
                 ImGui::TextDisabled("Searching...");
             }
+
             if (m_scroll_to_bottom) {
                 ImGui::SetScrollHereY(1.0F);
                 m_scroll_to_bottom = false;
