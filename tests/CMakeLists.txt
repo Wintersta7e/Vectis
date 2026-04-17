@@ -30,6 +30,7 @@ add_executable(vectis_tests
     services/ai_engine_test.cpp
     services/claude_api_test.cpp
     services/index_engine_test.cpp
+    services/openai_api_test.cpp
     services/storage_engine_test.cpp
     services/token_budget_test.cpp
 )

@@ -13,6 +13,7 @@
 #include "platform/http_client.h"
 #include "platform/process.h"
 #include "services/ai_engine/claude_api.h"
+#include "services/ai_engine/openai_api.h"
 
 namespace vectis::services {
 
@@ -47,6 +48,7 @@ std::string_view default_model(AIBackend provider)
 {
     switch (provider) {
         case AIBackend::Claude: return k_claude_default_model;
+        case AIBackend::OpenAI: return k_openai_default_model;
         default:                return "";
     }
 }
@@ -129,42 +131,48 @@ Result<AIResponse> APIBackend::generate(const AIRequest& request)
 
     const auto start = std::chrono::steady_clock::now();
 
+    vectis::platform::HttpRequest http_req;
+    http_req.method     = "POST";
+    http_req.timeout_ms = 60000;
+    http_req.headers["content-type"] = "application/json";
+
     if (m_provider == AIBackend::Claude) {
-        const auto body = build_claude_request(request, m_model, false).dump();
-
-        vectis::platform::HttpRequest http_req;
-        http_req.method     = "POST";
-        http_req.url        = std::string(k_claude_endpoint);
-        http_req.timeout_ms = 60000;
-        http_req.body       = body;
-        http_req.headers["content-type"]     = "application/json";
-        http_req.headers["x-api-key"]        = m_api_key;
+        http_req.url  = std::string(k_claude_endpoint);
+        http_req.body = build_claude_request(request, m_model, false).dump();
+        http_req.headers["x-api-key"]         = m_api_key;
         http_req.headers["anthropic-version"] = "2023-06-01";
-
-        auto resp = m_http->send(http_req);
-        if (!resp) {
-            return tl::unexpected(resp.error());
-        }
-        if (resp->status_code != 200) {
-            return make_error(ErrorKind::AIError,
-                              std::string("Claude API returned HTTP ") +
-                                  std::to_string(resp->status_code) +
-                                  ": " + resp->body);
-        }
-
-        auto parsed = parse_claude_response(resp->body);
-        if (!parsed) return parsed;
-        parsed->backend_used = AIBackend::Claude;
-        const auto end = std::chrono::steady_clock::now();
-        parsed->latency_ms =
-            std::chrono::duration<double, std::milli>(end - start).count();
-        return parsed;
+    } else if (m_provider == AIBackend::OpenAI) {
+        http_req.url  = std::string(k_openai_endpoint);
+        http_req.body = build_openai_request(request, m_model, false).dump();
+        http_req.headers["authorization"] = "Bearer " + m_api_key;
+    } else {
+        // Gemini arrives in the next commit.
+        return make_error(ErrorKind::AIError,
+                          std::string(provider_name(m_provider)) +
+                              " backend not yet implemented");
     }
 
-    // OpenAI / Gemini arrive in subsequent commits.
-    return make_error(ErrorKind::AIError,
-                      std::string(provider_name(m_provider)) +
-                          " backend not yet implemented");
+    auto resp = m_http->send(http_req);
+    if (!resp) {
+        return tl::unexpected(resp.error());
+    }
+    if (resp->status_code != 200) {
+        return make_error(ErrorKind::AIError,
+                          std::string(provider_name(m_provider)) +
+                              " API returned HTTP " +
+                              std::to_string(resp->status_code) +
+                              ": " + resp->body);
+    }
+
+    auto parsed = (m_provider == AIBackend::Claude)
+                      ? parse_claude_response(resp->body)
+                      : parse_openai_response(resp->body);
+    if (!parsed) return parsed;
+    parsed->backend_used = m_provider;
+    const auto end = std::chrono::steady_clock::now();
+    parsed->latency_ms =
+        std::chrono::duration<double, std::milli>(end - start).count();
+    return parsed;
 }
 
 void APIBackend::generate_stream(const AIRequest&   request,
@@ -186,37 +194,49 @@ void APIBackend::generate_stream(const AIRequest&   request,
         return;
     }
 
-    if (m_provider != AIBackend::Claude) {
+    const auto start = std::chrono::steady_clock::now();
+
+    vectis::platform::HttpStreamRequest http_req;
+    http_req.method      = "POST";
+    http_req.timeout_ms  = 120000;
+    http_req.cancel_flag = &cancel_flag;
+    http_req.headers["content-type"] = "application/json";
+    http_req.headers["accept"]       = "text/event-stream";
+
+    // Per-provider: endpoint, request body, auth header, SSE parser.
+    using SseParser =
+        Result<std::optional<std::string>>(*)(std::string_view);
+    SseParser parser = nullptr;
+
+    if (m_provider == AIBackend::Claude) {
+        http_req.url  = std::string(k_claude_endpoint);
+        http_req.body = build_claude_request(request, m_model, true).dump();
+        http_req.headers["x-api-key"]         = m_api_key;
+        http_req.headers["anthropic-version"] = "2023-06-01";
+        parser = &parse_claude_sse_frame;
+    } else if (m_provider == AIBackend::OpenAI) {
+        http_req.url  = std::string(k_openai_endpoint);
+        http_req.body = build_openai_request(request, m_model, true).dump();
+        http_req.headers["authorization"] = "Bearer " + m_api_key;
+        parser = &parse_openai_sse_frame;
+    } else {
+        // Gemini arrives in the next commit.
         fail(ErrorKind::AIError,
              std::string(provider_name(m_provider)) +
                  " streaming not yet implemented");
         return;
     }
 
-    const auto start = std::chrono::steady_clock::now();
-    const auto body  = build_claude_request(request, m_model, true).dump();
-
-    // Rolling state captured by the chunk callback.
+    // Rolling state captured by reference in the chunk callback.
     std::string buffer;
     std::string accumulated;
-
-    vectis::platform::HttpStreamRequest http_req;
-    http_req.method     = "POST";
-    http_req.url        = std::string(k_claude_endpoint);
-    http_req.timeout_ms = 120000;
-    http_req.body       = body;
-    http_req.cancel_flag = &cancel_flag;
-    http_req.headers["content-type"]     = "application/json";
-    http_req.headers["x-api-key"]        = m_api_key;
-    http_req.headers["anthropic-version"] = "2023-06-01";
-    http_req.headers["accept"]           = "text/event-stream";
 
     http_req.on_chunk = [&](std::string_view chunk) -> bool {
         buffer.append(chunk);
         std::string frame;
         while (extract_sse_frame(buffer, frame)) {
-            auto delta = parse_claude_sse_frame(frame);
-            if (!delta) continue;  // ignore malformed frames, keep streaming
+            auto delta = parser(frame);
+            if (!delta) continue;  // malformed frame — keep streaming
             if (delta->has_value() && !(*delta)->empty()) {
                 if (on_token) on_token(**delta);
                 accumulated.append(**delta);
@@ -235,14 +255,14 @@ void APIBackend::generate_stream(const AIRequest&   request,
     }
     if (resp->status_code != 200) {
         fail(ErrorKind::AIError,
-             std::string("Claude API returned HTTP ") +
-                 std::to_string(resp->status_code));
+             std::string(provider_name(m_provider)) +
+                 " API returned HTTP " + std::to_string(resp->status_code));
         return;
     }
 
     AIResponse final;
     final.text         = std::move(accumulated);
-    final.backend_used = AIBackend::Claude;
+    final.backend_used = m_provider;
     final.latency_ms =
         std::chrono::duration<double, std::milli>(end - start).count();
     if (on_complete) on_complete(final);
