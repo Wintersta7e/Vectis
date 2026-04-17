@@ -29,6 +29,7 @@ add_executable(vectis_tests
     platform/http_client_test.cpp
     services/index_engine_test.cpp
     services/storage_engine_test.cpp
+    services/token_budget_test.cpp
 )
 
 # Fixture test needs to find the sample projects in the source tree
