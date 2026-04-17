@@ -170,6 +170,11 @@ bool App::initialize()
     }
     m_impl->mark_stage(Stage_Config);
 
+    // AIEngine reads config keys (ask.ai_backend, ask.ollama_endpoint,
+    // ask.ollama_model, ask.model_path) at construction time; it must
+    // be built AFTER config.load() has populated them.
+    m_impl->services->initialize_ai();
+
     // Warn about ignored override (Step 1 uses default data_dir always).
     const std::string override_dir =
         m_impl->services->config().get_string("general.data_dir", "");

@@ -83,8 +83,11 @@ public:
 
     AIEngine(const AIEngine&)            = delete;
     AIEngine& operator=(const AIEngine&) = delete;
-    AIEngine(AIEngine&&) noexcept;
-    AIEngine& operator=(AIEngine&&) noexcept;
+    // Move is deliberately deleted: AIEngine is lifetime-owned by
+    // ServiceRegistry, and enabling moves made `query_async` racy
+    // (the async lambda captures `this`, which would dangle on move).
+    AIEngine(AIEngine&&)                 = delete;
+    AIEngine& operator=(AIEngine&&)      = delete;
 
     /// Synchronous query. Blocks the calling thread until the response
     /// arrives or an error is produced.
