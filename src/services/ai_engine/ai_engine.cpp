@@ -15,6 +15,7 @@
 #include "platform/http_client.h"
 #include "services/ai_engine/api_backend.h"
 #include "services/ai_engine/backend.h"
+#include "services/ai_engine/ggml_backend.h"
 #include "services/ai_engine/ollama_backend.h"
 
 namespace vectis::services {
@@ -93,11 +94,14 @@ AIEngine::AIEngine(vectis::core::ConfigManager&  config,
     // Priority order: local Ollama (fast, private, free) first; then
     // API providers in the canonical ordering; GGML will be appended
     // by Phase G when the VECTIS_BUILD_GGML flag gates it in.
+    const auto ggml_model_path = config.get_string("ask.model_path", "");
+
     m_impl->backends.emplace_back(
         std::make_unique<OllamaBackend>(http, ollama_endpoint, ollama_model));
     m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Claude, http));
     m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::OpenAI, http));
     m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Gemini, http));
+    m_impl->backends.emplace_back(std::make_unique<GGMLBackend>(ggml_model_path));
 
     // Apply user preference if the config names a specific backend.
     const auto preferred_name = config.get_string("ask.ai_backend", "auto");

@@ -21,6 +21,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # without extra setup.
 option(VECTIS_STATIC_LINK "Link Vectis statically for distribution builds" OFF)
 option(VECTIS_BUILD_TESTS "Build unit tests" ON)
+# Embedded offline AI via llama.cpp. OFF by default because the FetchContent
+# pulls in hundreds of MB and slows clean builds substantially. Flip to ON
+# for release binaries or when you want offline inference support.
+option(VECTIS_BUILD_GGML "Build with embedded GGML/llama.cpp offline support" OFF)
 
 # --- Strict warnings ---------------------------------------------------------
 # Applied project-wide via add_compile_options; affects all targets declared
@@ -326,6 +330,31 @@ endif()
 add_library(pfd INTERFACE)
 target_include_directories(pfd INTERFACE ${pfd_SOURCE_DIR})
 
+# --- llama.cpp (opt-in via VECTIS_BUILD_GGML) --------------------------------
+# Declared conditionally so the default apt-based dev build doesn't fetch
+# hundreds of MB of ggml sources. When the flag is off, GGMLBackend compiles
+# as a pure stub that reports unavailable.
+if(VECTIS_BUILD_GGML)
+    FetchContent_Declare(
+        llama_cpp
+        GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
+        # Pinned to a recent build-tag. Update when flipping this flag on
+        # for a release — llama.cpp moves quickly and the sampling API
+        # has churned between tags.
+        GIT_TAG        b3500
+    )
+    # Keep llama.cpp's own demos + tests out of our build.
+    set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
+    # CPU-only — Vectis's portability promise forbids pulling CUDA/Metal.
+    set(LLAMA_CUDA   OFF CACHE BOOL "" FORCE)
+    set(LLAMA_METAL  OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BLAS   OFF CACHE BOOL "" FORCE)
+    set(LLAMA_NATIVE OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(llama_cpp)
+endif()
+
 # --- Dear ImGui (docking branch, pinned) -------------------------------------
 FetchContent_Declare(
     imgui
@@ -396,6 +425,7 @@ add_library(vectis_core STATIC
     src/services/ai_engine/api_backend.cpp
     src/services/ai_engine/claude_api.cpp
     src/services/ai_engine/gemini_api.cpp
+    src/services/ai_engine/ggml_backend.cpp
     src/services/ai_engine/ollama_backend.cpp
     src/services/ai_engine/openai_api.cpp
     src/services/index_engine/index_engine.cpp
@@ -439,6 +469,13 @@ target_link_libraries(vectis_core PUBLIC
     spdlog::spdlog
     tl::expected
 )
+
+# Opt-in GGML/llama.cpp linkage + compile-time define. Kept after
+# target_link_libraries so the llama target already exists.
+if(VECTIS_BUILD_GGML)
+    target_link_libraries(vectis_core PUBLIC llama)
+    target_compile_definitions(vectis_core PUBLIC VECTIS_GGML_ENABLED=1)
+endif()
 
 # --- Vectis executable -------------------------------------------------------
 add_executable(vectis
