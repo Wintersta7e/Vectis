@@ -10,11 +10,8 @@
 #include <nlohmann/json.hpp>
 
 #include "core/result.h"
+#include "platform/http_client.h"
 #include "services/ai_engine/backend.h"
-
-namespace vectis::platform {
-class HttpClient;
-} // namespace vectis::platform
 
 namespace vectis::services {
 
@@ -43,11 +40,14 @@ parse_ollama_ndjson_chunk(std::string_view line);
 
 /// Local Ollama server backend. No API key — availability is
 /// determined by a quick probe to `/api/tags`.
+///
+/// Owns its own HttpClient (one CURL handle per backend) — sharing a
+/// handle with other backends or the status-line probe would be UB
+/// under libcurl's thread rules.
 class OllamaBackend final : public IBackend {
 public:
-    OllamaBackend(vectis::platform::HttpClient& http,
-                  std::string                   endpoint = std::string(k_ollama_default_endpoint),
-                  std::string                   model    = std::string(k_ollama_default_model));
+    explicit OllamaBackend(std::string endpoint = std::string(k_ollama_default_endpoint),
+                           std::string model    = std::string(k_ollama_default_model));
 
     [[nodiscard]] AIBackend   kind()         const override { return AIBackend::Ollama; }
     [[nodiscard]] bool        is_available() const override;
@@ -62,9 +62,13 @@ public:
                          StreamComplete     on_complete) override;
 
 private:
-    vectis::platform::HttpClient* m_http;
-    std::string                   m_endpoint;
-    std::string                   m_model;
+    // HttpClient is marked `mutable` because `is_available() const`
+    // needs to dispatch a probe request through it. The handle is an
+    // implementation detail (transport), not part of the observable
+    // state the class exposes to callers.
+    mutable vectis::platform::HttpClient m_http;
+    std::string                          m_endpoint;
+    std::string                          m_model;
 
     /// Availability cache. The probe hits the network (3 s timeout) so
     /// we memoise for `k_probe_ttl`; after that we re-probe so that

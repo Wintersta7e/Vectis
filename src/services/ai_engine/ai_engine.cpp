@@ -12,7 +12,6 @@
 
 #include "core/config_manager.h"
 #include "core/log.h"
-#include "platform/http_client.h"
 #include "services/ai_engine/api_backend.h"
 #include "services/ai_engine/backend.h"
 #include "services/ai_engine/ggml_backend.h"
@@ -81,8 +80,7 @@ AIBackend parse_backend_name(std::string_view s)
 
 } // namespace
 
-AIEngine::AIEngine(vectis::core::ConfigManager&  config,
-                   vectis::platform::HttpClient& http)
+AIEngine::AIEngine(vectis::core::ConfigManager& config)
     : m_impl(std::make_unique<Impl>())
 {
     // Ollama knobs come from config; API keys + models stay env-driven.
@@ -92,15 +90,15 @@ AIEngine::AIEngine(vectis::core::ConfigManager&  config,
         "ask.ollama_model", std::string(k_ollama_default_model));
 
     // Priority order: local Ollama (fast, private, free) first; then
-    // API providers in the canonical ordering; GGML will be appended
-    // by Phase G when the VECTIS_BUILD_GGML flag gates it in.
+    // API providers in the canonical ordering; GGML is appended last
+    // so it's a fallback when online options are unavailable.
     const auto ggml_model_path = config.get_string("ask.model_path", "");
 
     m_impl->backends.emplace_back(
-        std::make_unique<OllamaBackend>(http, ollama_endpoint, ollama_model));
-    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Claude, http));
-    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::OpenAI, http));
-    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Gemini, http));
+        std::make_unique<OllamaBackend>(ollama_endpoint, ollama_model));
+    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Claude));
+    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::OpenAI));
+    m_impl->backends.emplace_back(std::make_unique<APIBackend>(AIBackend::Gemini));
     m_impl->backends.emplace_back(std::make_unique<GGMLBackend>(ggml_model_path));
 
     // Apply user preference if the config names a specific backend.

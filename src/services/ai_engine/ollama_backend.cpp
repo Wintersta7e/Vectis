@@ -116,10 +116,9 @@ parse_ollama_ndjson_chunk(std::string_view line)
 // OllamaBackend
 // ============================================================================
 
-OllamaBackend::OllamaBackend(vectis::platform::HttpClient& http,
-                             std::string                   endpoint,
-                             std::string                   model)
-    : m_http(&http), m_endpoint(std::move(endpoint)), m_model(std::move(model))
+OllamaBackend::OllamaBackend(std::string endpoint,
+                             std::string model)
+    : m_endpoint(std::move(endpoint)), m_model(std::move(model))
 {
     VECTIS_LOG_INFO("OllamaBackend constructed (endpoint={}, model={})",
                     m_endpoint, m_model);
@@ -133,16 +132,13 @@ bool OllamaBackend::is_available() const
         return m_probe_result;
     }
 
-    bool ok = false;
-    if (m_http != nullptr) {
-        vectis::platform::HttpRequest req;
-        req.method     = "GET";
-        req.url        = m_endpoint + "/api/tags";
-        req.timeout_ms = 3000;
+    vectis::platform::HttpRequest req;
+    req.method     = "GET";
+    req.url        = m_endpoint + "/api/tags";
+    req.timeout_ms = 3000;
 
-        auto resp = m_http->send(req);
-        ok = resp && resp->status_code == 200;
-    }
+    auto resp = m_http.send(req);
+    const bool ok = resp && resp->status_code == 200;
 
     m_probe_result = ok;
     m_probe_at     = now;
@@ -163,9 +159,6 @@ Result<AIResponse> OllamaBackend::generate(const AIRequest& request)
     if (!is_available()) {
         return make_error(ErrorKind::AIError, "Ollama server not reachable");
     }
-    if (m_http == nullptr) {
-        return make_error(ErrorKind::NetworkError, "HttpClient unavailable");
-    }
 
     const auto start = std::chrono::steady_clock::now();
     const auto body  = build_ollama_request(request, m_model, false).dump();
@@ -177,7 +170,7 @@ Result<AIResponse> OllamaBackend::generate(const AIRequest& request)
     req.body       = body;
     req.headers["content-type"] = "application/json";
 
-    auto resp = m_http->send(req);
+    auto resp = m_http.send(req);
     if (!resp) return tl::unexpected(resp.error());
     if (resp->status_code != 200) {
         return make_error(ErrorKind::AIError,
@@ -207,10 +200,6 @@ void OllamaBackend::generate_stream(const AIRequest&   request,
 
     if (!is_available()) {
         fail(ErrorKind::AIError, "Ollama server not reachable");
-        return;
-    }
-    if (m_http == nullptr) {
-        fail(ErrorKind::NetworkError, "HttpClient unavailable");
         return;
     }
 
@@ -246,7 +235,7 @@ void OllamaBackend::generate_stream(const AIRequest&   request,
         return !cancel_flag.load(std::memory_order_acquire);
     };
 
-    auto resp = m_http->send_streaming(http_req);
+    auto resp = m_http.send_streaming(http_req);
     const auto end = std::chrono::steady_clock::now();
 
     if (!resp) {

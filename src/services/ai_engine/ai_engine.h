@@ -13,10 +13,6 @@ namespace vectis::core {
 class ConfigManager;
 } // namespace vectis::core
 
-namespace vectis::platform {
-class HttpClient;
-} // namespace vectis::platform
-
 namespace vectis::services {
 
 /// Which AI backend a query should target (or which is currently active).
@@ -72,8 +68,10 @@ class AIEngine {
 public:
     /// Production constructor — instantiates the full backend set
     /// (Ollama, Claude/OpenAI/Gemini API backends, GGML stub-or-real).
-    AIEngine(vectis::core::ConfigManager&  config,
-             vectis::platform::HttpClient& http);
+    /// Each backend owns its own `HttpClient` internally, so calls
+    /// across backends (and across threads) can't collide on a shared
+    /// libcurl handle.
+    explicit AIEngine(vectis::core::ConfigManager& config);
 
     /// Test-only constructor — inject a prebuilt backend list. The
     /// order you pass determines auto-selection priority.

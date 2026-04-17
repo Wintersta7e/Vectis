@@ -113,10 +113,9 @@ bool extract_sse_frame(std::string& buffer, std::string& out_frame)
 
 } // namespace
 
-APIBackend::APIBackend(AIBackend                     provider,
-                       vectis::platform::HttpClient& http,
-                       std::string                   model)
-    : m_provider(provider), m_http(&http), m_model(std::move(model))
+APIBackend::APIBackend(AIBackend   provider,
+                       std::string model)
+    : m_provider(provider), m_model(std::move(model))
 {
     const auto env = env_var_for(provider);
     if (!env.empty()) {
@@ -153,9 +152,6 @@ Result<AIResponse> APIBackend::generate(const AIRequest& request)
                           std::string(provider_name(m_provider)) +
                               " API key not set");
     }
-    if (m_http == nullptr) {
-        return make_error(ErrorKind::NetworkError, "HttpClient unavailable");
-    }
 
     const auto start = std::chrono::steady_clock::now();
 
@@ -187,7 +183,7 @@ Result<AIResponse> APIBackend::generate(const AIRequest& request)
                               std::string(provider_name(m_provider)));
     }
 
-    auto resp = m_http->send(http_req);
+    auto resp = m_http.send(http_req);
     if (!resp) {
         return tl::unexpected(resp.error());
     }
@@ -226,10 +222,6 @@ void APIBackend::generate_stream(const AIRequest&   request,
     if (!is_available()) {
         fail(ErrorKind::AIError,
              std::string(provider_name(m_provider)) + " API key not set");
-        return;
-    }
-    if (m_http == nullptr) {
-        fail(ErrorKind::NetworkError, "HttpClient unavailable");
         return;
     }
 
@@ -291,7 +283,7 @@ void APIBackend::generate_stream(const AIRequest&   request,
         return !cancel_flag.load(std::memory_order_acquire);
     };
 
-    auto resp = m_http->send_streaming(http_req);
+    auto resp = m_http.send_streaming(http_req);
     const auto end = std::chrono::steady_clock::now();
 
     if (!resp) {
