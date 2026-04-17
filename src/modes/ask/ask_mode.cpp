@@ -17,10 +17,14 @@
 #include "core/context_bus.h"
 #include "core/log.h"
 #include "core/service_registry.h"
+#include "modes/ask/context_builder.h"
 #include "modes/ask/conversation.h"
 #include "modes/ask/conversation_store.h"
+#include "modes/ask/prompt_templates.h"
+#include "modes/ask/question_classifier.h"
 #include "modes/ask/web_search.h"
 #include "platform/http_client.h"
+#include "services/ai_engine/ai_engine.h"
 #include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 
@@ -214,33 +218,84 @@ void AskMode::on_submit_question()
     const bool codebase  = m_codebase_available.load(std::memory_order_acquire);
     auto* running_ptr    = &m_search_running;
 
+    // Snapshot the conversation history BEFORE the user's new message
+    // is written to disk; the history block must not include the
+    // current turn (it's already visible as "User question:" below).
+    std::vector<Message> history_snapshot;
+    if (m_current_conversation.messages.size() >= 1) {
+        history_snapshot.assign(
+            m_current_conversation.messages.begin(),
+            m_current_conversation.messages.end() - 1);
+    }
+
     m_task_queue->submit([question, conv_id, web_search_ptr, services_ptr,
-                          store_ptr, codebase, running_ptr]
+                          store_ptr, codebase, running_ptr,
+                          history = std::move(history_snapshot)]
                          (const vectis::core::CancellationToken& token) {
         if (token.stop_requested()) {
             running_ptr->store(false, std::memory_order_release);
             return;
         }
 
-        // Code search.
+        // Classify and fetch the contexts the classifier calls for.
+        const auto source = classify_question(question, codebase);
+
         std::vector<vectis::services::SearchResult> code_results;
-        if (codebase && services_ptr != nullptr) {
+        if ((source == QuestionSource::Codebase ||
+             source == QuestionSource::Mixed) &&
+            codebase && services_ptr != nullptr)
+        {
             code_results = services_ptr->index().search(question, 5);
         }
 
-        // Web search.
         std::vector<WebSearchResult> web_results;
-        auto web_r = web_search_ptr->search(question, 5);
-        if (web_r) {
-            web_results = std::move(*web_r);
-        } else {
-            VECTIS_LOG_WARN("Web search failed: {}", web_r.error().message);
+        if (source == QuestionSource::Web ||
+            source == QuestionSource::Mixed)
+        {
+            auto web_r = web_search_ptr->search(question, 5);
+            if (web_r) {
+                web_results = std::move(*web_r);
+            } else {
+                VECTIS_LOG_WARN("Web search failed: {}", web_r.error().message);
+            }
         }
 
-        // Build and save assistant message.
-        const auto content  = format_results(web_results, code_results);
-        const auto citations = build_citations(web_results, code_results);
-        (void)store_ptr->add_message(conv_id, "assistant", content, citations);
+        // No AI backend available → fall back to the Step 6 raw-results
+        // path so Ask mode keeps working without any keys / Ollama.
+        if (services_ptr == nullptr || !services_ptr->ai().is_ready()) {
+            const auto fallback  = format_results(web_results, code_results);
+            const auto citations = build_citations(web_results, code_results);
+            (void)store_ptr->add_message(conv_id, "assistant",
+                                         fallback, citations);
+            running_ptr->store(false, std::memory_order_release);
+            return;
+        }
+
+        // Assemble the prompt and query the AI.
+        const auto prompt = assemble_user_prompt(
+            question,
+            build_codebase_context(code_results),
+            build_web_context(web_results),
+            build_conversation_history(history));
+
+        vectis::services::AIRequest req;
+        req.system_prompt = std::string(k_system_prompt);
+        req.user_prompt   = prompt;
+        req.max_tokens    = 1024;
+        req.temperature   = 0.3F;
+
+        auto result = services_ptr->ai().query(req);
+
+        std::string content;
+        std::vector<SourceCitation> citations;
+        if (result) {
+            content   = std::move(result->text);
+            citations = build_citations(web_results, code_results);
+        } else {
+            content = "Error: " + result.error().message;
+        }
+        (void)store_ptr->add_message(conv_id, "assistant",
+                                     content, citations);
 
         running_ptr->store(false, std::memory_order_release);
     });
