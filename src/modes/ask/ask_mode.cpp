@@ -10,7 +10,6 @@
 #include <mutex>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -199,11 +198,19 @@ void AskMode::on_submit_question()
     const std::string question(m_input_buffer);
     if (question.empty() || m_search_running.load(std::memory_order_acquire)) return;
 
+    // Claim the running flag at the top of the function so any
+    // reentrancy (double-Enter within a frame, for example) hits the
+    // early return above on its second pass. Previously we set the
+    // flag only after the conversation + message writes, opening a
+    // narrow window where a double-submit could slip through.
+    m_search_running.store(true, std::memory_order_release);
+
     // Create a conversation if none is active.
     if (m_active_conversation_id == 0) {
         auto r = m_store->create_conversation(question.substr(0, 50));
         if (!r) {
             VECTIS_LOG_ERROR("Failed to create conversation: {}", r.error().message);
+            m_search_running.store(false, std::memory_order_release);
             return;
         }
         m_active_conversation_id = *r;
@@ -213,20 +220,23 @@ void AskMode::on_submit_question()
         refresh_conversation_list();
     }
 
-    // Save user message on UI thread (fast, local DB).
-    (void)m_store->add_message(m_active_conversation_id, "user", question);
+    // Save user message on UI thread (fast, local DB). Log on failure
+    // so the response path below doesn't silently swallow the error.
+    if (auto r = m_store->add_message(m_active_conversation_id, "user", question);
+        !r)
+    {
+        VECTIS_LOG_ERROR("Failed to save user message: {}", r.error().message);
+    }
 
     // Reload to show the user message immediately.
     if (auto loaded = m_store->load_conversation(m_active_conversation_id); loaded) {
         m_current_conversation = std::move(*loaded);
     }
     m_scroll_to_bottom = true;
+    m_needs_reload     = false; // we just reloaded
 
     // Clear input.
     std::memset(m_input_buffer, 0, sizeof(m_input_buffer));
-
-    // Dispatch search to background worker so the render loop stays responsive.
-    m_search_running.store(true, std::memory_order_release);
 
     const std::int64_t conv_id = m_active_conversation_id;
     auto* web_search_ptr = m_web_search.get();
@@ -234,15 +244,21 @@ void AskMode::on_submit_question()
     auto* store_ptr      = m_store.get();
     const bool codebase  = m_codebase_available.load(std::memory_order_acquire);
     auto* running_ptr    = &m_search_running;
+    auto* needs_reload_ptr = &m_needs_reload;
 
-    // Snapshot the conversation history BEFORE the user's new message
-    // is written to disk; the history block must not include the
-    // current turn (it's already visible as "User question:" below).
+    // Snapshot the conversation history. `m_current_conversation` was
+    // just reloaded and its tail is the user turn we saved two lines
+    // up; drop that tail so the "Previous conversation:" block doesn't
+    // duplicate the current turn. If the reload gave us something
+    // other than a user tail (shouldn't happen given our INSERT is the
+    // last row + the `id` tiebreaker in conversation_store.cpp), leave
+    // the vector alone rather than trimming a wrong message.
     std::vector<Message> history_snapshot;
-    if (m_current_conversation.messages.size() >= 1) {
-        history_snapshot.assign(
-            m_current_conversation.messages.begin(),
-            m_current_conversation.messages.end() - 1);
+    if (!m_current_conversation.messages.empty()) {
+        const auto& msgs = m_current_conversation.messages;
+        const auto  end  = (msgs.back().role == "user") ? msgs.end() - 1
+                                                         : msgs.end();
+        history_snapshot.assign(msgs.begin(), end);
     }
 
     // Reset the streaming buffer for this query.
@@ -259,17 +275,26 @@ void AskMode::on_submit_question()
     m_task_queue->submit([question, conv_id, web_search_ptr, services_ptr,
                           store_ptr, codebase, running_ptr,
                           stream_mutex, stream_buffer, streaming_flag,
+                          needs_reload_ptr,
                           history = std::move(history_snapshot)]
                          (const vectis::core::CancellationToken& token) {
         auto finalise = [&](std::string content,
                             const std::vector<SourceCitation>& citations) {
-            (void)store_ptr->add_message(conv_id, "assistant",
-                                         std::move(content), citations);
+            if (auto r = store_ptr->add_message(conv_id, "assistant",
+                                                std::move(content), citations);
+                !r)
+            {
+                VECTIS_LOG_ERROR("Failed to save assistant message: {}",
+                                 r.error().message);
+            }
             {
                 const std::lock_guard<std::mutex> lock(*stream_mutex);
                 stream_buffer->clear();
             }
             streaming_flag->store(false, std::memory_order_release);
+            // Signal the render loop that the persisted conversation
+            // has changed and should be reloaded on the next frame.
+            needs_reload_ptr->store(true, std::memory_order_release);
             running_ptr->store(false, std::memory_order_release);
         };
 
@@ -352,10 +377,17 @@ void AskMode::on_submit_question()
                 complete.store(true, std::memory_order_release);
             });
 
-        // generate_stream is currently synchronous on this thread;
-        // the flag is future-proofing for any async implementation.
-        while (!complete.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
+        // generate_stream is synchronous by contract (AIEngine does no
+        // thread marshalling; the backend invokes on_complete before
+        // returning). We assert that here rather than spin — a future
+        // async refactor of the AIEngine interface would need to
+        // revisit this point.
+        if (!complete.load(std::memory_order_acquire)) {
+            VECTIS_LOG_ERROR(
+                "AIEngine::query_stream returned before on_complete fired "
+                "— async backend not supported here");
+            finalise("Error: internal: streaming completed asynchronously", {});
+            return;
         }
 
         if (succeeded) {
@@ -422,12 +454,15 @@ void AskMode::ensure_docking_layout(unsigned int dockspace_id)
 
 void AskMode::render()
 {
-    // Check if a background search just completed — reload conversation.
-    if (!m_search_running.load(std::memory_order_acquire) &&
+    // Reload the conversation from disk ONLY when the worker flipped
+    // m_needs_reload. Without this gate we were issuing two prepared-
+    // statement executions per render frame (~120 per second at 60
+    // FPS) for no observable benefit.
+    if (m_needs_reload.exchange(false, std::memory_order_acq_rel) &&
         m_active_conversation_id != 0)
     {
         auto loaded = m_store->load_conversation(m_active_conversation_id);
-        if (loaded && loaded->messages.size() != m_current_conversation.messages.size()) {
+        if (loaded) {
             m_current_conversation = std::move(*loaded);
             m_scroll_to_bottom = true;
         }

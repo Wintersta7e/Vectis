@@ -96,6 +96,16 @@ private:
     std::string       m_stream_buffer;
     std::atomic<bool> m_streaming{false};
 
+    // Signals that the persisted conversation needs to be reloaded
+    // from SQLite on the next render frame. Set by finalise-path
+    // logic on the TaskQueue worker when a new assistant message has
+    // been persisted; cleared by the render path after the reload.
+    // Without this gate, the render loop was running
+    // `load_conversation` every frame at 60 Hz when no work was in
+    // flight — two prepared-statement executions per frame, purely
+    // to notice a change that only happens at message-write time.
+    std::atomic<bool> m_needs_reload{false};
+
     // Docking
     bool m_dock_layout_built = false;
 };
