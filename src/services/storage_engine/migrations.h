@@ -70,24 +70,6 @@ inline constexpr std::array k_migrations = {
         CREATE INDEX IF NOT EXISTS idx_deps_source     ON dependencies(source_file_id);
         CREATE INDEX IF NOT EXISTS idx_deps_target     ON dependencies(target_file_id);
     )"},
-    Migration{2, "conversations", R"(
-        CREATE TABLE IF NOT EXISTS conversations (
-            id         INTEGER PRIMARY KEY,
-            title      TEXT,
-            created_at INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS messages (
-            id              INTEGER PRIMARY KEY,
-            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-            role            TEXT    NOT NULL,
-            content         TEXT    NOT NULL,
-            sources         TEXT,
-            created_at      INTEGER NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-    )"},
 };
 // clang-format on
 

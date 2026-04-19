@@ -12,11 +12,7 @@
     },
     "nlohmann-json",
     "tomlplusplus",
-    "curl",
-    "mbedtls",
-    "cmark",
     "gtest",
-    "libgit2",
     "spdlog",
     "fmt",
     "tl-expected"

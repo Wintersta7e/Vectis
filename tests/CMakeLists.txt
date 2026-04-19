@@ -9,11 +9,6 @@ add_executable(vectis_tests
     core/context_bus_test.cpp
     core/hash_test.cpp
     core/task_queue_test.cpp
-    modes/ask/ask_mode_test.cpp
-    modes/ask/context_builder_test.cpp
-    modes/ask/conversation_store_test.cpp
-    modes/ask/question_classifier_test.cpp
-    modes/ask/web_search_test.cpp
     modes/code/architecture_detector_test.cpp
     modes/code/code_index_store_test.cpp
     modes/code/code_index_test.cpp
@@ -28,15 +23,8 @@ add_executable(vectis_tests
     modes/code/scanner_test.cpp
     platform/file_io_test.cpp
     platform/file_watcher_test.cpp
-    platform/http_client_test.cpp
-    services/ai_engine_test.cpp
-    services/claude_api_test.cpp
-    services/gemini_api_test.cpp
     services/index_engine_test.cpp
-    services/ollama_backend_test.cpp
-    services/openai_api_test.cpp
     services/storage_engine_test.cpp
-    services/token_budget_test.cpp
 )
 
 # Fixture test needs to find the sample projects in the source tree

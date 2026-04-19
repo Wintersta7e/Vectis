@@ -66,7 +66,6 @@ find_package(SDL2         REQUIRED)
 find_package(OpenGL       REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(tomlplusplus REQUIRED)
-find_package(CURL         REQUIRED)
 find_package(fmt          REQUIRED)
 find_package(spdlog       REQUIRED)
 
@@ -410,11 +409,6 @@ add_library(vectis_core STATIC
     src/core/log.cpp
     src/core/service_registry.cpp
     src/core/task_queue.cpp
-    src/modes/ask/ask_mode.cpp
-    src/modes/ask/context_builder.cpp
-    src/modes/ask/conversation_store.cpp
-    src/modes/ask/question_classifier.cpp
-    src/modes/ask/web_search.cpp
     src/modes/code/architecture_detector.cpp
     src/modes/code/code_index.cpp
     src/modes/code/code_index_store.cpp
@@ -430,19 +424,11 @@ add_library(vectis_core STATIC
     src/modes/code/parser.cpp
     src/modes/code/parser_queries.cpp
     src/modes/code/scanner.cpp
-    src/services/ai_engine/ai_engine.cpp
-    src/services/ai_engine/api_backend.cpp
-    src/services/ai_engine/claude_api.cpp
-    src/services/ai_engine/gemini_api.cpp
-    src/services/ai_engine/ggml_backend.cpp
-    src/services/ai_engine/ollama_backend.cpp
-    src/services/ai_engine/openai_api.cpp
     src/services/index_engine/index_engine.cpp
     src/services/storage_engine/storage_engine.cpp
     src/platform/file_dialog.cpp
     src/platform/file_io.cpp
     src/platform/file_watcher.cpp
-    src/platform/http_client.cpp
     src/platform/process.cpp
     src/ui/theme.cpp
     src/ui/widgets.cpp
@@ -473,7 +459,6 @@ target_link_libraries(vectis_core PUBLIC
     ${VECTIS_SQLITE3_TARGET}
     nlohmann_json::nlohmann_json
     tomlplusplus::tomlplusplus
-    CURL::libcurl
     fmt::fmt
     spdlog::spdlog
     tl::expected

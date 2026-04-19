@@ -21,7 +21,6 @@
 #include "core/mode.h"
 #include "core/service_registry.h"
 #include "platform/file_io.h"
-#include "services/ai_engine/ai_engine.h"
 #include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 #include "ui/theme.h"
@@ -170,11 +169,6 @@ bool App::initialize()
         return false;
     }
     m_impl->mark_stage(Stage_Config);
-
-    // AIEngine reads config keys (ask.ai_backend, ask.ollama_endpoint,
-    // ask.ollama_model, ask.model_path) at construction time; it must
-    // be built AFTER config.load() has populated them.
-    m_impl->services->initialize_ai();
 
     // Warn about ignored override (Step 1 uses default data_dir always).
     const std::string override_dir =
@@ -481,14 +475,12 @@ void App::render_frame()
     }
 
     ImGui::Separator();
-    const std::string ai_status = m_impl->services->ai().status_text();
-    ImGui::Text("Vectis v%s   |   modes: %zu   |   %s   |   %s",
+    ImGui::Text("Vectis v%s   |   modes: %zu   |   %s",
                 k_version,
                 m_impl->modes.size(),
                 m_impl->services->config().loaded_from_file()
                     ? "config: loaded"
-                    : "config: defaults",
-                ai_status.c_str());
+                    : "config: defaults");
 
     ImGui::End();
 }
