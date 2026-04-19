@@ -50,7 +50,9 @@ public:
 
     void initialize(vectis::core::ServiceRegistry& services) override;
     void render() override;
-    void on_activate() override   {}
+    // Rebuild the dock layout when returning to Code mode. The dockspace
+    // node is shared with Ask mode, which will have overwritten it.
+    void on_activate() override   { m_dock_layout_built = false; }
     void on_deactivate() override {}
     void shutdown() override;
 

@@ -43,7 +43,10 @@ public:
 
     void initialize(vectis::core::ServiceRegistry& services) override;
     void render() override;
-    void on_activate() override   {}
+    // Reset the dock-layout flag so the shared dockspace is rebuilt each
+    // time we re-enter Ask mode. Code mode shares the same dockspace node
+    // and overwrites it on its activation, so we must re-apply ours too.
+    void on_activate() override   { m_dock_layout_built = false; }
     void on_deactivate() override {}
     void shutdown() override;
 

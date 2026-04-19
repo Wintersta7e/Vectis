@@ -463,13 +463,10 @@ void CodeMode::ensure_docking_layout(ImGuiID dockspace_id)
     }
     m_dock_layout_built = true;
 
-    // If the user already has a saved layout (imgui.ini), respect it.
-    if (ImGui::DockBuilderGetNode(dockspace_id) != nullptr &&
-        ImGui::DockBuilderGetNode(dockspace_id)->IsSplitNode())
-    {
-        return;
-    }
-
+    // Always rebuild on (re-)activation. See ask_mode.cpp for the same
+    // rationale — checking `IsSplitNode()` here would preserve whichever
+    // layout the other mode most recently installed in the shared
+    // dockspace.
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
@@ -703,12 +700,19 @@ void CodeMode::render_symbol_browser_panel()
             ImGui::TextDisabled("(no symbols)");
         } else {
             for (const Symbol& sym : m_filtered_symbols) {
+                // PushID on the symbol's unique id: labels collide in any
+                // non-trivial project (every `Dispose [method]`, every
+                // `equals [method]`, etc.). Without this the symbol list
+                // triggers ImGui's "conflicting ID" debug popup as soon
+                // as the user scrolls past the first dozen rows.
+                ImGui::PushID(static_cast<int>(sym.id));
                 const std::string label =
                     sym.name + "  [" + std::string(symbol_kind_name(sym.kind)) + "]";
                 const bool is_selected = (sym.id == m_selected_file_id); // reuse for visual hint
                 if (ImGui::Selectable(label.c_str(), is_selected)) {
                     show_symbol(sym.id);
                 }
+                ImGui::PopID();
             }
         }
     }

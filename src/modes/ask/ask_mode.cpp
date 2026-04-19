@@ -37,7 +37,11 @@ namespace {
 
 constexpr const char* k_panel_sidebar = "Conversations";
 constexpr const char* k_panel_chat    = "Chat";
-constexpr const char* k_dockspace     = "AskDockspace";
+// Must match the dockspace name `App::run` passes to `ImGui::DockSpace`.
+// Using a different name here silently builds a layout against a phantom
+// node, leaving both panels floating — exactly what the user saw on the
+// first-run bug report.
+constexpr const char* k_dockspace     = "VectisDockspace";
 
 /// Build a formatted "assistant" message from search results.
 std::string format_results(
@@ -436,9 +440,12 @@ void AskMode::ensure_docking_layout(unsigned int dockspace_id)
     if (m_dock_layout_built) return;
     m_dock_layout_built = true;
 
-    auto* node = ImGui::DockBuilderGetNode(dockspace_id);
-    if (node != nullptr && node->IsSplitNode()) return;
-
+    // Always rebuild on (re-)activation. Modes share the single
+    // `VectisDockspace` node, so checking `IsSplitNode()` and bailing would
+    // just preserve whatever layout the *previous* mode left behind —
+    // which is why Conversations/Chat used to float whenever the user
+    // switched in from Code mode. A future improvement would serialise a
+    // per-mode layout so sizes persist across switches.
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
@@ -501,6 +508,11 @@ void AskMode::render_conversation_sidebar()
 
     if (ImGui::BeginChild("##conv_list", ImVec2(0.0F, 0.0F), false)) {
         for (const auto& conv : m_conversation_list) {
+            // PushID on conversation id: fresh conversations default to
+            // title="New Chat" until the first question sets an auto-title,
+            // so multiple untitled rows would otherwise collide on label.
+            ImGui::PushID(static_cast<int>(conv.id));
+
             const bool is_selected = (conv.id == m_active_conversation_id);
             const std::string label =
                 conv.title.empty() ? "(untitled)" : conv.title;
@@ -516,6 +528,8 @@ void AskMode::render_conversation_sidebar()
                 }
                 ImGui::EndPopup();
             }
+
+            ImGui::PopID();
         }
     }
     ImGui::EndChild();
