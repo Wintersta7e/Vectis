@@ -5,6 +5,7 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 add_executable(vectis_tests
+    cli/cli_cache_test.cpp
     core/config_manager_test.cpp
     core/context_bus_test.cpp
     core/hash_test.cpp
