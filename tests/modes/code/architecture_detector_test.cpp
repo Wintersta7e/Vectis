@@ -1,6 +1,10 @@
 #include "modes/code/architecture_detector.h"
 
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -187,12 +191,182 @@ TEST(ArchitectureDetectorTest, DotNetSolution_DetectsMultipleDottedProjects)
     // Two sibling projects under src/, each with a dotted name.
     // No ViewModels/Views (so MVVM doesn't pre-empt) and no
     // Domain/Application trio (so Clean doesn't pre-empt).
-    add_file(idx, "src/FlowForge.CLI/Program.cs",   Language::CSharp);
-    add_file(idx, "src/FlowForge.Core/Engine.cs",   Language::CSharp);
+    add_file(idx, "src/Example.CLI/Program.cs",   Language::CSharp);
+    add_file(idx, "src/Example.Core/Engine.cs",   Language::CSharp);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::DotNetSolution);
     EXPECT_GE(result.confidence, 70);
+}
+
+// -----------------------------------------------------------------------------
+// Workspace-manifest detection (post-pivot). These tests write a real
+// tempdir with the expected marker file(s) because the detector now
+// actually reads manifests from disk.
+// -----------------------------------------------------------------------------
+
+namespace {
+
+namespace fs = std::filesystem;
+
+fs::path fresh_tmp(const char* tag)
+{
+    static std::uint64_t counter = 0;
+    ++counter;
+    fs::path p = fs::temp_directory_path() /
+        ("vectis_arch_test_" + std::string(tag) + "_" + std::to_string(counter));
+    std::error_code ec;
+    fs::remove_all(p, ec);
+    fs::create_directories(p, ec);
+    return p;
+}
+
+void write_file(const fs::path& p, std::string_view body)
+{
+    std::error_code ec;
+    fs::create_directories(p.parent_path(), ec);
+    std::ofstream out(p);
+    out.write(body.data(), static_cast<std::streamsize>(body.size()));
+}
+
+} // namespace
+
+TEST(ArchitectureDetectorTest, RustWorkspace_ReadsCargoToml)
+{
+    const fs::path root = fresh_tmp("rust");
+    write_file(root / "Cargo.toml", R"(
+[workspace]
+members = ["crates/*"]
+)");
+    CodeIndex idx;
+    add_file(idx, "crates/foo/src/lib.rs", Language::Rust);
+    add_file(idx, "crates/bar/src/lib.rs", Language::Rust);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
+    EXPECT_GE(result.confidence, 90);
+    EXPECT_NE(result.reasoning.find("Cargo workspace"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, NpmWorkspaces_ReadsPackageJson)
+{
+    const fs::path root = fresh_tmp("npm");
+    write_file(root / "package.json", R"({
+  "name": "root",
+  "private": true,
+  "workspaces": ["packages/*"]
+}
+)");
+    CodeIndex idx;
+    add_file(idx, "packages/ui/src/index.ts",    Language::TypeScript);
+    add_file(idx, "packages/core/src/index.ts",  Language::TypeScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
+    EXPECT_NE(result.reasoning.find("npm workspaces"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PnpmWorkspace_DetectedByYaml)
+{
+    const fs::path root = fresh_tmp("pnpm");
+    write_file(root / "pnpm-workspace.yaml",
+               "packages:\n  - 'packages/*'\n");
+    CodeIndex idx;
+    add_file(idx, "packages/a/src/index.ts", Language::TypeScript);
+    add_file(idx, "packages/b/src/index.ts", Language::TypeScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
+    EXPECT_NE(result.reasoning.find("pnpm"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, LernaAndTurbo_AlsoDetected)
+{
+    {
+        const fs::path root = fresh_tmp("lerna");
+        write_file(root / "lerna.json", "{ \"version\": \"0.0.0\" }\n");
+        CodeIndex idx;
+        add_file(idx, "packages/x/src/a.js", Language::JavaScript);
+        const auto result = detect_architecture(idx, root);
+        EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
+        EXPECT_NE(result.reasoning.find("Lerna"), std::string::npos);
+        fs::remove_all(root);
+    }
+    {
+        const fs::path root = fresh_tmp("turbo");
+        write_file(root / "turbo.json", "{ \"pipeline\": {} }\n");
+        CodeIndex idx;
+        add_file(idx, "apps/web/src/a.ts", Language::TypeScript);
+        const auto result = detect_architecture(idx, root);
+        EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
+        EXPECT_NE(result.reasoning.find("Turborepo"), std::string::npos);
+        fs::remove_all(root);
+    }
+}
+
+TEST(ArchitectureDetectorTest, PythonSrcLayout_DetectsMultiplePackages)
+{
+    const fs::path root = fresh_tmp("python");
+    write_file(root / "pyproject.toml",
+               "[project]\nname = \"sample\"\nversion = \"0.0.0\"\n");
+    CodeIndex idx;
+    add_file(idx, "src/pkg_a/__init__.py",     Language::Python);
+    add_file(idx, "src/pkg_a/module.py",       Language::Python);
+    add_file(idx, "src/pkg_b/__init__.py",     Language::Python);
+    add_file(idx, "src/pkg_b/helpers.py",      Language::Python);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
+    EXPECT_NE(result.reasoning.find("pyproject.toml"), std::string::npos);
+    EXPECT_NE(result.reasoning.find("2 packages"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PythonSrcLayout_SinglePackageIsNotMonorepo)
+{
+    // A normal library with one package doesn't warrant Monorepo. The
+    // detector should fall through to the earlier heuristics.
+    const fs::path root = fresh_tmp("python_single");
+    write_file(root / "pyproject.toml",
+               "[project]\nname = \"sample\"\n");
+    CodeIndex idx;
+    add_file(idx, "src/mylib/__init__.py", Language::Python);
+    add_file(idx, "src/mylib/core.py",     Language::Python);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Monorepo);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, SubtableDoesNotTriggerRustWorkspace)
+{
+    // Regression guard: `[workspace.metadata]` alone must NOT be
+    // treated as a workspace declaration — only a bare `[workspace]`
+    // table header counts.
+    const fs::path root = fresh_tmp("rust_subtable_only");
+    write_file(root / "Cargo.toml", R"(
+[package]
+name = "sample"
+version = "0.1.0"
+
+[workspace.metadata.some_tool]
+key = "value"
+)");
+    CodeIndex idx;
+    add_file(idx, "src/main.rs", Language::Rust);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Monorepo);
+
+    fs::remove_all(root);
 }
 
 TEST(ArchitectureDetectorTest, LabelName_RoundTrip)

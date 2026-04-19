@@ -3,8 +3,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_set>
 #include <vector>
 
@@ -103,6 +107,135 @@ count_dotted_project_dirs(const CodeIndex& index)
     return count;
 }
 
+/// Read a text file (capped to 64 KiB so malformed huge files can't
+/// stall the detector). Returns empty on any I/O error — all callers
+/// treat an empty payload as "not present / not detected".
+[[nodiscard]] std::string
+read_text_capped(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) || ec) {
+        return {};
+    }
+    std::ifstream in(path);
+    if (!in) {
+        return {};
+    }
+    constexpr std::streamsize k_max = 64 * 1024;
+    std::string               out;
+    out.resize(k_max);
+    in.read(out.data(), k_max);
+    out.resize(static_cast<std::size_t>(in.gcount()));
+    return out;
+}
+
+/// Detect a Cargo workspace: `Cargo.toml` at the project root containing
+/// a `[workspace]` table header. Matches single-line `[workspace]` and
+/// the uncommon variant with trailing content on the same line.
+[[nodiscard]] std::optional<std::string>
+detect_rust_workspace(const std::filesystem::path& project_root)
+{
+    const std::string body = read_text_capped(project_root / "Cargo.toml");
+    if (body.empty()) {
+        return std::nullopt;
+    }
+    // Match `[workspace]` as a TOML table header — must start at the
+    // beginning of a line (after optional whitespace) and run to the
+    // closing bracket. Avoids matching `[workspace.metadata]` etc.
+    // which are sub-tables and don't imply a workspace on their own.
+    std::istringstream in(body);
+    std::string        line;
+    while (std::getline(in, line)) {
+        std::size_t i = 0;
+        while (i < line.size() &&
+               std::isspace(static_cast<unsigned char>(line[i])))
+        {
+            ++i;
+        }
+        if (i + 11 <= line.size() &&
+            line.compare(i, 11, "[workspace]") == 0)
+        {
+            return std::string{"Cargo workspace (Rust multi-crate layout)"};
+        }
+    }
+    return std::nullopt;
+}
+
+/// Detect an npm-family monorepo via one of the usual marker files at
+/// the project root: `package.json` with a `"workspaces"` field,
+/// `pnpm-workspace.yaml`, `lerna.json`, or `turbo.json`. Each hint is
+/// reported with its own reasoning string so the digest tells you
+/// which tool configured the monorepo.
+[[nodiscard]] std::optional<std::string>
+detect_npm_monorepo(const std::filesystem::path& project_root)
+{
+    std::error_code ec;
+    if (std::filesystem::exists(project_root / "pnpm-workspace.yaml", ec) &&
+        !ec)
+    {
+        return std::string{"pnpm workspace (pnpm-workspace.yaml)"};
+    }
+    ec.clear();
+    if (std::filesystem::exists(project_root / "lerna.json", ec) && !ec) {
+        return std::string{"Lerna monorepo (lerna.json)"};
+    }
+    ec.clear();
+    if (std::filesystem::exists(project_root / "turbo.json", ec) && !ec) {
+        return std::string{"Turborepo (turbo.json)"};
+    }
+
+    const std::string pkg = read_text_capped(project_root / "package.json");
+    if (!pkg.empty() &&
+        pkg.find("\"workspaces\"") != std::string::npos)
+    {
+        return std::string{"npm workspaces (package.json \"workspaces\")"};
+    }
+    return std::nullopt;
+}
+
+/// Detect a modern Python project layout. Two flavours:
+///   * Multi-package workspace: `pyproject.toml` at root + multiple
+///     subdirectories under `src/` that each contain `__init__.py`.
+///   * Poetry / PEP 621 multi-package project (same, heuristically).
+/// Returns a reasoning string if the signal fires, nullopt otherwise.
+[[nodiscard]] std::optional<std::string>
+detect_python_packages(const std::filesystem::path& project_root,
+                       const CodeIndex&             index)
+{
+    std::error_code ec;
+    const bool has_pyproject =
+        std::filesystem::exists(project_root / "pyproject.toml", ec) && !ec;
+    if (!has_pyproject) {
+        return std::nullopt;
+    }
+
+    // Count distinct `src/<pkg>/__init__.py` subpackages — a project
+    // with >= 2 is almost always a multi-package layout (pyproject +
+    // src-layout + multiple packages). One package is a normal library;
+    // zero means the pyproject describes something else (tool config).
+    std::unordered_set<std::string> src_packages;
+    for (const FileEntry& file : index.snapshot_files()) {
+        if (file.path_relative.filename().string() != "__init__.py") {
+            continue;
+        }
+        auto it = file.path_relative.begin();
+        if (it == file.path_relative.end() || it->string() != "src") {
+            continue;
+        }
+        ++it;
+        if (it == file.path_relative.end()) {
+            continue;
+        }
+        src_packages.insert(it->string());
+    }
+    if (src_packages.size() >= 2) {
+        return std::string{"pyproject.toml + src-layout with " +
+                           std::to_string(src_packages.size()) +
+                           " packages"};
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::string_view architecture_label_name(ArchitectureLabel label) noexcept
@@ -124,7 +257,7 @@ std::string_view architecture_label_name(ArchitectureLabel label) noexcept
 
 ArchitectureDescription
 detect_architecture(const CodeIndex& index,
-                    const std::filesystem::path& /*project_root*/)
+                    const std::filesystem::path& project_root)
 {
     ArchitectureDescription out;
 
@@ -134,6 +267,32 @@ detect_architecture(const CodeIndex& index,
         out.reasoning  = "no source files found";
         out.confidence = 0;
         return out;
+    }
+
+    // --- Workspace-manifest indicators (highest-confidence monorepos)
+    // Before the heuristic pass, consult concrete build-system manifests
+    // at the project root. They are unambiguous signals — a project
+    // with `Cargo.toml [workspace]` IS a Cargo workspace, regardless of
+    // directory shape. Accuracy over guesswork.
+    if (!project_root.empty()) {
+        if (auto r = detect_rust_workspace(project_root); r) {
+            out.label      = ArchitectureLabel::Monorepo;
+            out.reasoning  = std::move(*r);
+            out.confidence = 92;
+            return out;
+        }
+        if (auto r = detect_npm_monorepo(project_root); r) {
+            out.label      = ArchitectureLabel::Monorepo;
+            out.reasoning  = std::move(*r);
+            out.confidence = 90;
+            return out;
+        }
+        if (auto r = detect_python_packages(project_root, index); r) {
+            out.label      = ArchitectureLabel::Monorepo;
+            out.reasoning  = std::move(*r);
+            out.confidence = 85;
+            return out;
+        }
     }
 
     const auto segments = collect_directory_segments(index);
