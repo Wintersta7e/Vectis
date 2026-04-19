@@ -149,6 +149,52 @@ TEST(ArchitectureDetectorTest, SmallProject_DefaultsToMonolith)
     EXPECT_EQ(result.label, ArchitectureLabel::Monolith);
 }
 
+TEST(ArchitectureDetectorTest, Mvvm_DetectsViewModelsPlusViews)
+{
+    CodeIndex idx;
+    add_file(idx, "src/FlowForge.UI/ViewModels/MainWindowViewModel.cs",
+             Language::CSharp);
+    add_file(idx, "src/FlowForge.UI/ViewModels/DialogViewModel.cs",
+             Language::CSharp);
+    add_file(idx, "src/FlowForge.UI/Views/MainWindow.xaml.cs",
+             Language::CSharp);
+    add_file(idx, "src/FlowForge.UI/App.xaml.cs", Language::CSharp);
+
+    const auto result = detect_architecture(idx, "/fake");
+    // The presence of dotted project dirs (FlowForge.UI) could also
+    // trigger DotNetSolution; MVVM should rank higher because it's a
+    // more specific signal.
+    EXPECT_EQ(result.label, ArchitectureLabel::Mvvm);
+    EXPECT_GE(result.confidence, 80);
+}
+
+TEST(ArchitectureDetectorTest, CleanArchitecture_DetectsThreeLayerFolders)
+{
+    CodeIndex idx;
+    add_file(idx, "Domain/Entities/User.cs",               Language::CSharp);
+    add_file(idx, "Application/UseCases/CreateUser.cs",    Language::CSharp);
+    add_file(idx, "Infrastructure/Persistence/Db.cs",      Language::CSharp);
+    add_file(idx, "Presentation/Controllers/UserCtl.cs",   Language::CSharp);
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_EQ(result.label, ArchitectureLabel::CleanArchitecture);
+    EXPECT_GE(result.confidence, 80);
+}
+
+TEST(ArchitectureDetectorTest, DotNetSolution_DetectsMultipleDottedProjects)
+{
+    CodeIndex idx;
+    // Two sibling projects under src/, each with a dotted name.
+    // No ViewModels/Views (so MVVM doesn't pre-empt) and no
+    // Domain/Application trio (so Clean doesn't pre-empt).
+    add_file(idx, "src/FlowForge.CLI/Program.cs",   Language::CSharp);
+    add_file(idx, "src/FlowForge.Core/Engine.cs",   Language::CSharp);
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_EQ(result.label, ArchitectureLabel::DotNetSolution);
+    EXPECT_GE(result.confidence, 70);
+}
+
 TEST(ArchitectureDetectorTest, LabelName_RoundTrip)
 {
     using vectis::modes::code::architecture_label_name;

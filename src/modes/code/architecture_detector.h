@@ -20,6 +20,17 @@ enum class ArchitectureLabel : std::uint8_t {
     Monorepo,
     FrontendSpa,
     ApiBackend,
+    /// View + ViewModel + (often) Models directories. Typical of WPF,
+    /// Avalonia, MAUI, UWP, SwiftUI-with-MVVM projects.
+    Mvvm,
+    /// Domain + Application + Infrastructure (+ Presentation) layering.
+    /// The "onion" / "hexagonal" family popular in larger .NET and
+    /// enterprise Java codebases.
+    CleanArchitecture,
+    /// A .NET-style multi-project solution: several sibling directories
+    /// whose leaf name matches `<Solution>.<Tag>` (e.g. `FlowForge.UI`,
+    /// `FlowForge.CLI`, `FlowForge.Core`).
+    DotNetSolution,
 };
 
 /// Human-readable description returned by `detect_architecture`.

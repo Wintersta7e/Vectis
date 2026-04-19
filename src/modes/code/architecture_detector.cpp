@@ -15,8 +15,11 @@ namespace vectis::modes::code {
 
 namespace {
 
-/// Collect every distinct top-level and two-level-deep directory
-/// segment from the scanned files so we can test presence cheaply.
+/// Collect every distinct directory segment at ANY depth from the
+/// scanned files. The earlier top/second-level-only scan missed
+/// patterns that live at deeper levels in modern multi-project
+/// .NET solutions (`src/App.UI/ViewModels/...`) and monorepos
+/// (`packages/frontend/src/components/...`).
 [[nodiscard]] std::unordered_set<std::string>
 collect_directory_segments(const CodeIndex& index)
 {
@@ -24,18 +27,51 @@ collect_directory_segments(const CodeIndex& index)
     for (const FileEntry& file : index.snapshot_files()) {
         auto       it  = file.path_relative.begin();
         const auto end = file.path_relative.end();
-
-        // First segment (top level).
-        if (it != end) {
-            segments.insert(it->string());
-            ++it;
+        // Skip the leaf filename — only interested in directory
+        // components.
+        std::filesystem::path dir = file.path_relative;
+        if (dir.has_filename()) {
+            dir.remove_filename();
         }
-        // Second segment (one level nested).
-        if (it != end) {
-            segments.insert(it->string());
+        for (const auto& segment : dir) {
+            const std::string s = segment.string();
+            if (!s.empty() && s != "/" && s != ".") {
+                segments.insert(s);
+            }
         }
+        (void)it;
+        (void)end;
     }
     return segments;
+}
+
+/// Count distinct top-level or second-level DIRECTORY leaves whose
+/// name contains a `.` separator (e.g. `FlowForge.UI`, `Company.Core`)
+/// — the hallmark of a .NET solution layout with one project per
+/// dotted-name directory. The leaf filename is explicitly excluded
+/// (otherwise every `main.py` or `vite.config.ts` would count).
+[[nodiscard]] std::size_t
+count_dotted_project_dirs(const CodeIndex& index)
+{
+    std::unordered_set<std::string> dotted;
+    for (const FileEntry& file : index.snapshot_files()) {
+        std::filesystem::path dir = file.path_relative;
+        if (dir.has_filename()) {
+            dir.remove_filename();
+        }
+        auto       it  = dir.begin();
+        const auto end = dir.end();
+        for (int depth = 0; depth < 2 && it != end; ++depth, ++it) {
+            const std::string s = it->string();
+            // Dotfiles (`.git`, `.vs`, `.worktrees`) don't count.
+            if (s.size() > 2 && s.front() != '.' &&
+                s.find('.') != std::string::npos)
+            {
+                dotted.insert(s);
+            }
+        }
+    }
+    return dotted.size();
 }
 
 /// True if any scanned file has `name` as its leaf filename. Used to
@@ -72,13 +108,16 @@ collect_directory_segments(const CodeIndex& index)
 std::string_view architecture_label_name(ArchitectureLabel label) noexcept
 {
     switch (label) {
-        case ArchitectureLabel::Monolith:    return "Monolith";
-        case ArchitectureLabel::Layered:     return "Layered";
-        case ArchitectureLabel::Mvc:         return "MVC";
-        case ArchitectureLabel::Monorepo:    return "Monorepo";
-        case ArchitectureLabel::FrontendSpa: return "Frontend SPA";
-        case ArchitectureLabel::ApiBackend:  return "API Backend";
-        case ArchitectureLabel::Unknown:     return "Unknown";
+        case ArchitectureLabel::Monolith:          return "Monolith";
+        case ArchitectureLabel::Layered:           return "Layered";
+        case ArchitectureLabel::Mvc:               return "MVC";
+        case ArchitectureLabel::Monorepo:          return "Monorepo";
+        case ArchitectureLabel::FrontendSpa:       return "Frontend SPA";
+        case ArchitectureLabel::ApiBackend:        return "API Backend";
+        case ArchitectureLabel::Mvvm:              return "MVVM";
+        case ArchitectureLabel::CleanArchitecture: return "Clean Architecture";
+        case ArchitectureLabel::DotNetSolution:    return ".NET Solution";
+        case ArchitectureLabel::Unknown:           return "Unknown";
     }
     return "Unknown";
 }
@@ -145,6 +184,52 @@ detect_architecture(const CodeIndex& index,
         }
     }
 
+    // --- Clean Architecture / onion / hexagonal ---------------------
+    // Strong signal: at least two of Domain/Application/Infrastructure/
+    // Presentation (case-insensitive is unnecessary — filesystems on
+    // Windows are case-insensitive but the convention is PascalCase).
+    const auto has_any = [&](std::initializer_list<std::string_view> names) {
+        for (const std::string_view n : names) {
+            if (segments.contains(std::string{n})) return true;
+        }
+        return false;
+    };
+    const int clean_hits = (segments.contains("Domain")         ? 1 : 0)
+                         + (segments.contains("Application")    ? 1 : 0)
+                         + (segments.contains("Infrastructure") ? 1 : 0)
+                         + (segments.contains("Presentation")   ? 1 : 0);
+    if (clean_hits >= 3) {
+        out.label      = ArchitectureLabel::CleanArchitecture;
+        out.reasoning  = "Domain/Application/Infrastructure/Presentation "
+                         "layering (Clean / hexagonal architecture)";
+        out.confidence = 85;
+        return out;
+    }
+
+    // --- MVVM --------------------------------------------------------
+    // ViewModels + Views together is the defining signature. Many
+    // modern .NET UI frameworks (WPF, Avalonia, MAUI) put each in its
+    // own folder inside a UI project.
+    if (segments.contains("ViewModels") && segments.contains("Views")) {
+        out.label      = ArchitectureLabel::Mvvm;
+        out.reasoning  = "`ViewModels/` and `Views/` directories "
+                         "(MVVM UI layer)";
+        out.confidence = 85;
+        return out;
+    }
+
+    // --- .NET multi-project solution ---------------------------------
+    // Several sibling directories with dotted names like
+    // `FlowForge.UI` / `FlowForge.CLI` / `FlowForge.Core` strongly
+    // suggest a `.sln` with one `.csproj` per dotted directory.
+    if (count_dotted_project_dirs(index) >= 2) {
+        out.label      = ArchitectureLabel::DotNetSolution;
+        out.reasoning  = "multiple sibling directories with dotted "
+                         "names (typical .NET multi-project solution)";
+        out.confidence = 75;
+        return out;
+    }
+
     // MVC is a stricter layered variant: it needs `models`,
     // `views`, and `controllers` (or equivalent) all present.
     const bool has_mvc_trio =
@@ -158,6 +243,7 @@ detect_architecture(const CodeIndex& index,
         out.confidence = 90;
         return out;
     }
+    (void)has_any; // reserved for future layered heuristics
 
     // --- Frontend SPA indicators -----------------------------------
     // src/components/ + src/pages/, or the presence of common
