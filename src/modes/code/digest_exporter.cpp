@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <sstream>
 #include <string>
@@ -219,9 +220,101 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     return graph;
 }
 
+/// Read the first `max_lines` lines of `abs_path` (trimmed). Returns an
+/// empty string on any I/O error — hotspot excerpts are an
+/// "if-you-can" enrichment and should never fail a digest.
+[[nodiscard]] std::string
+read_hotspot_excerpt(const std::filesystem::path& abs_path,
+                     std::size_t                  max_lines)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(abs_path, ec) || ec) {
+        return {};
+    }
+    std::ifstream in(abs_path);
+    if (!in) {
+        return {};
+    }
+    std::string out;
+    std::string line;
+    std::size_t count = 0;
+    // Cap bytes too so a minified single-line file can't dominate the
+    // digest (~4 KiB per hotspot is plenty for orientation).
+    constexpr std::size_t k_max_bytes = 4 * 1024;
+    while (count < max_lines && std::getline(in, line)) {
+        if (out.size() + line.size() + 1 > k_max_bytes) {
+            break;
+        }
+        out.append(line);
+        out.push_back('\n');
+        ++count;
+    }
+    return out;
+}
+
+/// Build an excerpt string for one hotspot. For function-level
+/// hotspots with a known symbol range, use the function body; for
+/// file-level hotspots use the first 30 lines of the file.
+[[nodiscard]] std::string
+build_hotspot_excerpt(const CodeIndex&             index,
+                      const Hotspot&               h,
+                      const std::filesystem::path& project_root,
+                      const FileIdToPath&          lookup)
+{
+    const std::string rel_path_str = path_for(lookup, h.file_id);
+    if (rel_path_str.empty() || project_root.empty()) {
+        return {};
+    }
+    const std::filesystem::path abs_path = project_root / rel_path_str;
+
+    // Function-level: try to pull the symbol's line range.
+    if (h.symbol_id != 0) {
+        const auto symbols = index.symbols_in_file(h.file_id);
+        for (const Symbol& s : symbols) {
+            if (s.id == h.symbol_id &&
+                s.line_start > 0 && s.line_end >= s.line_start)
+            {
+                std::ifstream in(abs_path);
+                if (!in) {
+                    break;
+                }
+                std::string line;
+                int         n = 1;
+                std::string out;
+                // Cap body excerpt at 60 lines / 4 KiB so a pathological
+                // mega-function doesn't bloat the digest.
+                constexpr std::size_t k_max_bytes = 4 * 1024;
+                const int             end_line   =
+                    std::min(s.line_end, s.line_start + 60);
+                while (std::getline(in, line)) {
+                    if (n >= s.line_start && n <= end_line) {
+                        if (out.size() + line.size() + 1 > k_max_bytes) {
+                            break;
+                        }
+                        out.append(line);
+                        out.push_back('\n');
+                    }
+                    if (n > end_line) {
+                        break;
+                    }
+                    ++n;
+                }
+                if (!out.empty()) {
+                    return out;
+                }
+            }
+        }
+    }
+
+    // File-level fallback: first 30 lines.
+    return read_hotspot_excerpt(abs_path, 30);
+}
+
 [[nodiscard]] nlohmann::json build_hotspots_json(
-    const CodeIndex&     index,
-    const FileIdToPath&  lookup)
+    const CodeIndex&             index,
+    const FileIdToPath&          lookup,
+    const std::filesystem::path& project_root,
+    bool                         include_excerpts)
 {
     nlohmann::json arr = nlohmann::json::array();
     for (const Hotspot& h : detect_hotspots(index)) {
@@ -231,6 +324,13 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         node["severity"] = h.severity;
         if (h.symbol_id != 0) {
             node["symbol_id"] = h.symbol_id;
+        }
+        if (include_excerpts) {
+            std::string excerpt =
+                build_hotspot_excerpt(index, h, project_root, lookup);
+            if (!excerpt.empty()) {
+                node["excerpt"] = std::move(excerpt);
+            }
         }
         arr.push_back(std::move(node));
     }
@@ -284,9 +384,12 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         build_dependency_graph_json(index, lookup, include_file_details);
 
     // Hotspots and architecture are full-format-only — they're
-    // analytical summaries, not structural facts.
+    // analytical summaries, not structural facts. Excerpts are an
+    // opt-in enrichment that reads file bodies; the slim format
+    // skips them entirely to stay compact.
     if (include_file_details) {
-        root["hotspots"]     = build_hotspots_json(index, lookup);
+        root["hotspots"]     = build_hotspots_json(
+            index, lookup, options.project_root, /*include_excerpts=*/true);
         root["architecture"] = build_architecture_json(index, options.project_root);
     }
 
@@ -346,6 +449,28 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                 << " | " << h.reason << " |\n";
         }
         out << "\n";
+        // Per-hotspot body excerpts below the table, fenced and
+        // language-hinted. Gives an agent enough shape-context to
+        // understand WHY the file is a hotspot without chasing the
+        // path manually.
+        for (const auto& h : hotspots) {
+            const std::string excerpt = build_hotspot_excerpt(
+                index, h, options.project_root, lookup);
+            if (excerpt.empty()) {
+                continue;
+            }
+            const std::string rel_path = path_for(lookup, h.file_id);
+            std::string_view  lang_hint;
+            for (const FileEntry& f : files) {
+                if (f.id == h.file_id) {
+                    lang_hint = language_name(f.language);
+                    break;
+                }
+            }
+            out << "### `" << rel_path << "` (severity " << h.severity
+                << ")\n\n```" << lang_hint << "\n"
+                << excerpt << "```\n\n";
+        }
     }
 
     // --- Dependency graph ------------------------------------------
