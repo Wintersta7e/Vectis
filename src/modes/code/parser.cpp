@@ -1,6 +1,7 @@
 #include "modes/code/parser.h"
 
 #include <array>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -267,9 +268,10 @@ struct TreeSitterParser::Impl {
     TSParser* parser = nullptr;
 
     struct LanguageEntry {
-        const TSLanguage* grammar       = nullptr;
-        TSQuery*          query         = nullptr;  ///< symbol query
-        TSQuery*          import_query  = nullptr;  ///< imports query, may be null
+        const TSLanguage* grammar          = nullptr;
+        TSQuery*          query            = nullptr; ///< symbol query
+        TSQuery*          import_query     = nullptr; ///< imports query, may be null
+        TSQuery*          namespace_query  = nullptr; ///< namespace-decl query, may be null
     };
 
     std::unordered_map<Language, LanguageEntry> languages;
@@ -282,6 +284,9 @@ struct TreeSitterParser::Impl {
             }
             if (entry.import_query != nullptr) {
                 ts_query_delete(entry.import_query);
+            }
+            if (entry.namespace_query != nullptr) {
+                ts_query_delete(entry.namespace_query);
             }
         }
         if (parser != nullptr) {
@@ -342,7 +347,30 @@ struct TreeSitterParser::Impl {
             }
         }
 
-        languages[lang] = LanguageEntry{grammar, query, import_query};
+        // Namespace-declaration query — also optional. Currently only
+        // C# and PHP populate this; see `namespace_query_for`.
+        TSQuery*               namespace_query        = nullptr;
+        const std::string_view namespace_query_source = namespace_query_for(lang);
+        if (!namespace_query_source.empty()) {
+            std::uint32_t ns_error_offset = 0;
+            TSQueryError  ns_error_type   = TSQueryErrorNone;
+            namespace_query = ts_query_new(
+                grammar,
+                namespace_query_source.data(),
+                static_cast<std::uint32_t>(namespace_query_source.size()),
+                &ns_error_offset,
+                &ns_error_type);
+            if (namespace_query == nullptr) {
+                VECTIS_LOG_WARN(
+                    "failed to compile namespace query for {} (error {}, offset {})",
+                    language_name(lang),
+                    static_cast<int>(ns_error_type),
+                    ns_error_offset);
+            }
+        }
+
+        languages[lang] = LanguageEntry{
+            grammar, query, import_query, namespace_query};
         return true;
     }
 };
@@ -570,6 +598,11 @@ TreeSitterParser::extract_imports(Language language, std::string_view content)
                 path_text = unquote(path_text, '\'');
                 raw.import_string.assign(path_text);
                 has_path = true;
+            } else if (!capture_name.empty() && capture_name.front() == '_') {
+                // Convention: `@_xxx` captures exist only to feed
+                // `#match?`/`#eq?` predicates (e.g. the Ruby method-name
+                // check). They must not be confused with the kind tag.
+                continue;
             } else {
                 // `@include`, `@import`, `@use`, `@require`, `@mod`
                 // are treated as the kind tag — whichever fires is
@@ -583,6 +616,71 @@ TreeSitterParser::extract_imports(Language language, std::string_view content)
 
         if (has_path && has_kind && !raw.import_string.empty()) {
             result.push_back(std::move(raw));
+        }
+    }
+
+    ts_query_cursor_delete(cursor);
+    ts_tree_delete(tree);
+    return result;
+}
+
+std::vector<std::string>
+TreeSitterParser::extract_namespaces(Language language, std::string_view content)
+{
+    std::vector<std::string> result;
+
+    if (language == Language::Unknown || content.empty()) {
+        return result;
+    }
+    const auto lang_it = m_impl->languages.find(language);
+    if (lang_it == m_impl->languages.end()) {
+        return result;
+    }
+    const Impl::LanguageEntry& entry = lang_it->second;
+    if (entry.namespace_query == nullptr) {
+        return result;
+    }
+
+    if (!ts_parser_set_language(m_impl->parser, entry.grammar)) {
+        return result;
+    }
+    TSTree* tree = ts_parser_parse_string(
+        m_impl->parser, nullptr, content.data(),
+        static_cast<std::uint32_t>(content.size()));
+    if (tree == nullptr) {
+        return result;
+    }
+
+    const TSNode   root   = ts_tree_root_node(tree);
+    TSQueryCursor* cursor = ts_query_cursor_new();
+    ts_query_cursor_exec(cursor, entry.namespace_query, root);
+
+    TSQueryMatch match;
+    while (ts_query_cursor_next_match(cursor, &match)) {
+        for (std::uint16_t i = 0; i < match.capture_count; ++i) {
+            const TSQueryCapture& capture     = match.captures[i];
+            std::uint32_t         name_len    = 0;
+            const char*           name_chars  = ts_query_capture_name_for_id(
+                entry.namespace_query, capture.index, &name_len);
+            const std::string_view capture_name(name_chars, name_len);
+            if (capture_name != "name") {
+                continue;
+            }
+            const std::uint32_t start = ts_node_start_byte(capture.node);
+            const std::uint32_t end   = ts_node_end_byte(capture.node);
+            if (end > content.size() || start > end) {
+                continue;
+            }
+            std::string ns{content.substr(start, end - start)};
+            // Strip stray whitespace from the captured span.
+            while (!ns.empty() &&
+                   std::isspace(static_cast<unsigned char>(ns.back())))
+            {
+                ns.pop_back();
+            }
+            if (!ns.empty()) {
+                result.push_back(std::move(ns));
+            }
         }
     }
 

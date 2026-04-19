@@ -12,14 +12,21 @@
 
 namespace vectis::modes::code {
 
-/// Per-file bundle of raw imports collected by the scanner during
-/// the main scan pass. The resolver consumes a vector of these and
-/// turns every entry into a `Dependency` edge on the code index.
+/// Per-file bundle of raw imports and namespace declarations collected
+/// by the scanner during the main scan pass. The resolver consumes a
+/// vector of these and turns every import into a `Dependency` edge on
+/// the code index.
+///
+/// `declared_namespaces` feeds a namespace → file-ids map the resolver
+/// builds before resolution begins, used for C# `using X.Y;` and PHP
+/// `use X\Y;` statements where one using resolves to every file
+/// declaring that namespace.
 struct FileImports {
-    std::int64_t          file_id = 0;
-    Language              language = Language::Unknown;
-    std::filesystem::path relative_path;     ///< relative to project root
-    std::vector<RawImport> imports;
+    std::int64_t             file_id  = 0;
+    Language                 language = Language::Unknown;
+    std::filesystem::path    relative_path;     ///< relative to project root
+    std::vector<RawImport>   imports;
+    std::vector<std::string> declared_namespaces;
 };
 
 /// Resolve every raw import in `per_file` to a `file_id` inside

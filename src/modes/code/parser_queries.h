@@ -25,4 +25,15 @@ namespace vectis::modes::code {
 /// the parser treats an empty query as "no imports".
 [[nodiscard]] std::string_view import_query_for(Language language) noexcept;
 
+/// S-expression tree-sitter query for extracting namespace declarations.
+/// Currently populated for C# (`namespace Foo.Bar { ... }` and the C# 10
+/// file-scoped form `namespace Foo.Bar;`) and PHP (`namespace Foo\Bar;`).
+/// Returns an empty view for languages without a namespace concept or
+/// where namespaces don't map to file-level dependencies.
+///
+/// The query is expected to capture a single `@name` on the node that
+/// holds the namespace's dotted path (C#: `qualified_name`/`identifier`,
+/// PHP: `namespace_name`).
+[[nodiscard]] std::string_view namespace_query_for(Language language) noexcept;
+
 } // namespace vectis::modes::code

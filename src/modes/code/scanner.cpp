@@ -273,16 +273,22 @@ Scanner::run(const ScanConfig&                           config,
             index.add_symbols(parse_result.symbols);
         }
 
-        // Collect raw imports for later resolution — only if the
-        // language has an import query wired up. Skipped languages
-        // return an empty vector so no cost to call unconditionally.
+        // Collect raw imports and namespace declarations for later
+        // resolution. Both are no-ops for languages without the
+        // corresponding query. A file with no imports but a namespace
+        // declaration is still pushed — the resolver builds a
+        // namespace → file-ids map across the whole batch, so a C#
+        // `Models/User.cs` file that only declares `namespace
+        // SampleApp.Models` (no `using`) must be visible to it.
         auto raw_imports = parser.extract_imports(language, content);
-        if (!raw_imports.empty()) {
+        auto declared_ns = parser.extract_namespaces(language, content);
+        if (!raw_imports.empty() || !declared_ns.empty()) {
             FileImports fi;
-            fi.file_id       = file_id;
-            fi.language      = language;
-            fi.relative_path = std::move(relative_path);
-            fi.imports       = std::move(raw_imports);
+            fi.file_id             = file_id;
+            fi.language            = language;
+            fi.relative_path       = std::move(relative_path);
+            fi.imports             = std::move(raw_imports);
+            fi.declared_namespaces = std::move(declared_ns);
             per_file_imports.push_back(std::move(fi));
         }
 
@@ -503,12 +509,14 @@ Scanner::run_incremental(const ScanConfig&                      config,
                 }
 
                 auto raw_imports = parser.extract_imports(language, content);
-                if (!raw_imports.empty()) {
+                auto declared_ns = parser.extract_namespaces(language, content);
+                if (!raw_imports.empty() || !declared_ns.empty()) {
                     FileImports fi;
-                    fi.file_id       = file_id;
-                    fi.language      = language;
-                    fi.relative_path = rel;
-                    fi.imports       = std::move(raw_imports);
+                    fi.file_id             = file_id;
+                    fi.language            = language;
+                    fi.relative_path       = rel;
+                    fi.imports             = std::move(raw_imports);
+                    fi.declared_namespaces = std::move(declared_ns);
                     per_file_imports.push_back(std::move(fi));
                 }
 
@@ -535,12 +543,14 @@ Scanner::run_incremental(const ScanConfig&                      config,
             }
 
             auto raw_imports = parser.extract_imports(language, content);
-            if (!raw_imports.empty()) {
+            auto declared_ns = parser.extract_namespaces(language, content);
+            if (!raw_imports.empty() || !declared_ns.empty()) {
                 FileImports fi;
-                fi.file_id       = file_id;
-                fi.language      = language;
-                fi.relative_path = rel;
-                fi.imports       = std::move(raw_imports);
+                fi.file_id             = file_id;
+                fi.language            = language;
+                fi.relative_path       = rel;
+                fi.imports             = std::move(raw_imports);
+                fi.declared_namespaces = std::move(declared_ns);
                 per_file_imports.push_back(std::move(fi));
             }
 

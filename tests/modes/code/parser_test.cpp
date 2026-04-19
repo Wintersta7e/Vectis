@@ -467,13 +467,241 @@ mod helpers;
     EXPECT_TRUE(saw_helpers);
 }
 
-TEST(ParserTest, ExtractImports_EmptyForUnwiredLanguage)
+TEST(ParserTest, ExtractsJavaImports)
 {
     auto parser = make_parser();
-    // Java isn't wired for import extraction in Step 4 — returns empty.
+    constexpr std::string_view source = R"(
+import java.util.List;
+import java.util.Map;
+import com.example.foo.Bar;
+class Main {}
+)";
+    const auto imports = parser->extract_imports(Language::Java, source);
+    ASSERT_EQ(imports.size(), 3U);
+    EXPECT_EQ(imports[0].import_string, "java.util.List");
+    EXPECT_EQ(imports[2].import_string, "com.example.foo.Bar");
+    for (const auto& imp : imports) {
+        EXPECT_EQ(imp.kind, "import");
+    }
+}
+
+TEST(ParserTest, ExtractsCSharpUsings)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+using System;
+using System.Collections.Generic;
+using SampleApp.Models;
+
+namespace SampleApp {}
+)";
+    const auto imports = parser->extract_imports(Language::CSharp, source);
+    ASSERT_GE(imports.size(), 3U);
+    bool saw_system = false;
+    bool saw_collections = false;
+    bool saw_models = false;
+    for (const auto& imp : imports) {
+        if (imp.import_string == "System")                    { saw_system = true; }
+        if (imp.import_string == "System.Collections.Generic"){ saw_collections = true; }
+        if (imp.import_string == "SampleApp.Models")          { saw_models = true; }
+        EXPECT_EQ(imp.kind, "use");
+    }
+    EXPECT_TRUE(saw_system);
+    EXPECT_TRUE(saw_collections);
+    EXPECT_TRUE(saw_models);
+}
+
+TEST(ParserTest, ExtractsGoImports)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+package main
+
+import (
+    "fmt"
+    "example.com/sample/user"
+)
+
+import "os"
+)";
+    const auto imports = parser->extract_imports(Language::Go, source);
+    ASSERT_GE(imports.size(), 3U);
+    bool saw_fmt = false;
+    bool saw_user = false;
+    bool saw_os = false;
+    for (const auto& imp : imports) {
+        if (imp.import_string == "fmt")                      { saw_fmt = true; }
+        if (imp.import_string == "example.com/sample/user") { saw_user = true; }
+        if (imp.import_string == "os")                       { saw_os = true; }
+    }
+    EXPECT_TRUE(saw_fmt);
+    EXPECT_TRUE(saw_user);
+    EXPECT_TRUE(saw_os);
+}
+
+TEST(ParserTest, ExtractsRubyRequires)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+require 'json'
+require_relative 'lib/greeter'
+)";
+    const auto imports = parser->extract_imports(Language::Ruby, source);
+    ASSERT_EQ(imports.size(), 2U);
+    bool saw_json = false;
+    bool saw_lib = false;
+    for (const auto& imp : imports) {
+        if (imp.import_string == "json")         { saw_json = true; }
+        if (imp.import_string == "lib/greeter")  { saw_lib = true; }
+        EXPECT_EQ(imp.kind, "require");
+    }
+    EXPECT_TRUE(saw_json);
+    EXPECT_TRUE(saw_lib);
+}
+
+TEST(ParserTest, ExtractsPhpRequiresAndUses)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(<?php
+require_once 'src/UserService.php';
+include 'config.php';
+use App\Services\UserService;
+)";
+    const auto imports = parser->extract_imports(Language::Php, source);
+    ASSERT_GE(imports.size(), 3U);
+    bool saw_require = false;
+    bool saw_include = false;
+    bool saw_use     = false;
+    for (const auto& imp : imports) {
+        if (imp.import_string == "src/UserService.php") {
+            saw_require = true;
+            EXPECT_EQ(imp.kind, "require");
+        }
+        if (imp.import_string == "config.php") {
+            saw_include = true;
+            EXPECT_EQ(imp.kind, "include");
+        }
+        if (imp.import_string == "App\\Services\\UserService") {
+            saw_use = true;
+            EXPECT_EQ(imp.kind, "use");
+        }
+    }
+    EXPECT_TRUE(saw_require);
+    EXPECT_TRUE(saw_include);
+    EXPECT_TRUE(saw_use);
+}
+
+TEST(ParserTest, ExtractImports_EmptyForSql)
+{
+    auto parser = make_parser();
+    // SQL import semantics (FK graph / sqlplus @includes) not yet spec'd —
+    // the query stays empty and extraction yields no results.
     const auto imports = parser->extract_imports(
-        Language::Java, "import java.util.List; class Foo {}");
+        Language::Sql, "CREATE TABLE users (id INT);");
     EXPECT_TRUE(imports.empty());
+}
+
+TEST(ParserTest, ExtractsJavaPackageDeclarations)
+{
+    auto parser = make_parser();
+    constexpr std::string_view dotted = R"(
+package com.example.foo;
+
+public class Bar {}
+)";
+    const auto ns1 = parser->extract_namespaces(Language::Java, dotted);
+    ASSERT_EQ(ns1.size(), 1U);
+    EXPECT_EQ(ns1[0], "com.example.foo");
+
+    constexpr std::string_view single = R"(
+package flat;
+public class Root {}
+)";
+    const auto ns2 = parser->extract_namespaces(Language::Java, single);
+    ASSERT_EQ(ns2.size(), 1U);
+    EXPECT_EQ(ns2[0], "flat");
+}
+
+TEST(ParserTest, ExtractsCSharpNamespaces_BothBlockAndFileScoped)
+{
+    auto parser = make_parser();
+    constexpr std::string_view block_form = R"(
+namespace SampleApp.Models
+{
+    public class User {}
+}
+)";
+    const auto ns1 = parser->extract_namespaces(Language::CSharp, block_form);
+    ASSERT_EQ(ns1.size(), 1U);
+    EXPECT_EQ(ns1[0], "SampleApp.Models");
+
+    constexpr std::string_view file_scoped = R"(
+namespace SampleApp.Services;
+
+public class UserService {}
+)";
+    const auto ns2 = parser->extract_namespaces(Language::CSharp, file_scoped);
+    ASSERT_EQ(ns2.size(), 1U);
+    EXPECT_EQ(ns2[0], "SampleApp.Services");
+}
+
+TEST(ParserTest, ExtractsPhpNamespaces)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(<?php
+namespace App\Services;
+class UserService {}
+)";
+    const auto ns = parser->extract_namespaces(Language::Php, source);
+    ASSERT_EQ(ns.size(), 1U);
+    EXPECT_EQ(ns[0], "App\\Services");
+}
+
+TEST(ParserTest, ExtractsCSharpUsings_HandlesStaticAndAliased)
+{
+    auto parser = make_parser();
+    // `using static` and `using Alias = ...;` both still expose the
+    // target namespace as a child of `using_directive` — our existing
+    // import query captures both without any alias/static-specific
+    // pattern. This test exists as a regression guard.
+    constexpr std::string_view source = R"(
+using System;
+using static System.Math;
+using Models = SampleApp.Models;
+)";
+    const auto imports = parser->extract_imports(Language::CSharp, source);
+    ASSERT_GE(imports.size(), 3U);
+    bool saw_system = false;
+    bool saw_math   = false;
+    bool saw_models = false;
+    for (const auto& imp : imports) {
+        if (imp.import_string == "System")             saw_system = true;
+        if (imp.import_string == "System.Math")        saw_math   = true;
+        if (imp.import_string == "SampleApp.Models")   saw_models = true;
+    }
+    EXPECT_TRUE(saw_system);
+    EXPECT_TRUE(saw_math);
+    EXPECT_TRUE(saw_models);
+}
+
+TEST(ParserTest, ExtractsPhpRequireConcat)
+{
+    auto parser = make_parser();
+    // `require __DIR__ . '/foo.php';` — the string literal lives on
+    // the RHS of a binary_expression. Our nested query pulls it out.
+    constexpr std::string_view source = R"(<?php
+require_once __DIR__ . '/src/UserService.php';
+)";
+    const auto imports = parser->extract_imports(Language::Php, source);
+    ASSERT_GE(imports.size(), 1U);
+    bool saw = false;
+    for (const auto& imp : imports) {
+        if (imp.import_string == "/src/UserService.php") {
+            saw = true;
+            EXPECT_EQ(imp.kind, "require");
+        }
+    }
+    EXPECT_TRUE(saw);
 }
 
 TEST(ParserTest, UnknownLanguageReturnsNoSymbols)

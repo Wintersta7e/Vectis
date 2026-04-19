@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -33,6 +36,9 @@ candidate_extensions(Language language) noexcept
         case Language::Cpp:        return {".hpp", ".h", ".hh", ".hxx", ".cpp", ".cxx", ".cc"};
         case Language::C:          return {".h", ".c"};
         case Language::Rust:       return {".rs"};
+        case Language::Java:       return {".java"};
+        case Language::Ruby:       return {".rb"};
+        case Language::Php:        return {".php"};
         default:                   return {};
     }
 }
@@ -127,27 +133,35 @@ normalize_relative(const std::filesystem::path& in)
     return 0;
 }
 
+/// Split a dotted name like `foo.bar.Baz` into path segments `foo/bar/Baz`.
+/// Empty segments (leading dot, consecutive dots) are skipped.
+[[nodiscard]] std::filesystem::path
+split_dotted(std::string_view dotted, char separator)
+{
+    std::filesystem::path stem;
+    std::size_t start = 0;
+    while (start < dotted.size()) {
+        const std::size_t sep = dotted.find(separator, start);
+        const std::string segment{
+            dotted.substr(start, sep == std::string_view::npos ? sep : sep - start)};
+        if (!segment.empty() && segment != ".") {
+            stem /= segment;
+        }
+        if (sep == std::string_view::npos) {
+            break;
+        }
+        start = sep + 1;
+    }
+    return stem;
+}
+
 /// Python-specific: convert `foo.bar` to `foo/bar` and try `.py`/.pyi,
 /// or `foo/bar/__init__.py`.
 [[nodiscard]] std::int64_t match_python_dotted(
     const std::vector<FileEntry>& files,
     std::string_view              dotted)
 {
-    std::filesystem::path stem;
-    std::size_t start = 0;
-    while (start < dotted.size()) {
-        const std::size_t dot = dotted.find('.', start);
-        const std::string segment{
-            dotted.substr(start, dot == std::string_view::npos ? dot : dot - start)};
-        if (!segment.empty() && segment != ".") {
-            stem /= segment;
-        }
-        if (dot == std::string_view::npos) {
-            break;
-        }
-        start = dot + 1;
-    }
-
+    const std::filesystem::path stem = split_dotted(dotted, '.');
     static const std::vector<std::string_view> k_py_ext = {".py", ".pyi"};
     const std::int64_t direct = match_by_extension(files, stem, k_py_ext);
     if (direct != 0) {
@@ -165,13 +179,113 @@ normalize_relative(const std::filesystem::path& in)
     return 0;
 }
 
-/// Resolve one raw import to a file_id in the index, returning 0 if
-/// the import is external or can't be found.
-[[nodiscard]] std::int64_t resolve_one(
-    const FileImports&            source,
-    const RawImport&              raw,
-    const std::vector<FileEntry>& files)
+/// Java-specific: `foo.bar.Baz` → try `foo/bar/Baz.java` directly, then
+/// fall back to an endswith match so projects rooted under `src/main/java`
+/// still resolve without us parsing build descriptors.
+[[nodiscard]] std::int64_t match_java_dotted(
+    const std::vector<FileEntry>& files,
+    std::string_view              dotted)
 {
+    const std::filesystem::path stem = split_dotted(dotted, '.');
+    static const std::vector<std::string_view> k_java_ext = {".java"};
+    const std::int64_t direct = match_by_extension(files, stem, k_java_ext);
+    if (direct != 0) {
+        return direct;
+    }
+    const std::string suffix = stem.generic_string() + ".java";
+    for (const FileEntry& file : files) {
+        if (path_ends_with(file.path_relative, suffix)) {
+            return file.id;
+        }
+    }
+    return 0;
+}
+
+/// Shared resolver context built once per `resolve_all` call, carrying
+/// the namespace-to-files index for C#/PHP resolution and the Go module
+/// prefix (if a `go.mod` was found at the project root). Packing these
+/// into one argument keeps `resolve_one`'s signature from drifting
+/// every time a new language-specific hint arrives.
+struct ResolveCtx {
+    const std::vector<FileEntry>&                                   files;
+    const std::unordered_map<std::string, std::vector<std::int64_t>>& namespace_to_files;
+    std::string                                                     go_module_prefix; ///< empty if no go.mod
+};
+
+/// Read the first `module <path>` line out of a Go `go.mod` file. Only
+/// looks at the project root — monorepos with per-subdir go.mods aren't
+/// handled here, which is consistent with how we treat other config
+/// files (Cargo.toml, tsconfig.json) today.
+[[nodiscard]] std::string
+read_go_module_prefix(const std::filesystem::path& project_root)
+{
+    const std::filesystem::path mod_path = project_root / "go.mod";
+    std::error_code ec;
+    if (!std::filesystem::exists(mod_path, ec) || ec) {
+        return {};
+    }
+    std::ifstream in(mod_path);
+    if (!in) {
+        return {};
+    }
+    std::string line;
+    while (std::getline(in, line)) {
+        // Strip leading whitespace — Go's formatter keeps things tidy
+        // but handwritten go.mod files sometimes indent.
+        std::size_t start = 0;
+        while (start < line.size() &&
+               std::isspace(static_cast<unsigned char>(line[start])))
+        {
+            ++start;
+        }
+        constexpr std::string_view k_prefix = "module ";
+        if (line.compare(start, k_prefix.size(), k_prefix) == 0) {
+            std::string path = line.substr(start + k_prefix.size());
+            // Trim trailing comment / whitespace / quotes.
+            while (!path.empty() &&
+                   (std::isspace(static_cast<unsigned char>(path.back())) ||
+                    path.back() == '"' || path.back() == '\''))
+            {
+                path.pop_back();
+            }
+            // Drop leading quote if the module path was quoted.
+            if (!path.empty() && (path.front() == '"' || path.front() == '\'')) {
+                path.erase(0, 1);
+            }
+            return path;
+        }
+    }
+    return {};
+}
+
+/// Build the `namespace-string → [file_id, ...]` index. A single
+/// namespace can be declared by many files (one `SampleApp.Models`
+/// namespace typically contains several `.cs` files).
+[[nodiscard]] std::unordered_map<std::string, std::vector<std::int64_t>>
+build_namespace_index(const std::vector<FileImports>& per_file)
+{
+    std::unordered_map<std::string, std::vector<std::int64_t>> out;
+    for (const FileImports& source : per_file) {
+        for (const std::string& ns : source.declared_namespaces) {
+            out[ns].push_back(source.file_id);
+        }
+    }
+    return out;
+}
+
+/// Resolve one raw import to a set of file_ids in the index. Most
+/// imports resolve to at most one file (returned as a single-element
+/// vector). C# `using X.Y;` and Go `import "x/y"` are different — a
+/// namespace or package maps to every file declaring it, so the
+/// result can be a vector of several ids. An empty vector means the
+/// import is external / unresolved, and a single external edge is
+/// recorded with `target_file_id = 0`.
+[[nodiscard]] std::vector<std::int64_t> resolve_one(
+    const FileImports&  source,
+    const RawImport&    raw,
+    const ResolveCtx&   ctx)
+{
+    const std::vector<FileEntry>& files = ctx.files;
     const std::vector<std::string_view> exts = candidate_extensions(source.language);
 
     // --- 1. Relative path (./ or ../) ------------------------------
@@ -184,104 +298,229 @@ normalize_relative(const std::filesystem::path& in)
         const std::filesystem::path joined     = normalize_relative(
             source_dir / raw.import_string);
 
-        // If the import already carries an extension, try exact match.
         if (!std::filesystem::path{raw.import_string}.extension().empty()) {
             for (const FileEntry& file : files) {
                 if (path_equals(file.path_relative, joined)) {
-                    return file.id;
+                    return {file.id};
                 }
             }
         }
-        // Otherwise try each candidate extension.
         const std::int64_t hit = match_by_extension(files, joined, exts);
         if (hit != 0) {
-            return hit;
+            return {hit};
         }
     }
 
     // --- 2. C/C++ include path with an extension already in place --
-    // #include "core/log.h" where the raw string IS a relative path.
     if ((source.language == Language::Cpp || source.language == Language::C) &&
         !std::filesystem::path{raw.import_string}.extension().empty())
     {
-        // Try project-root-absolute first.
         const std::filesystem::path as_project_root{raw.import_string};
         for (const FileEntry& file : files) {
             if (path_equals(file.path_relative, as_project_root)) {
-                return file.id;
+                return {file.id};
             }
         }
-        // Then try relative to the source file's directory.
         const std::filesystem::path joined = normalize_relative(
             source.relative_path.parent_path() / raw.import_string);
         for (const FileEntry& file : files) {
             if (path_equals(file.path_relative, joined)) {
-                return file.id;
+                return {file.id};
             }
         }
-        // Then an endswith fallback — catches `#include "core/log.h"`
-        // when the actual file is at `src/core/log.h` and we don't
-        // know the include-path root.
         for (const FileEntry& file : files) {
             if (path_ends_with(file.path_relative, raw.import_string)) {
-                return file.id;
+                return {file.id};
             }
         }
     }
 
     // --- 3. Python dotted name -------------------------------------
     if (source.language == Language::Python) {
-        return match_python_dotted(files, raw.import_string);
+        const std::int64_t hit = match_python_dotted(files, raw.import_string);
+        return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
     }
 
-    // --- 4. TS/JS bare module name (no relative prefix) ------------
-    // These are almost always npm packages; treat as external.
-    // (No resolution attempted.)
+    // --- 4. TS/JS bare module name — external, no resolution.
 
     // --- 5. Rust use / mod -----------------------------------------
     if (source.language == Language::Rust) {
-        // `mod foo;` resolves to foo.rs in the same directory.
         if (raw.kind == "mod") {
             const std::filesystem::path source_dir = source.relative_path.parent_path();
             const std::filesystem::path stem = source_dir / raw.import_string;
-            return match_by_extension(files, stem, {".rs"});
+            const std::int64_t hit = match_by_extension(files, stem, {".rs"});
+            return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
         }
-        // `use x::y::z;` — we don't resolve Rust crate-style paths.
+        // `use x::y::z;` — Rust crate-style paths not resolved.
     }
 
-    return 0;  // external / unresolved
+    // --- 6. Java import --------------------------------------------
+    // Specific imports (`import com.foo.Bar;`) hit the path-based
+    // matcher; wildcards (`import com.foo.*;`) strip the asterisk at
+    // capture time and so look like a bare package name here. When
+    // the path match fails we fall back to the namespace index —
+    // if `com.foo` is a known package, emit one edge per file in it.
+    if (source.language == Language::Java) {
+        const std::int64_t hit = match_java_dotted(files, raw.import_string);
+        if (hit != 0) {
+            return {hit};
+        }
+        const auto it = ctx.namespace_to_files.find(raw.import_string);
+        if (it != ctx.namespace_to_files.end()) {
+            return it->second;
+        }
+        return {};
+    }
+
+    // --- 7. Ruby require / require_relative ------------------------
+    if (source.language == Language::Ruby) {
+        const std::filesystem::path source_dir = source.relative_path.parent_path();
+        const std::filesystem::path stem = normalize_relative(
+            source_dir / raw.import_string);
+        const std::int64_t hit = match_by_extension(files, stem, {".rb"});
+        if (hit != 0) {
+            return {hit};
+        }
+        const std::string suffix = stem.generic_string() + ".rb";
+        for (const FileEntry& file : files) {
+            if (path_ends_with(file.path_relative, suffix)) {
+                return {file.id};
+            }
+        }
+    }
+
+    // --- 8. PHP require / include / use ----------------------------
+    if (source.language == Language::Php) {
+        if (raw.kind == "require" || raw.kind == "include") {
+            std::string path_str{raw.import_string};
+            if (!path_str.empty() && path_str.front() == '/') {
+                path_str.erase(0, 1);
+            }
+            const std::filesystem::path source_dir = source.relative_path.parent_path();
+            const std::filesystem::path joined     = normalize_relative(
+                source_dir / path_str);
+
+            if (!std::filesystem::path{raw.import_string}.extension().empty()) {
+                for (const FileEntry& file : files) {
+                    if (path_equals(file.path_relative, joined)) {
+                        return {file.id};
+                    }
+                }
+                for (const FileEntry& file : files) {
+                    if (path_ends_with(file.path_relative, path_str)) {
+                        return {file.id};
+                    }
+                }
+            }
+            const std::int64_t hit = match_by_extension(files, joined, {".php"});
+            return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
+        }
+        if (raw.kind == "use") {
+            // PHP namespaces use backslash separators. Look the name
+            // up verbatim in the namespace index; resolve to every
+            // file that declares that namespace.
+            const auto it = ctx.namespace_to_files.find(raw.import_string);
+            if (it != ctx.namespace_to_files.end()) {
+                return it->second;
+            }
+        }
+    }
+
+    // --- 9. C# `using` via namespace index -------------------------
+    // `using SampleApp.Models;` → every file declaring
+    // `namespace SampleApp.Models` gets an internal edge.
+    if (source.language == Language::CSharp && raw.kind == "use") {
+        const auto it = ctx.namespace_to_files.find(raw.import_string);
+        if (it != ctx.namespace_to_files.end()) {
+            return it->second;
+        }
+    }
+
+    // --- 10. Go import via go.mod prefix ---------------------------
+    // If a `go.mod` exists at the project root and the import starts
+    // with its module path, strip the prefix and emit edges to every
+    // `.go` file under the remaining directory (Go's import unit is
+    // the package = directory). Standard-library and 3rd-party
+    // imports fall through as external.
+    if (source.language == Language::Go &&
+        !ctx.go_module_prefix.empty())
+    {
+        const std::string& prefix = ctx.go_module_prefix;
+        const std::string& imp    = raw.import_string;
+        if (imp == prefix ||
+            (imp.size() > prefix.size() + 1 &&
+             imp.compare(0, prefix.size(), prefix) == 0 &&
+             imp[prefix.size()] == '/'))
+        {
+            const std::string rel_dir = (imp.size() > prefix.size())
+                ? imp.substr(prefix.size() + 1)
+                : std::string{};
+            std::vector<std::int64_t> hits;
+            for (const FileEntry& file : files) {
+                if (file.language != Language::Go) {
+                    continue;
+                }
+                const std::string parent =
+                    file.path_relative.parent_path().generic_string();
+                if (parent == rel_dir) {
+                    hits.push_back(file.id);
+                }
+            }
+            return hits;
+        }
+    }
+
+    return {}; // external / unresolved
 }
 
 } // namespace
 
 void resolve_all(CodeIndex&                       index,
-                 const std::filesystem::path&     /*project_root*/,
+                 const std::filesystem::path&     project_root,
                  const std::vector<FileImports>&  per_file)
 {
-    const std::vector<FileEntry> files = index.snapshot_files();
+    const ResolveCtx ctx{
+        /* files               = */ index.snapshot_files(),
+        /* namespace_to_files  = */ build_namespace_index(per_file),
+        /* go_module_prefix    = */ read_go_module_prefix(project_root),
+    };
+
     std::size_t resolved_count = 0;
     std::size_t external_count = 0;
 
     for (const FileImports& source : per_file) {
         for (const RawImport& raw : source.imports) {
-            Dependency dep;
-            dep.source_file_id = source.file_id;
-            dep.target_file_id = resolve_one(source, raw, files);
-            dep.import_string  = raw.import_string;
-            dep.kind           = raw.kind;
-
-            if (dep.target_file_id != 0) {
-                ++resolved_count;
-            } else {
+            const std::vector<std::int64_t> targets = resolve_one(source, raw, ctx);
+            if (targets.empty()) {
+                Dependency dep;
+                dep.source_file_id = source.file_id;
+                dep.target_file_id = 0;
+                dep.import_string  = raw.import_string;
+                dep.kind           = raw.kind;
+                index.add_dependency(std::move(dep));
                 ++external_count;
+                continue;
             }
-            index.add_dependency(std::move(dep));
+            for (const std::int64_t target : targets) {
+                if (target == source.file_id) {
+                    continue; // don't record self-edges
+                }
+                Dependency dep;
+                dep.source_file_id = source.file_id;
+                dep.target_file_id = target;
+                dep.import_string  = raw.import_string;
+                dep.kind           = raw.kind;
+                index.add_dependency(std::move(dep));
+                ++resolved_count;
+            }
         }
     }
 
     VECTIS_LOG_INFO(
-        "Dependency resolution complete: {} resolved, {} external",
-        resolved_count, external_count);
+        "Dependency resolution complete: {} resolved, {} external "
+        "(go_module='{}', namespaces={})",
+        resolved_count, external_count,
+        ctx.go_module_prefix, ctx.namespace_to_files.size());
 }
 
 } // namespace vectis::modes::code

@@ -61,6 +61,14 @@ public:
     [[nodiscard]] std::vector<RawImport>
     extract_imports(Language language, std::string_view content);
 
+    /// Extract the namespace declarations made by a file. Populated
+    /// only for C# (block + file-scoped) and PHP today. Returns an
+    /// empty vector for any language without a namespace query; never
+    /// throws. Used by the dependency resolver to build a
+    /// namespace → files map for `using`/`use` resolution.
+    [[nodiscard]] std::vector<std::string>
+    extract_namespaces(Language language, std::string_view content);
+
     /// True if a grammar and query have been successfully registered
     /// for this language.
     [[nodiscard]] bool supports(Language language) const noexcept;

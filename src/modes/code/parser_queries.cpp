@@ -210,6 +210,92 @@ constexpr std::string_view k_imports_rust = R"(
 (mod_item name: (identifier) @path) @mod
 )";
 
+// Java — `import foo.bar.Baz;` / `import foo.Baz;`. Static / wildcard
+// forms use a different tree shape and are skipped for now.
+constexpr std::string_view k_imports_java = R"(
+(import_declaration (scoped_identifier) @path) @import
+(import_declaration (identifier)        @path) @import
+)";
+
+// C# — `using System;` / `using System.Text;`. Aliased (`using Foo = ...`)
+// and static (`using static Foo.Bar`) usings have distinct node shapes we
+// don't cover in this starter.
+constexpr std::string_view k_imports_csharp = R"(
+(using_directive (qualified_name) @path) @use
+(using_directive (identifier)     @path) @use
+)";
+
+// Go — both the single-line `import "x"` and the grouped `import ( ... )`
+// forms produce `import_spec` nodes with a `path:` field.
+constexpr std::string_view k_imports_go = R"(
+(import_spec path: (interpreted_string_literal) @path) @import
+)";
+
+// Ruby — only `require` / `require_relative` string literals. Interpolated
+// / symbol / dynamic arguments are intentionally skipped. The method name
+// capture is tagged `@_m` so it's visible to the `#match?` predicate; the
+// outer `@require` capture fires after it and overrides the kind.
+constexpr std::string_view k_imports_ruby = R"(
+(call
+  method: (identifier) @_m
+  arguments: (argument_list (string (string_content) @path))
+  (#match? @_m "^require(_relative)?$")) @require
+)";
+
+// PHP — `require` / `require_once` / `include` / `include_once` with a
+// direct string-literal argument OR a `__DIR__ . '…'` concatenation
+// (the right-hand string is captured). Plus `use Namespace\Sub;` clauses.
+constexpr std::string_view k_imports_php = R"(
+(require_once_expression (string (string_content) @path)) @require
+(require_expression      (string (string_content) @path)) @require
+(include_once_expression (string (string_content) @path)) @include
+(include_expression      (string (string_content) @path)) @include
+
+; `require __DIR__ . '/foo.php';` — the string literal sits on the RHS
+; of a binary_expression. Match nested so the outer kind tag fires.
+(require_once_expression
+  (binary_expression right: (string (string_content) @path))) @require
+(require_expression
+  (binary_expression right: (string (string_content) @path))) @require
+(include_once_expression
+  (binary_expression right: (string (string_content) @path))) @include
+(include_expression
+  (binary_expression right: (string (string_content) @path))) @include
+
+(namespace_use_clause    (qualified_name)         @path)  @use
+(namespace_use_clause    (name)                   @path)  @use
+)";
+
+// -----------------------------------------------------------------------------
+// Namespace-declaration queries — per-language. Capture a single `@name`
+// on the node that holds the dotted namespace path. The scanner records
+// these for each file and the resolver builds a namespace → files map so
+// C# `using X.Y;` / PHP `use X\Y;` statements create internal edges to
+// every file that declares the named namespace.
+// -----------------------------------------------------------------------------
+
+constexpr std::string_view k_namespaces_csharp = R"(
+(namespace_declaration            (qualified_name) @name)
+(namespace_declaration            (identifier)     @name)
+(file_scoped_namespace_declaration (qualified_name) @name)
+(file_scoped_namespace_declaration (identifier)     @name)
+)";
+
+constexpr std::string_view k_namespaces_php = R"(
+(namespace_definition (namespace_name) @name)
+)";
+
+// Java treats `package com.example;` as the enclosing namespace for the
+// compilation unit. Specific imports already resolve via the dotted
+// path-to-file map (`match_java_dotted`), but `import com.example.*;`
+// drops the asterisk at capture time and needs a fallback that maps
+// the bare namespace back to every file declaring it — which is what
+// the namespace index gives us.
+constexpr std::string_view k_namespaces_java = R"(
+(package_declaration (scoped_identifier) @name)
+(package_declaration (identifier)        @name)
+)";
+
 } // namespace
 
 std::string_view query_for(Language language) noexcept
@@ -241,18 +327,30 @@ std::string_view import_query_for(Language language) noexcept
         case Language::C:          return k_imports_c_cpp;
         case Language::Cpp:        return k_imports_c_cpp;
         case Language::Rust:       return k_imports_rust;
-        // Languages not yet wired for dependency extraction. The
-        // parser handles an empty query as "no imports". These can
-        // be filled in without touching callers.
-        case Language::Java:       return {};
-        case Language::CSharp:     return {};
-        case Language::Go:         return {};
-        case Language::Ruby:       return {};
-        case Language::Php:        return {};
+        case Language::Java:       return k_imports_java;
+        case Language::CSharp:     return k_imports_csharp;
+        case Language::Go:         return k_imports_go;
+        case Language::Ruby:       return k_imports_ruby;
+        case Language::Php:        return k_imports_php;
+        // SQL import semantics (FK / table references / sqlplus @includes)
+        // haven't been spec'd yet; keep empty until we settle the design.
         case Language::Sql:        return {};
         case Language::Unknown:    return {};
     }
     return {};
+}
+
+std::string_view namespace_query_for(Language language) noexcept
+{
+    switch (language) {
+        case Language::CSharp: return k_namespaces_csharp;
+        case Language::Php:    return k_namespaces_php;
+        // Java uses the index only as a wildcard-import fallback
+        // (`import com.foo.*;`); specific imports still resolve through
+        // the path-based `match_java_dotted`.
+        case Language::Java:   return k_namespaces_java;
+        default:               return {};
+    }
 }
 
 } // namespace vectis::modes::code
