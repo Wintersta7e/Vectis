@@ -44,6 +44,14 @@ DIGEST OPTIONS
     --cache-dir <dir>             Override the cache location (e.g. for
                                   read-only project dirs). Implies
                                   --cache.
+    -q, --quiet                   Suppress non-error output on stderr.
+    -v, --verbose                 Print scan stats (files, symbols,
+                                  edges, elapsed ms) to stderr.
+
+EXIT CODES
+    0   success
+    1   usage / argument error
+    2   scan, export, or I/O failure
 
 EXAMPLES
     vectis digest ./my-project                        # JSON to stdout, no cache
@@ -75,6 +83,10 @@ struct DigestArgs {
     bool                               use_cache = false;
     /// Override cache location. Empty = `<project_root>/vectis-data`.
     std::filesystem::path              cache_dir;
+    /// Suppress warnings on stderr. Errors still print.
+    bool                               quiet = false;
+    /// Emit per-scan stats to stderr on success.
+    bool                               verbose = false;
 };
 
 /// Parse `digest <path> [--format …] [--output …]`. Returns false on
@@ -104,6 +116,10 @@ bool parse_digest_args(int argc, char** argv, DigestArgs& out)
             out.use_cache = true;
             out.cache_dir = argv[i + 1];
             ++i;
+        } else if (arg == "--quiet" || arg == "-q") {
+            out.quiet = true;
+        } else if (arg == "--verbose" || arg == "-v") {
+            out.verbose = true;
         } else {
             std::fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
             return false;
@@ -161,7 +177,8 @@ int run_uncached(const std::filesystem::path&          abs_root,
 int run_cached(const std::filesystem::path&          abs_root,
                const std::filesystem::path&          cache_dir,
                vectis::modes::code::TreeSitterParser& parser,
-               vectis::modes::code::CodeIndex&       index)
+               vectis::modes::code::CodeIndex&       index,
+               bool                                  quiet)
 {
     namespace fs = std::filesystem;
 
@@ -199,9 +216,11 @@ int run_cached(const std::filesystem::path&          abs_root,
 
     if (have_existing_cache) {
         if (auto r = vectis::modes::code::load_index(storage, index); !r) {
-            std::fprintf(stderr,
-                         "warning: cache load failed (%s); falling back "
-                         "to full scan\n", r.error().message.c_str());
+            if (!quiet) {
+                std::fprintf(stderr,
+                             "warning: cache load failed (%s); falling back "
+                             "to full scan\n", r.error().message.c_str());
+            }
             // clear() resets the in-memory index without move-assigning
             // (CodeIndex is move-disabled to keep shared_mutex safe).
             index.clear();
@@ -236,8 +255,10 @@ int run_cached(const std::filesystem::path&          abs_root,
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
     if (auto r = vectis::modes::code::save_index(storage, index, meta); !r) {
-        std::fprintf(stderr, "warning: cache save failed: %s\n",
-                     r.error().message.c_str());
+        if (!quiet) {
+            std::fprintf(stderr, "warning: cache save failed: %s\n",
+                         r.error().message.c_str());
+        }
         // Not fatal — the digest is still correct for this run.
     }
     return 0;
@@ -266,17 +287,31 @@ int run_digest(const DigestArgs& args)
     parser.register_builtin_languages();
     vectis::modes::code::CodeIndex index;
 
+    const auto t_start = std::chrono::steady_clock::now();
+
     int scan_rc = 0;
     if (args.use_cache) {
         const fs::path cache_dir = args.cache_dir.empty()
             ? abs_root / "vectis-data"
             : fs::absolute(args.cache_dir, ec);
-        scan_rc = run_cached(abs_root, cache_dir, parser, index);
+        scan_rc = run_cached(abs_root, cache_dir, parser, index, args.quiet);
     } else {
         scan_rc = run_uncached(abs_root, parser, index);
     }
     if (scan_rc != 0) {
         return scan_rc;
+    }
+
+    if (args.verbose && !args.quiet) {
+        const auto elapsed_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t_start).count();
+        std::fprintf(stderr,
+                     "vectis: scanned %zu files, %zu symbols, %zu deps in %lld ms\n",
+                     index.file_count(),
+                     index.symbol_count(),
+                     index.dependency_count(),
+                     static_cast<long long>(elapsed_ms));
     }
 
     vectis::modes::code::ExportOptions export_opts;
