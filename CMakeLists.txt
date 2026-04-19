@@ -32,6 +32,10 @@ option(VECTIS_BUILD_GGML "Build with embedded GGML/llama.cpp offline support" OF
 # standards get per-target overrides below.
 if(MSVC)
     add_compile_options(/W4 /WX /permissive-)
+    # Silence MSVC's CRT "secure" deprecation on std C functions (std::getenv,
+    # std::strncpy, ...). Our code uses these intentionally; the "safer"
+    # _dupenv_s/strncpy_s replacements are Windows-only and break portability.
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 else()
     add_compile_options(-Wall -Wextra -Werror -Wpedantic)
 endif()
@@ -40,9 +44,12 @@ endif()
 # "Static" here means our own libs + C/C++ runtime on non-MSVC. System
 # libraries (X11, Wayland, etc.) on Linux remain dynamic — that is expected.
 if(VECTIS_STATIC_LINK)
-    set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
     set(BUILD_SHARED_LIBS OFF)
-    if(NOT MSVC)
+    if(MSVC)
+        # .lib on MSVC — leave CMAKE_FIND_LIBRARY_SUFFIXES at its default
+        # (.lib) so find_library() resolves vcpkg's static archives.
+    else()
+        set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
         set(CMAKE_EXE_LINKER_FLAGS
             "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
     endif()
@@ -480,7 +487,11 @@ if(VECTIS_BUILD_GGML)
 endif()
 
 # --- Vectis executable -------------------------------------------------------
-add_executable(vectis
+# The WIN32 keyword selects the Windows GUI subsystem on Win32 targets so
+# double-clicking the exe doesn't spawn a console window. It is silently
+# ignored on non-Windows platforms. SDL2main (linked below on Windows)
+# provides the WinMain entry point that forwards to our `main`.
+add_executable(vectis WIN32
     src/main.cpp
 )
 

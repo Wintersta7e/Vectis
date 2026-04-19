@@ -1,12 +1,19 @@
 # Build
 build/
+build-win/
+build-win-*.log
 cmake-build-*/
 out/
 
-# IDE
+# Windows build driver (local convenience, not part of the source tree)
+build-windows.cmd
+
+# IDE / local tool state
 .vs/
 .vscode/
 .idea/
+.claude/
+.serena/
 *.swp
 *.swo
 *~

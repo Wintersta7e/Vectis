@@ -58,9 +58,13 @@ namespace {
 }
 
 /// Convert file_time_type to seconds since epoch.
+///
+/// MSVC's `std::chrono::file_clock` (= `std::filesystem::_File_time_clock`)
+/// does not expose `to_sys`/`from_sys` as static members; libstdc++ does.
+/// `std::chrono::clock_cast` is the C++20-standard portable bridge on both.
 [[nodiscard]] std::int64_t to_epoch_seconds(std::filesystem::file_time_type ft)
 {
-    const auto sys_time = std::chrono::file_clock::to_sys(ft);
+    const auto sys_time = std::chrono::clock_cast<std::chrono::system_clock>(ft);
     return std::chrono::duration_cast<std::chrono::seconds>(
         sys_time.time_since_epoch()).count();
 }
@@ -69,7 +73,7 @@ namespace {
 [[nodiscard]] std::filesystem::file_time_type from_epoch_seconds(std::int64_t epoch)
 {
     const auto sys_time = std::chrono::sys_seconds{std::chrono::seconds{epoch}};
-    return std::chrono::file_clock::from_sys(sys_time);
+    return std::chrono::clock_cast<std::chrono::file_clock>(sys_time);
 }
 
 } // namespace

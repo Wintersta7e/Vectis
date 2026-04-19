@@ -2,10 +2,14 @@
   "name": "vectis",
   "version": "0.1.0",
   "description": "Portable Developer Intelligence Tool",
+  "builtin-baseline": "3af1d1e60af2b2abf55760538cd607829029b07a",
   "dependencies": [
     "sdl2",
     "opengl",
-    "sqlite3",
+    {
+      "name": "sqlite3",
+      "features": ["fts5"]
+    },
     "nlohmann-json",
     "tomlplusplus",
     "curl",
