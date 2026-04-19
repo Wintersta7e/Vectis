@@ -403,6 +403,7 @@ set_target_properties(imgui_lib PROPERTIES CXX_CLANG_TIDY "")
 # Everything Vectis-written lives in a static library so the executable and
 # the test runner can link against the same objects without double-compiling.
 add_library(vectis_core STATIC
+    src/cli/cli_main.cpp
     src/core/app.cpp
     src/core/config_manager.cpp
     src/core/context_bus.cpp
