@@ -204,6 +204,13 @@ bool App::initialize()
     }
 
     // 5. SDL2 --------------------------------------------------------------
+    // Make the process DPI-aware on Windows BEFORE SDL_Init. Without this,
+    // Windows reports virtual (100 %-scaled) window dimensions and does a
+    // blurry DWM upscale for everything we draw. SDL 2.24+ accepts this
+    // hint; older SDLs ignore it harmlessly.
+#ifdef _WIN32
+    SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
+#endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0) {
         VECTIS_LOG_ERROR("SDL_Init failed: {}", SDL_GetError());
         return false;
@@ -221,10 +228,23 @@ bool App::initialize()
     const SDL_WindowFlags window_flags = static_cast<SDL_WindowFlags>(
         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 
+    // Pick a window size proportional to the primary display's usable
+    // area so 4K-at-100 % users don't get a tiny 1280x720 window and
+    // 1080p users don't get something that barely fits on screen.
+    int window_w = k_window_width;
+    int window_h = k_window_height;
+    SDL_Rect usable_bounds{};
+    if (SDL_GetDisplayUsableBounds(0, &usable_bounds) == 0 &&
+        usable_bounds.w > 0 && usable_bounds.h > 0)
+    {
+        window_w = std::max(k_window_width,  (usable_bounds.w * 7) / 10);
+        window_h = std::max(k_window_height, (usable_bounds.h * 7) / 10);
+    }
+
     m_impl->window = SDL_CreateWindow(
         k_window_title,
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        k_window_width, k_window_height,
+        window_w, window_h,
         window_flags);
     if (m_impl->window == nullptr) {
         VECTIS_LOG_ERROR("SDL_CreateWindow failed: {}", SDL_GetError());
@@ -252,6 +272,98 @@ bool App::initialize()
 
     ImGui::StyleColorsDark();
     ui::apply_vectis_theme(ImGui::GetStyle());
+
+    // HiDPI + font loading.
+    //
+    // ImGui's bundled ProggyClean was designed for 13 px — scaling it up
+    // produces a blurry, pixelated glyph set that's a lot of the "ugly UI"
+    // complaint. Load a system TrueType font instead (Segoe UI on Windows,
+    // DejaVu on most Linux distros) and fall back to the default only when
+    // neither exists. Base size bumped from 13 to 16 for readability on
+    // 4K displays; `ui.font_scale` in vectis.toml lets users tune further.
+    {
+        int win_w = 0;
+        int win_h = 0;
+        int fb_w  = 0;
+        int fb_h  = 0;
+        SDL_GetWindowSize(m_impl->window, &win_w, &win_h);
+        SDL_GL_GetDrawableSize(m_impl->window, &fb_w, &fb_h);
+
+        // Two DPI signals combine:
+        //   1. drawable/window ratio — non-1.0 when Windows display
+        //      scaling is >100 % (SDL reports virtual logical size).
+        //   2. physical display DPI via SDL_GetDisplayDPI — picks up
+        //      "4K-at-100 %" setups where (1) gives 1.0 but the panel's
+        //      163 DPI makes 16 px text a pinpoint.
+        // Use the larger of the two so neither blind spot leaves us
+        // rendering postage-stamp fonts.
+        float dpi_scale = (win_w > 0)
+            ? static_cast<float>(fb_w) / static_cast<float>(win_w)
+            : 1.0F;
+
+        const int display_index = SDL_GetWindowDisplayIndex(m_impl->window);
+        float     hdpi          = 0.0F;
+        if (display_index >= 0 &&
+            SDL_GetDisplayDPI(display_index, nullptr, &hdpi, nullptr) == 0 &&
+            hdpi > 1.0F)
+        {
+            constexpr float k_reference_dpi = 96.0F;
+            dpi_scale = std::max(dpi_scale, hdpi / k_reference_dpi);
+        }
+
+        const double user_scale_d =
+            m_impl->services->config().get_double("ui.font_scale", 1.0);
+        const float user_scale = (user_scale_d > 0.1 && user_scale_d < 8.0)
+            ? static_cast<float>(user_scale_d)
+            : 1.0F;
+
+        constexpr float k_base_font_px = 16.0F;
+        const float     font_px        = k_base_font_px * dpi_scale * user_scale;
+
+        // Portable TTF probe list. First existing file wins. Kept short
+        // so the common happy path is fast.
+        static constexpr const char* k_font_candidates[] = {
+#ifdef _WIN32
+            "C:\\Windows\\Fonts\\segoeui.ttf",
+            "C:\\Windows\\Fonts\\arial.ttf",
+#elif defined(__APPLE__)
+            "/System/Library/Fonts/SFNS.ttf",
+            "/Library/Fonts/Arial.ttf",
+#else
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+#endif
+        };
+
+        ImFont*     loaded_font = nullptr;
+        const char* loaded_path = nullptr;
+        for (const char* candidate : k_font_candidates) {
+            std::error_code ec;
+            if (std::filesystem::exists(candidate, ec)) {
+                loaded_font = io.Fonts->AddFontFromFileTTF(candidate, font_px);
+                if (loaded_font != nullptr) {
+                    loaded_path = candidate;
+                    break;
+                }
+            }
+        }
+        if (loaded_font == nullptr) {
+            ImFontConfig cfg;
+            cfg.SizePixels = font_px;
+            io.Fonts->AddFontDefault(&cfg);
+        }
+
+        if (dpi_scale > 1.0F) {
+            ImGui::GetStyle().ScaleAllSizes(dpi_scale);
+        }
+        VECTIS_LOG_INFO(
+            "HiDPI scale={:.2f}, user_scale={:.2f}, font_px={:.1f}, "
+            "font={} (window {}x{}, drawable {}x{}, hdpi={:.0f})",
+            dpi_scale, user_scale, font_px,
+            loaded_path != nullptr ? loaded_path : "ProggyClean(default)",
+            win_w, win_h, fb_w, fb_h, hdpi);
+    }
 
     if (!ImGui_ImplSDL2_InitForOpenGL(m_impl->window, m_impl->gl_context)) {
         VECTIS_LOG_ERROR("ImGui_ImplSDL2_InitForOpenGL failed");
