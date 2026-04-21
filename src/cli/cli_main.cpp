@@ -17,6 +17,7 @@
 #include "modes/code/code_index.h"
 #include "modes/code/code_index_store.h"
 #include "modes/code/digest_exporter.h"
+#include "modes/code/gitignore.h"
 #include "modes/code/parser.h"
 #include "modes/code/scanner.h"
 #include "services/index_engine/index_engine.h"
@@ -129,24 +130,59 @@ bool parse_digest_args(int argc, char** argv, DigestArgs& out)
 }
 
 /// Common ScanConfig used by both cached and uncached paths.
+///
+/// Two layers of exclude, merged into `config.exclude_dir_names`:
+///
+///   1. Built-in defaults — directory names that are almost always
+///      generated artifacts, virtualenvs, caches, or IDE metadata. The
+///      list is aggressive because a digest polluted with site-packages
+///      or build intermediates is actively misleading to consumers.
+///
+///   2. Project `.gitignore` (simple name patterns only). Picks up
+///      project-specific names the defaults miss (e.g. a user's
+///      `build_venv/` or `third_party_vendored/`).
+///
+/// False positives (excluding something the user wanted indexed) are
+/// rare and recoverable — the user can simply not list it in
+/// `.gitignore`. False negatives (indexing site-packages) make the
+/// digest worse than useless, as observed on a real external-python-project
+/// scan that returned 2252 files where the project had ~100 sources
+/// and hotspots dominated by pygments / PyInstaller / setuptools.
 vectis::modes::code::ScanConfig
 make_scan_config(const std::filesystem::path& abs_root)
 {
     vectis::modes::code::ScanConfig config;
     config.root  = abs_root;
     config.epoch = 1;
-    // Default excludes mirror CodeMode's opinion — skip build outputs,
-    // package caches, and VCS metadata so the digest reflects source
-    // intent rather than generated files.
     config.exclude_dir_names = {
+        // VCS metadata
         ".git", ".hg", ".svn",
-        "node_modules", "target", "build", "build-win",
-        "dist", "out", ".venv", "venv", "__pycache__",
+        // Language / framework build outputs
+        "node_modules",
+        "target", "build", "build-win", "out", "dist",
+        "bin", "obj",
+        "cmake-build-debug", "cmake-build-release",
+        ".gradle",
+        ".next", ".nuxt", ".svelte-kit",
+        // Python virtualenvs + tool caches
+        ".venv", "venv", "env", "virtualenv", "build_venv",
+        "__pycache__", ".pytest_cache", ".mypy_cache",
+        ".ruff_cache", ".tox",
+        // Test / coverage artifacts
+        "htmlcov",
+        // Generic caches
+        ".cache",
+        // IDE metadata
         ".idea", ".vscode", ".vs",
-        // Skip our own cache directory so --cache doesn't re-scan its
-        // own SQLite WAL journals on the next run.
+        // Vectis's own cache dir so --cache doesn't re-scan its WAL.
         "vectis-data",
     };
+    // Layer in .gitignore-derived names. insert() is idempotent — duplicates
+    // against the built-ins are silently absorbed.
+    auto gi = vectis::modes::code::read_gitignore_dir_patterns(abs_root);
+    for (auto& name : gi) {
+        config.exclude_dir_names.insert(std::move(name));
+    }
     return config;
 }
 
