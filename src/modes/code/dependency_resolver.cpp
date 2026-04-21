@@ -179,6 +179,71 @@ split_dotted(std::string_view dotted, char separator)
     return 0;
 }
 
+/// Python relative imports: `from .x import y`, `from ..pkg.mod import z`,
+/// `from . import x`. Tree-sitter's `relative_import` node captures the
+/// entire pattern — dots and the optional dotted suffix — as one text
+/// span, which arrives here as e.g. `".x"`, `"..pkg.mod"`, `"."`.
+///
+/// Semantics (PEP 328):
+///   - 1 dot  = the current package (source file's directory)
+///   - 2 dots = the parent package
+///   - n dots = walk up (n-1) levels from source's directory
+///
+/// Without this, every `from ..something import x` is classified
+/// external, and real Python projects — which lean heavily on relative
+/// imports for package-internal references — end up with
+/// `internal_edges: 0` despite having hundreds of intra-project
+/// imports.
+[[nodiscard]] std::int64_t match_python_relative(
+    const std::vector<FileEntry>& files,
+    const std::filesystem::path&  source_relative_path,
+    std::string_view              with_dots)
+{
+    std::size_t n_dots = 0;
+    while (n_dots < with_dots.size() && with_dots[n_dots] == '.') {
+        ++n_dots;
+    }
+    if (n_dots == 0) {
+        return 0;
+    }
+    const std::string_view remainder = with_dots.substr(n_dots);
+
+    // Walk up (n_dots - 1) levels from source's directory. Bail if we
+    // walk above the project root — the import refers to something
+    // outside the scan.
+    std::filesystem::path base = source_relative_path.parent_path();
+    for (std::size_t i = 1; i < n_dots; ++i) {
+        if (base.empty() || base == base.parent_path()) {
+            return 0;
+        }
+        base = base.parent_path();
+    }
+
+    std::filesystem::path stem = base;
+    if (!remainder.empty()) {
+        stem /= split_dotted(remainder, '.');
+    }
+
+    static const std::vector<std::string_view> k_py_ext = {".py", ".pyi"};
+
+    // `from .x.y import z` → target is `<base>/x/y.py` (module) ...
+    const std::int64_t direct = match_by_extension(files, stem, k_py_ext);
+    if (direct != 0) {
+        return direct;
+    }
+    // ... or `<base>/x/y/__init__.py` (package).
+    for (const std::string_view ext : k_py_ext) {
+        const std::filesystem::path init_path =
+            stem / (std::string{"__init__"} + std::string{ext});
+        for (const FileEntry& file : files) {
+            if (path_equals(file.path_relative, init_path)) {
+                return file.id;
+            }
+        }
+    }
+    return 0;
+}
+
 /// Java-specific: `foo.bar.Baz` → try `foo/bar/Baz.java` directly, then
 /// fall back to an endswith match so projects rooted under `src/main/java`
 /// still resolve without us parsing build descriptors.
@@ -335,8 +400,19 @@ build_namespace_index(const std::vector<FileImports>& per_file)
         }
     }
 
-    // --- 3. Python dotted name -------------------------------------
+    // --- 3. Python dotted name or relative import ------------------
+    // Relative imports (leading `.`) resolve against the source file's
+    // package; falling through to dotted-name resolution would wrongly
+    // match a top-level module with the same basename (`..models` →
+    // `models.py` at repo root rather than the parent package's
+    // `models.py`), so relative imports go through their own path.
     if (source.language == Language::Python) {
+        if (!raw.import_string.empty() && raw.import_string.front() == '.') {
+            const std::int64_t hit = match_python_relative(
+                files, source.relative_path, raw.import_string);
+            return hit != 0 ? std::vector<std::int64_t>{hit}
+                            : std::vector<std::int64_t>{};
+        }
         const std::int64_t hit = match_python_dotted(files, raw.import_string);
         return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
     }

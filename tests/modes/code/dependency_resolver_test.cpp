@@ -141,6 +141,138 @@ TEST(DependencyResolverTest, Python_DottedNameResolvesToFile)
     EXPECT_TRUE(saw_os);
 }
 
+TEST(DependencyResolverTest, Python_RelativeImport_SameDirectorySibling)
+{
+    CodeIndex idx;
+    const auto foo_py = add(idx, "src/pkg/foo.py", Language::Python);
+    const auto bar_py = add(idx, "src/pkg/bar.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        foo_py, Language::Python, "src/pkg/foo.py",
+        {RawImport{".bar", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(foo_py);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, bar_py);
+    EXPECT_EQ(deps[0].import_string, ".bar");
+}
+
+TEST(DependencyResolverTest, Python_RelativeImport_ParentPackageModule)
+{
+    CodeIndex idx;
+    const auto sub_foo = add(idx, "src/pkg/sub/foo.py",   Language::Python);
+    const auto models  = add(idx, "src/pkg/models.py",    Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        sub_foo, Language::Python, "src/pkg/sub/foo.py",
+        {RawImport{"..models", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(sub_foo);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, models);
+}
+
+TEST(DependencyResolverTest, Python_RelativeImport_ParentPackageSubmodule)
+{
+    CodeIndex idx;
+    const auto sub_foo   = add(idx, "src/pkg/sub/foo.py",      Language::Python);
+    const auto user      = add(idx, "src/pkg/models/user.py",  Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        sub_foo, Language::Python, "src/pkg/sub/foo.py",
+        {RawImport{"..models.user", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(sub_foo);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, user);
+}
+
+TEST(DependencyResolverTest, Python_RelativeImport_ResolvesToPackageInit)
+{
+    CodeIndex idx;
+    const auto sub_foo   = add(idx, "src/pkg/sub/foo.py",           Language::Python);
+    const auto models_pk = add(idx, "src/pkg/models/__init__.py",   Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        sub_foo, Language::Python, "src/pkg/sub/foo.py",
+        {RawImport{"..models", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(sub_foo);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, models_pk);
+}
+
+TEST(DependencyResolverTest, Python_RelativeImport_ThreeDotsWalksUpTwoLevels)
+{
+    CodeIndex idx;
+    const auto deep_py = add(idx, "src/a/b/c/leaf.py", Language::Python);
+    const auto top_py  = add(idx, "src/a/shared.py",   Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        deep_py, Language::Python, "src/a/b/c/leaf.py",
+        {RawImport{"...shared", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(deep_py);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, top_py);
+}
+
+TEST(DependencyResolverTest, Python_RelativeImport_NotConfusedWithTopLevelModule)
+{
+    // Regression guard: "..models" from a sub-package must NOT resolve
+    // to a top-level `models.py`. Before the relative-import fix,
+    // split_dotted dropped the leading dots and matched the repo-root
+    // file — corrupting the internal graph.
+    CodeIndex idx;
+    const auto sub_foo       = add(idx, "src/pkg/sub/foo.py",      Language::Python);
+    const auto parent_models = add(idx, "src/pkg/models.py",       Language::Python);
+    const auto root_models   = add(idx, "models.py",               Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        sub_foo, Language::Python, "src/pkg/sub/foo.py",
+        {RawImport{"..models", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(sub_foo);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, parent_models);
+    EXPECT_NE(deps[0].target_file_id, root_models);
+}
+
+TEST(DependencyResolverTest, Python_RelativeImport_WalkingAboveRootStaysExternal)
+{
+    CodeIndex idx;
+    const auto main_py = add(idx, "main.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        main_py, Language::Python, "main.py",
+        {RawImport{"..outside", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(main_py);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, 0); // external / unresolved
+}
+
 TEST(DependencyResolverTest, TypeScript_RelativeImportResolvesWithExtension)
 {
     CodeIndex idx;
