@@ -349,6 +349,34 @@ build_hotspot_excerpt(const CodeIndex&             index,
     return node;
 }
 
+/// Flat top-level symbol list for the full JSON format. Per-file
+/// symbols stay on their `files[i].symbols` entry; this additional
+/// array gives consumers a single-key lookup (`digest["symbols"]`)
+/// without forcing them to walk every file. Each entry carries just
+/// enough for agent-side filtering: `name`, `kind`, `path`, `line`.
+/// Signatures, members and complexity stay on the per-file entry for
+/// consumers that want them.
+[[nodiscard]] nlohmann::json build_symbols_flat_json(
+    const CodeIndex&             index,
+    const std::vector<FileEntry>& files,
+    const FileIdToPath&          lookup)
+{
+    nlohmann::json arr = nlohmann::json::array();
+    for (const FileEntry& file : files) {
+        const std::string path = path_for(lookup, file.id);
+        for (const Symbol& sym : index.symbols_in_file(file.id)) {
+            nlohmann::json node = {
+                {"name", sym.name},
+                {"kind", std::string{symbol_kind_name(sym.kind)}},
+                {"path", path},
+                {"line", sym.line_start},
+            };
+            arr.push_back(std::move(node));
+        }
+    }
+    return arr;
+}
+
 /// Build the shared top-level JSON object that full and slim formats
 /// both start from.
 [[nodiscard]] nlohmann::json build_json(
@@ -391,6 +419,10 @@ build_hotspot_excerpt(const CodeIndex&             index,
         root["hotspots"]     = build_hotspots_json(
             index, lookup, options.project_root, /*include_excerpts=*/true);
         root["architecture"] = build_architecture_json(index, options.project_root);
+        // Top-level flat symbols view — redundant with files[i].symbols
+        // but saves agents the tree walk and gives `digest["symbols"]`
+        // a real payload instead of returning empty on `.get()`.
+        root["symbols"]      = build_symbols_flat_json(index, files, lookup);
     }
 
     return root;

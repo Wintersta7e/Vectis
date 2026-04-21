@@ -118,6 +118,33 @@ TEST(DigestExporterTest, Json_WellFormed)
     EXPECT_TRUE(saw_errorkind_members);
 }
 
+TEST(DigestExporterTest, Json_TopLevelSymbolsArrayMatchesCount)
+{
+    // Regression guard for the "project.symbol_count claimed N but
+    // digest['symbols'] returned []" discrepancy: the top-level
+    // `symbols` array must exist in full JSON and carry an entry for
+    // every symbol in the index.
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    const ExportOptions options = make_options(DigestFormat::Json, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    const auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("symbols"));
+    const auto& top_symbols = parsed["symbols"];
+    ASSERT_TRUE(top_symbols.is_array());
+    EXPECT_EQ(top_symbols.size(), parsed["project"]["symbol_count"].get<std::size_t>());
+
+    // Each entry carries at least {name, kind, path, line}.
+    for (const auto& s : top_symbols) {
+        EXPECT_TRUE(s.contains("name"));
+        EXPECT_TRUE(s.contains("kind"));
+        EXPECT_TRUE(s.contains("path"));
+        EXPECT_TRUE(s.contains("line"));
+    }
+}
+
 TEST(DigestExporterTest, SlimJson_OmitsSizeLinesAndSymbols)
 {
     CodeIndex index;
