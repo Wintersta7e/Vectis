@@ -4,8 +4,6 @@
 #include <filesystem>
 #include <string_view>
 
-#include <imgui.h>
-
 namespace vectis::modes::code {
 
 /// Source languages Vectis knows how to detect and parse.
@@ -49,9 +47,5 @@ inline constexpr std::size_t k_language_count = 12;
 /// Reverse of `language_name`: parses a string back to a Language.
 /// Returns `Language::Unknown` if the name is not recognized.
 [[nodiscard]] Language language_from_name(std::string_view name) noexcept;
-
-/// UI accent color for the language, used by the file tree to tint
-/// filenames or draw a small colored dot next to the entry.
-[[nodiscard]] ImVec4 language_color(Language language) noexcept;
 
 } // namespace vectis::modes::code

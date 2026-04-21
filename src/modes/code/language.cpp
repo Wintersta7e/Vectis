@@ -7,8 +7,6 @@
 #include <string_view>
 #include <utility>
 
-#include <imgui.h>
-
 namespace vectis::modes::code {
 
 namespace {
@@ -123,27 +121,6 @@ Language language_from_name(std::string_view name) noexcept
     if (name == "PHP")        return Language::Php;
     if (name == "SQL")        return Language::Sql;
     return Language::Unknown;
-}
-
-ImVec4 language_color(Language language) noexcept
-{
-    // Palette borrowed from common IDE/GitHub language colors.
-    switch (language) {
-        case Language::Python:     return ImVec4(0.22F, 0.52F, 0.78F, 1.0F); // blue
-        case Language::JavaScript: return ImVec4(0.94F, 0.86F, 0.21F, 1.0F); // yellow
-        case Language::TypeScript: return ImVec4(0.19F, 0.48F, 0.78F, 1.0F); // darker blue
-        case Language::C:          return ImVec4(0.33F, 0.55F, 0.67F, 1.0F); // steel
-        case Language::Cpp:        return ImVec4(0.94F, 0.33F, 0.42F, 1.0F); // red-pink
-        case Language::Rust:       return ImVec4(0.87F, 0.44F, 0.18F, 1.0F); // rust orange
-        case Language::Java:       return ImVec4(0.83F, 0.35F, 0.14F, 1.0F); // dark orange
-        case Language::CSharp:     return ImVec4(0.41F, 0.19F, 0.63F, 1.0F); // purple
-        case Language::Go:         return ImVec4(0.00F, 0.68F, 0.83F, 1.0F); // cyan
-        case Language::Ruby:       return ImVec4(0.80F, 0.16F, 0.16F, 1.0F); // crimson
-        case Language::Php:        return ImVec4(0.30F, 0.35F, 0.62F, 1.0F); // indigo
-        case Language::Sql:        return ImVec4(0.56F, 0.43F, 0.20F, 1.0F); // brown
-        case Language::Unknown:    return ImVec4(0.55F, 0.58F, 0.62F, 1.0F); // gray
-    }
-    return ImVec4(0.55F, 0.58F, 0.62F, 1.0F);
 }
 
 } // namespace vectis::modes::code

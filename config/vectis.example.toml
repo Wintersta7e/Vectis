@@ -3,74 +3,21 @@
 # All settings have sensible defaults — this file is optional.
 
 [general]
-# Theme: "dark" (default), "light"
-theme = "dark"
-
 # Data directory (relative to binary or absolute path)
 data_dir = "./vectis-data"
 
-# --- Code Mode ---
+# --- Code scanning ---
 [code]
 # Languages to parse (or "auto" to detect from file extensions)
 languages = ["auto"]
 
-# Directories to exclude from analysis
-exclude = ["node_modules", "dist", ".git", "vendor", "build", "target", "__pycache__"]
+# Extra directory names to exclude in addition to the built-in
+# defaults (virtualenvs, build outputs, caches, VCS metadata, IDE
+# dirs). Your project's `.gitignore` is already layered on top.
+exclude = []
 
 [code.digest]
 # What to include in agent digest exports
 include_signatures = true
-include_routes = true
 include_hotspots = true
 max_depth = 3
-
-# --- HTTP Mode ---
-[http]
-# Local proxy port
-proxy_port = 8080
-
-# Maximum captured requests to keep in memory
-max_captures = 10000
-
-# --- Ask Mode ---
-[ask]
-# AI backend preference: "auto" (first available), "claude", "openai",
-# "gemini", "ollama", "ggml". "auto" picks the best of what's available.
-ai_backend = "auto"
-
-# Ollama server endpoint and model name.
-# ollama_endpoint = "http://localhost:11434"
-# ollama_model    = "llama3"
-
-# For offline GGML mode (only if built with VECTIS_BUILD_GGML=ON):
-# path to a GGUF model file next to the binary.
-# model_path = "./models/phi-3-mini-4k-instruct.Q4_K_M.gguf"
-
-# For API backends: tokens are read from environment variables, never
-# from this file. Set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY
-# in your shell before launching Vectis.
-
-# --- Project Mode ---
-# API integrations are optional. Everything works without them.
-
-# [project.github]
-# token_env = "GITHUB_TOKEN"
-# repos = ["myorg/api", "myorg/frontend"]
-
-# [project.jira]
-# token_env = "JIRA_API_TOKEN"
-# url = "https://mycompany.atlassian.net"
-# default_project = "BACKEND"
-
-# [project.gitlab]
-# token_env = "GITLAB_TOKEN"
-# url = "https://gitlab.com"
-# projects = ["mygroup/myproject"]
-
-# --- Write Mode ---
-[write]
-# Default template for new documents
-default_template = "blank"
-
-# Auto-save interval in seconds (0 to disable)
-autosave_interval = 30

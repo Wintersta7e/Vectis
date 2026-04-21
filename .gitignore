@@ -14,6 +14,7 @@ build-windows.cmd
 .idea/
 .claude/
 .serena/
+.cache/
 *.swp
 *.swo
 *~
@@ -25,9 +26,6 @@ vcpkg_installed/
 vectis
 vectis.exe
 vectis-data/
-
-# ImGui writes this next to the working directory on shutdown
-imgui.ini
 
 # Generated digests (Vectis produces these next to scanned projects)
 vectis-digest.json
@@ -48,7 +46,7 @@ vectis.toml
 # CLAUDE.md is local project instructions only
 CLAUDE.md
 
-# External project references (local-only)
+# Local reference notes (not part of the source tree)
 external-project-notes.txt
 tests/fixtures/code/sample-multimodule/
 

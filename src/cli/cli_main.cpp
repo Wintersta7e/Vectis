@@ -30,7 +30,6 @@ namespace {
 constexpr const char* k_usage = R"(vectis — portable developer intelligence tool
 
 USAGE
-    vectis                        Launch the GUI.
     vectis digest <path> [opts]   Scan <path> and emit a digest.
     vectis --help                 Show this text.
 

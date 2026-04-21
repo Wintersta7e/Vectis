@@ -21,14 +21,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # without extra setup.
 option(VECTIS_STATIC_LINK "Link Vectis statically for distribution builds" OFF)
 option(VECTIS_BUILD_TESTS "Build unit tests" ON)
-# Embedded offline AI via llama.cpp. OFF by default because the FetchContent
-# pulls in hundreds of MB and slows clean builds substantially. Flip to ON
-# for release binaries or when you want offline inference support.
-option(VECTIS_BUILD_GGML "Build with embedded GGML/llama.cpp offline support" OFF)
 
 # --- Strict warnings ---------------------------------------------------------
 # Applied project-wide via add_compile_options; affects all targets declared
-# *after* this point. Third-party targets (imgui_lib) that can't meet these
+# *after* this point. Third-party grammar sources that can't meet these
 # standards get per-target overrides below.
 if(MSVC)
     add_compile_options(/W4 /WX /permissive-)
@@ -62,8 +58,6 @@ endif()
 # the current environment provides.
 include(FetchContent)
 
-find_package(SDL2         REQUIRED)
-find_package(OpenGL       REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(tomlplusplus REQUIRED)
 find_package(fmt          REQUIRED)
@@ -321,90 +315,11 @@ if(NOT ts_sql_POPULATED)
 endif()
 vectis_add_ts_grammar(sql ts_sql "")
 
-# --- portable-file-dialogs (header-only, download-only) ----------------------
-# We deliberately skip FetchContent_MakeAvailable() because the upstream
-# CMakeLists would add example/demo targets to our build.
-FetchContent_Declare(
-    pfd
-    GIT_REPOSITORY https://github.com/samhocevar/portable-file-dialogs.git
-    GIT_TAG        0.1.0
-)
-FetchContent_GetProperties(pfd)
-if(NOT pfd_POPULATED)
-    FetchContent_Populate(pfd)
-endif()
-add_library(pfd INTERFACE)
-target_include_directories(pfd INTERFACE ${pfd_SOURCE_DIR})
-
-# --- llama.cpp (opt-in via VECTIS_BUILD_GGML) --------------------------------
-# Declared conditionally so the default apt-based dev build doesn't fetch
-# hundreds of MB of ggml sources. When the flag is off, GGMLBackend compiles
-# as a pure stub that reports unavailable.
-if(VECTIS_BUILD_GGML)
-    FetchContent_Declare(
-        llama_cpp
-        GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-        # Pinned to a recent build-tag. Update when flipping this flag on
-        # for a release — llama.cpp moves quickly and the sampling API
-        # has churned between tags.
-        GIT_TAG        b3500
-    )
-    # Keep llama.cpp's own demos + tests out of our build.
-    set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
-    set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(LLAMA_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
-    # CPU-only — Vectis's portability promise forbids pulling CUDA/Metal.
-    set(LLAMA_CUDA   OFF CACHE BOOL "" FORCE)
-    set(LLAMA_METAL  OFF CACHE BOOL "" FORCE)
-    set(LLAMA_BLAS   OFF CACHE BOOL "" FORCE)
-    set(LLAMA_NATIVE OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(llama_cpp)
-endif()
-
-# --- Dear ImGui (docking branch, pinned) -------------------------------------
-FetchContent_Declare(
-    imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    # v1.92.7-docking (resolved 2026-04-09) — pinned SHA so fresh clones
-    # always build against the same ImGui snapshot.
-    GIT_TAG        7d2273672596f2a2fc4d5f20c52ec1d3cb6cd2c3
-)
-FetchContent_MakeAvailable(imgui)
-
-add_library(imgui_lib STATIC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_demo.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
-)
-target_include_directories(imgui_lib PUBLIC
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends
-)
-# SDL2 target name differs between vcpkg (SDL2::SDL2) and system FindSDL2
-# (SDL2::SDL2 on newer CMake, otherwise just ${SDL2_LIBRARIES}). Modern
-# Ubuntu ships the CMake config, so SDL2::SDL2 works in both cases.
-target_link_libraries(imgui_lib PUBLIC SDL2::SDL2 OpenGL::GL)
-
-# ImGui sources don't meet Vectis's strict lint standard. Silence warnings
-# and exclude from clang-tidy on the third-party target only — our own
-# sources still get the full treatment.
-if(MSVC)
-    target_compile_options(imgui_lib PRIVATE /w)
-else()
-    target_compile_options(imgui_lib PRIVATE -w)
-endif()
-set_target_properties(imgui_lib PROPERTIES CXX_CLANG_TIDY "")
-
 # --- Vectis core library -----------------------------------------------------
 # Everything Vectis-written lives in a static library so the executable and
 # the test runner can link against the same objects without double-compiling.
 add_library(vectis_core STATIC
     src/cli/cli_main.cpp
-    src/core/app.cpp
     src/core/config_manager.cpp
     src/core/context_bus.cpp
     src/core/log.cpp
@@ -413,13 +328,10 @@ add_library(vectis_core STATIC
     src/modes/code/architecture_detector.cpp
     src/modes/code/code_index.cpp
     src/modes/code/code_index_store.cpp
-    src/modes/code/code_mode.cpp
     src/modes/code/complexity_analyzer.cpp
-    src/modes/code/dep_view.cpp
     src/modes/code/dependency_graph.cpp
     src/modes/code/dependency_resolver.cpp
     src/modes/code/digest_exporter.cpp
-    src/modes/code/file_tree_view.cpp
     src/modes/code/gitignore.cpp
     src/modes/code/hotspot_detector.cpp
     src/modes/code/language.cpp
@@ -428,12 +340,9 @@ add_library(vectis_core STATIC
     src/modes/code/scanner.cpp
     src/services/index_engine/index_engine.cpp
     src/services/storage_engine/storage_engine.cpp
-    src/platform/file_dialog.cpp
     src/platform/file_io.cpp
     src/platform/file_watcher.cpp
     src/platform/process.cpp
-    src/ui/theme.cpp
-    src/ui/widgets.cpp
 )
 
 target_include_directories(vectis_core PUBLIC
@@ -441,8 +350,6 @@ target_include_directories(vectis_core PUBLIC
 )
 
 target_link_libraries(vectis_core PUBLIC
-    imgui_lib
-    pfd
     tree_sitter_lib
     ts_grammar_python
     ts_grammar_javascript
@@ -456,8 +363,6 @@ target_link_libraries(vectis_core PUBLIC
     ts_grammar_ruby
     ts_grammar_php
     ts_grammar_sql
-    SDL2::SDL2
-    OpenGL::GL
     ${VECTIS_SQLITE3_TARGET}
     nlohmann_json::nlohmann_json
     tomlplusplus::tomlplusplus
@@ -466,29 +371,10 @@ target_link_libraries(vectis_core PUBLIC
     tl::expected
 )
 
-# Opt-in GGML/llama.cpp linkage + compile-time define. Kept after
-# target_link_libraries so the llama target already exists.
-if(VECTIS_BUILD_GGML)
-    target_link_libraries(vectis_core PUBLIC llama)
-    target_compile_definitions(vectis_core PUBLIC VECTIS_GGML_ENABLED=1)
-endif()
-
 # --- Vectis executable -------------------------------------------------------
-# The WIN32 keyword selects the Windows GUI subsystem on Win32 targets so
-# double-clicking the exe doesn't spawn a console window. It is silently
-# ignored on non-Windows platforms. SDL2main (linked below on Windows)
-# provides the WinMain entry point that forwards to our `main`.
-add_executable(vectis WIN32
-    src/main.cpp
-)
-
-# SDL2::SDL2main is only provided by vcpkg on Windows. On Linux/macOS it
-# doesn't exist, and system SDL2 handles `main` via its own header macro.
-if(TARGET SDL2::SDL2main)
-    target_link_libraries(vectis PRIVATE vectis_core SDL2::SDL2main)
-else()
-    target_link_libraries(vectis PRIVATE vectis_core)
-endif()
+# Headless CLI only — no SDL / OpenGL / GUI subsystem.
+add_executable(vectis src/main.cpp)
+target_link_libraries(vectis PRIVATE vectis_core)
 
 # --- Tests -------------------------------------------------------------------
 if(VECTIS_BUILD_TESTS)
