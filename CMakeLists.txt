@@ -324,19 +324,19 @@ add_library(vectis_core STATIC
     src/core/log.cpp
     src/core/service_registry.cpp
     src/core/task_queue.cpp
-    src/modes/code/architecture_detector.cpp
-    src/modes/code/code_index.cpp
-    src/modes/code/code_index_store.cpp
-    src/modes/code/complexity_analyzer.cpp
-    src/modes/code/dependency_graph.cpp
-    src/modes/code/dependency_resolver.cpp
-    src/modes/code/digest_exporter.cpp
-    src/modes/code/gitignore.cpp
-    src/modes/code/hotspot_detector.cpp
-    src/modes/code/language.cpp
-    src/modes/code/parser.cpp
-    src/modes/code/parser_queries.cpp
-    src/modes/code/scanner.cpp
+    src/code/architecture_detector.cpp
+    src/code/code_index.cpp
+    src/code/code_index_store.cpp
+    src/code/complexity_analyzer.cpp
+    src/code/dependency_graph.cpp
+    src/code/dependency_resolver.cpp
+    src/code/digest_exporter.cpp
+    src/code/gitignore.cpp
+    src/code/hotspot_detector.cpp
+    src/code/language.cpp
+    src/code/parser.cpp
+    src/code/parser_queries.cpp
+    src/code/scanner.cpp
     src/services/index_engine/index_engine.cpp
     src/services/storage_engine/storage_engine.cpp
     src/platform/file_io.cpp

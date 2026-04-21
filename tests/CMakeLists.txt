@@ -9,19 +9,19 @@ add_executable(vectis_tests
     core/config_manager_test.cpp
     core/hash_test.cpp
     core/task_queue_test.cpp
-    modes/code/architecture_detector_test.cpp
-    modes/code/code_index_store_test.cpp
-    modes/code/code_index_test.cpp
-    modes/code/complexity_analyzer_test.cpp
-    modes/code/dependency_graph_test.cpp
-    modes/code/dependency_resolver_test.cpp
-    modes/code/digest_exporter_test.cpp
-    modes/code/fixtures_test.cpp
-    modes/code/gitignore_test.cpp
-    modes/code/hotspot_detector_test.cpp
-    modes/code/language_test.cpp
-    modes/code/parser_test.cpp
-    modes/code/scanner_test.cpp
+    code/architecture_detector_test.cpp
+    code/code_index_store_test.cpp
+    code/code_index_test.cpp
+    code/complexity_analyzer_test.cpp
+    code/dependency_graph_test.cpp
+    code/dependency_resolver_test.cpp
+    code/digest_exporter_test.cpp
+    code/fixtures_test.cpp
+    code/gitignore_test.cpp
+    code/hotspot_detector_test.cpp
+    code/language_test.cpp
+    code/parser_test.cpp
+    code/scanner_test.cpp
     platform/file_io_test.cpp
     platform/file_watcher_test.cpp
     services/index_engine_test.cpp

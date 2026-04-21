@@ -5,7 +5,7 @@ Used as a testing ground for the Code mode scanner, parser, and UI:
 
 - **Manual smoke testing** — open any `sample-*/` directory in Vectis
   and verify file tree, symbol browser, and code viewer behave correctly.
-- **Automated testing** — `tests/modes/code/fixtures_test.cpp` scans
+- **Automated testing** — `tests/code/fixtures_test.cpp` scans
   `sample-python/` and asserts expected files, symbols, and kinds.
 
 Each fixture is deliberately tiny (a handful of files, <100 LOC total)

@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "core/log.h"
-#include "modes/code/symbol.h"
+#include "code/symbol.h"
 #include "services/storage_engine/storage_engine.h"
 
 namespace vectis::services {
@@ -83,7 +83,7 @@ void IndexEngine::remove_file(std::int64_t file_id)
 
 void IndexEngine::index_symbols(
     std::int64_t file_id,
-    const std::vector<vectis::modes::code::Symbol>& symbols)
+    const std::vector<vectis::code::Symbol>& symbols)
 {
     if (m_impl->storage == nullptr) return;
     (void)file_id; // symbols carry their own IDs

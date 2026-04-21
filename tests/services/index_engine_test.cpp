@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 
-#include "modes/code/symbol.h"
+#include "code/symbol.h"
 #include "services/storage_engine/storage_engine.h"
 
 namespace {
@@ -59,11 +59,11 @@ TEST_F(IndexEngineTest, SearchFiles_FiltersToFileSource)
 {
     m_engine.index_file(1, "src/main.cpp", "int main() { return 0; }");
 
-    vectis::modes::code::Symbol sym;
+    vectis::code::Symbol sym;
     sym.id        = 100;
     sym.file_id   = 1;
     sym.name      = "main";
-    sym.kind      = vectis::modes::code::SymbolKind::Function;
+    sym.kind      = vectis::code::SymbolKind::Function;
     sym.signature = "int main()";
     m_engine.index_symbols(1, {sym});
 
@@ -95,11 +95,11 @@ TEST_F(IndexEngineTest, RemoveFile_ExcludesFromResults)
 
 TEST_F(IndexEngineTest, IndexSymbols_SearchableByName)
 {
-    vectis::modes::code::Symbol sym;
+    vectis::code::Symbol sym;
     sym.id        = 42;
     sym.file_id   = 1;
     sym.name      = "calculate_total";
-    sym.kind      = vectis::modes::code::SymbolKind::Function;
+    sym.kind      = vectis::code::SymbolKind::Function;
     sym.signature = "double calculate_total(const Order& order)";
     m_engine.index_symbols(1, {sym});
 

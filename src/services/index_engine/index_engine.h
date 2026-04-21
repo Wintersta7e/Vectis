@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace vectis::modes::code { struct Symbol; }
+namespace vectis::code { struct Symbol; }
 
 namespace vectis::services {
 
@@ -49,7 +49,7 @@ public:
 
     /// Index symbols (name + signature) for full-text search.
     void index_symbols(std::int64_t file_id,
-                       const std::vector<vectis::modes::code::Symbol>& symbols);
+                       const std::vector<vectis::code::Symbol>& symbols);
 
     // ----- Search ------------------------------------------------------------
 
