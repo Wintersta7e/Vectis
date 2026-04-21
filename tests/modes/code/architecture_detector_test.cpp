@@ -153,6 +153,61 @@ TEST(ArchitectureDetectorTest, SmallProject_DefaultsToMonolith)
     EXPECT_EQ(result.label, ArchitectureLabel::Monolith);
 }
 
+TEST(ArchitectureDetectorTest, FixtureSubtreesDoNotPolluteReasoning)
+{
+    // Regression guard for the Vectis-scans-itself bug: test fixtures
+    // under `tests/fixtures/...` containing `models/`, `dao/`,
+    // `controllers/` subdirs used to inject fake layered signals into
+    // architecture reasoning. The segment walker now stops descending
+    // at test / fixture / docs / vendor roots so deep noise doesn't
+    // reach the classifier.
+    CodeIndex idx;
+    // Real project shape — plugin / modular layering (Vectis-like).
+    add_file(idx, "src/core/app.cpp",    Language::Cpp);
+    add_file(idx, "src/core/log.cpp",    Language::Cpp);
+    add_file(idx, "src/platform/io.cpp", Language::Cpp);
+    add_file(idx, "src/main.cpp",        Language::Cpp);
+    // Test fixtures that must NOT inject signals.
+    add_file(idx, "tests/fixtures/code/sample-java/models/User.java",
+             Language::Java);
+    add_file(idx, "tests/fixtures/code/sample-multimodule/business/dao/Foo.java",
+             Language::Java);
+    add_file(idx, "tests/fixtures/code/sample-mvc/controllers/Home.java",
+             Language::Java);
+
+    const auto result = detect_architecture(idx, "/fake");
+
+    // Should be Layered or Monolith — definitely NOT MVC (needs
+    // models+views+controllers trio; all three in fixtures must not
+    // bleed through).
+    EXPECT_NE(result.label, ArchitectureLabel::Mvc);
+    // Reasoning must not cite `models/`, `dao/`, or `controllers/` —
+    // they live under a fixture subtree that was pruned.
+    EXPECT_EQ(result.reasoning.find("models"),      std::string::npos)
+        << "reasoning leaked fixture segment `models`: " << result.reasoning;
+    EXPECT_EQ(result.reasoning.find("dao"),         std::string::npos)
+        << "reasoning leaked fixture segment `dao`: " << result.reasoning;
+    EXPECT_EQ(result.reasoning.find("controllers"), std::string::npos)
+        << "reasoning leaked fixture segment `controllers`: " << result.reasoning;
+}
+
+TEST(ArchitectureDetectorTest, MonorepoReasoningCitesActualMatch)
+{
+    // When only `libs/` fires (not `packages/` or `apps/`), the
+    // reasoning string must say so — the old template claimed
+    // "`packages/` or `apps/`" even when only `libs/` matched,
+    // misleading consumers reading the digest.
+    CodeIndex idx;
+    add_file(idx, "libs/utils/main.go", Language::Go);
+    add_file(idx, "libs/api/main.go",   Language::Go);
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
+    EXPECT_NE(result.reasoning.find("libs"),     std::string::npos);
+    EXPECT_EQ(result.reasoning.find("packages"), std::string::npos);
+    EXPECT_EQ(result.reasoning.find("apps"),     std::string::npos);
+}
+
 TEST(ArchitectureDetectorTest, Mvvm_DetectsViewModelsPlusViews)
 {
     CodeIndex idx;

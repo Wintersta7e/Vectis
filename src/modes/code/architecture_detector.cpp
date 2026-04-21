@@ -19,32 +19,52 @@ namespace vectis::modes::code {
 
 namespace {
 
-/// Collect every distinct directory segment at ANY depth from the
-/// scanned files. The earlier top/second-level-only scan missed
-/// patterns that live at deeper levels in modern multi-project
-/// .NET solutions (`src/App.UI/ViewModels/...`) and monorepos
-/// (`packages/frontend/src/components/...`).
+/// Collect distinct directory segments from scanned files.
+///
+/// Walks each file's directory components top-down, but **stops** at
+/// the first segment whose name is a known test / fixture / doc /
+/// vendor root. The stop segment itself is included (so `tests` at
+/// top-level still counts as a signal), but deeper segments under it
+/// are not — otherwise a fixture path like
+/// `tests/fixtures/code/sample-python/models/user.py` would inject a
+/// bogus `"models"` signal into architecture detection, making Vectis
+/// scanning itself mis-classify as classical layered (models/dao/etc.
+/// coming from Java/Python test fixtures, not the real project).
+///
+/// Deep non-test subtrees are still walked in full — .NET
+/// `src/App.UI/ViewModels/...` and monorepo
+/// `packages/frontend/src/components/...` both need depth-3+ signals
+/// and wouldn't detect correctly with a naive depth cap.
 [[nodiscard]] std::unordered_set<std::string>
 collect_directory_segments(const CodeIndex& index)
 {
+    // Names that end the descent. Keep conservative — anything
+    // added here stops being a legitimate architecture signal for
+    // everything under it.
+    static const std::unordered_set<std::string> k_stop_names = {
+        "tests", "test",
+        "fixtures", "__fixtures__",
+        "docs", "doc",
+        "examples", "example",
+        "vendor", "third_party",
+    };
+
     std::unordered_set<std::string> segments;
     for (const FileEntry& file : index.snapshot_files()) {
-        auto       it  = file.path_relative.begin();
-        const auto end = file.path_relative.end();
-        // Skip the leaf filename — only interested in directory
-        // components.
         std::filesystem::path dir = file.path_relative;
         if (dir.has_filename()) {
             dir.remove_filename();
         }
         for (const auto& segment : dir) {
             const std::string s = segment.string();
-            if (!s.empty() && s != "/" && s != ".") {
-                segments.insert(s);
+            if (s.empty() || s == "/" || s == ".") {
+                continue;
+            }
+            segments.insert(s);
+            if (k_stop_names.contains(s)) {
+                break;
             }
         }
-        (void)it;
-        (void)end;
     }
     return segments;
 }
@@ -300,13 +320,21 @@ detect_architecture(const CodeIndex& index,
     // --- Monorepo indicators ---------------------------------------
     // Top-level `packages/`, `apps/`, `libs/` plus multiple main.*
     // files typically mean an npm / cargo / bazel monorepo.
-    const bool has_packages_top = segments.contains("packages") ||
-                                  segments.contains("apps") ||
-                                  segments.contains("libs");
+    const bool has_packages = segments.contains("packages");
+    const bool has_apps     = segments.contains("apps");
+    const bool has_libs     = segments.contains("libs");
+    const bool has_packages_top = has_packages || has_apps || has_libs;
     const std::size_t main_count = count_main_files(index);
     if (has_packages_top && main_count >= 2) {
+        // Cite the directory that actually matched — a reasoning
+        // string claiming "`packages/` or `apps/`" when only `libs/`
+        // fired is exactly the template hallucination consumers
+        // reported, and erodes trust in the whole classifier.
+        const char* which = has_packages ? "packages"
+                          : has_apps     ? "apps"
+                          :                 "libs";
         out.label      = ArchitectureLabel::Monorepo;
-        out.reasoning  = "top-level `packages/` or `apps/` plus " +
+        out.reasoning  = std::string{"top-level `"} + which + "/` plus " +
                          std::to_string(main_count) +
                          " entry points suggests a monorepo layout";
         out.confidence = 85;
