@@ -7,7 +7,6 @@ include(GoogleTest)
 add_executable(vectis_tests
     cli/cli_cache_test.cpp
     core/config_manager_test.cpp
-    core/context_bus_test.cpp
     core/hash_test.cpp
     core/task_queue_test.cpp
     modes/code/architecture_detector_test.cpp

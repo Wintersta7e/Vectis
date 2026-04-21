@@ -4,7 +4,6 @@
 #include <utility>
 
 #include "core/config_manager.h"
-#include "core/context_bus.h"
 #include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 
@@ -12,7 +11,6 @@ namespace vectis::core {
 
 struct ServiceRegistry::Impl {
     ConfigManager            config;
-    ContextBus               context;
     services::StorageEngine  storage;
     services::IndexEngine    index;
 };
@@ -26,11 +24,6 @@ ServiceRegistry& ServiceRegistry::operator=(ServiceRegistry&&) noexcept = defaul
 ConfigManager& ServiceRegistry::config()
 {
     return m_impl->config;
-}
-
-ContextBus& ServiceRegistry::context()
-{
-    return m_impl->context;
 }
 
 services::IndexEngine& ServiceRegistry::index()

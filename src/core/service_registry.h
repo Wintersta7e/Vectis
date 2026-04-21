@@ -10,10 +10,12 @@ class StorageEngine;
 namespace vectis::core {
 
 class ConfigManager;
-class ContextBus;
 
-/// Central access point for all shared services.
-/// Passed to each mode during initialization.
+/// Central access point for shared long-lived services. Owns each by
+/// value through the Pimpl; consumers hold references returned by
+/// the accessors below. The older cross-mode pub/sub (ContextBus)
+/// was removed with the GUI on 2026-04-22 — the CLI uses direct
+/// callbacks, which is sufficient for a single-consumer tool.
 class ServiceRegistry {
 public:
     ServiceRegistry();
@@ -27,7 +29,6 @@ public:
     services::IndexEngine& index();
     services::StorageEngine& storage();
     ConfigManager& config();
-    ContextBus& context();
 
 private:
     struct Impl;

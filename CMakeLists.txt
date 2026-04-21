@@ -321,7 +321,6 @@ vectis_add_ts_grammar(sql ts_sql "")
 add_library(vectis_core STATIC
     src/cli/cli_main.cpp
     src/core/config_manager.cpp
-    src/core/context_bus.cpp
     src/core/log.cpp
     src/core/service_registry.cpp
     src/core/task_queue.cpp
