@@ -310,14 +310,23 @@ build_hotspot_excerpt(const CodeIndex&             index,
     return read_hotspot_excerpt(abs_path, 30);
 }
 
+/// Serialize hotspots to JSON. `include_excerpts` controls whether
+/// the relatively expensive file-body excerpts are attached (full
+/// format only). `max_entries == 0` means "no cap"; slim callers pass
+/// a small N (typically 10) to cap total size.
 [[nodiscard]] nlohmann::json build_hotspots_json(
     const CodeIndex&             index,
     const FileIdToPath&          lookup,
     const std::filesystem::path& project_root,
-    bool                         include_excerpts)
+    bool                         include_excerpts,
+    std::size_t                  max_entries = 0)
 {
     nlohmann::json arr = nlohmann::json::array();
-    for (const Hotspot& h : detect_hotspots(index)) {
+    const std::vector<Hotspot> all = detect_hotspots(index);
+    const std::size_t limit =
+        (max_entries == 0) ? all.size() : std::min(all.size(), max_entries);
+    for (std::size_t i = 0; i < limit; ++i) {
+        const Hotspot& h = all[i];
         nlohmann::json node;
         node["file"]     = path_for(lookup, h.file_id);
         node["reason"]   = h.reason;
@@ -411,18 +420,25 @@ build_hotspot_excerpt(const CodeIndex&             index,
     root["dependency_graph"] =
         build_dependency_graph_json(index, lookup, include_file_details);
 
-    // Hotspots and architecture are full-format-only — they're
-    // analytical summaries, not structural facts. Excerpts are an
-    // opt-in enrichment that reads file bodies; the slim format
-    // skips them entirely to stay compact.
+    // Architecture is cheap (~150 bytes) and the single highest-value
+    // signal for agents orienting in an unfamiliar repo — worth
+    // including in slim. Hotspots in slim are capped at the top 10
+    // and stripped of body excerpts so they cost ~1–2 KB. Full format
+    // emits the complete hotspot list with excerpts plus a flat
+    // top-level symbol array for single-key lookup.
+    root["architecture"] = build_architecture_json(index, options.project_root);
     if (include_file_details) {
-        root["hotspots"]     = build_hotspots_json(
-            index, lookup, options.project_root, /*include_excerpts=*/true);
-        root["architecture"] = build_architecture_json(index, options.project_root);
-        // Top-level flat symbols view — redundant with files[i].symbols
-        // but saves agents the tree walk and gives `digest["symbols"]`
-        // a real payload instead of returning empty on `.get()`.
-        root["symbols"]      = build_symbols_flat_json(index, files, lookup);
+        root["hotspots"] = build_hotspots_json(
+            index, lookup, options.project_root,
+            /*include_excerpts=*/true,
+            /*max_entries=*/0);
+        root["symbols"]  = build_symbols_flat_json(index, files, lookup);
+    } else {
+        constexpr std::size_t k_slim_hotspot_cap = 10;
+        root["hotspots"] = build_hotspots_json(
+            index, lookup, options.project_root,
+            /*include_excerpts=*/false,
+            /*max_entries=*/k_slim_hotspot_cap);
     }
 
     return root;

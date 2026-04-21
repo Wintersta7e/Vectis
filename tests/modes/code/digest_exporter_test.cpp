@@ -324,8 +324,12 @@ TEST(DigestExporterTest, Json_ContainsDependencyGraphAndHotspots)
     EXPECT_EQ(parsed["project"]["dependency_count"], 1);
 }
 
-TEST(DigestExporterTest, SlimJson_StaysSlim_NoHotspotsOrArchitecture)
+TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
 {
+    // Slim previously dropped architecture + hotspots entirely, which
+    // left consumers only with file paths + deps — not enough for an
+    // agent's orientation pass. Slim now keeps both, with hotspots
+    // capped at top 10 and stripped of excerpts so they stay cheap.
     CodeIndex index;
     populate_synthetic_index(index);
 
@@ -333,10 +337,20 @@ TEST(DigestExporterTest, SlimJson_StaysSlim_NoHotspotsOrArchitecture)
     const std::string content = build_digest_string(index, options);
     auto parsed = nlohmann::json::parse(content);
 
-    // Slim does NOT include hotspots or architecture (analytical
-    // summaries), but DOES include a lightweight dep graph.
-    EXPECT_FALSE(parsed.contains("hotspots"));
-    EXPECT_FALSE(parsed.contains("architecture"));
+    ASSERT_TRUE(parsed.contains("architecture"));
+    EXPECT_TRUE(parsed["architecture"].contains("label"));
+    EXPECT_TRUE(parsed["architecture"].contains("confidence"));
+
+    ASSERT_TRUE(parsed.contains("hotspots"));
+    EXPECT_TRUE(parsed["hotspots"].is_array());
+    EXPECT_LE(parsed["hotspots"].size(), 10U); // capped
+    for (const auto& h : parsed["hotspots"]) {
+        EXPECT_FALSE(h.contains("excerpt"));    // excerpts are full-format-only
+    }
+
+    // Symbols stay full-format-only to keep slim token-cheap.
+    EXPECT_FALSE(parsed.contains("symbols"));
+
     EXPECT_TRUE(parsed.contains("dependency_graph"));
 }
 
