@@ -196,11 +196,21 @@ constexpr std::string_view k_imports_python = R"(
 (import_from_statement module_name: (relative_import) @path) @import
 )";
 
-// TypeScript / JavaScript — `import x from '...'` only. The source
-// path sits inside a `string > string_fragment` pair.
+// TypeScript / JavaScript — both ESM `import x from '...'` and CJS
+// `require('...')`. The source path sits inside a `string >
+// string_fragment` pair in either case.
 constexpr std::string_view k_imports_ts_js = R"(
 (import_statement
   source: (string (string_fragment) @path)) @import
+
+; CommonJS: `require('./foo')` / `require('lodash')`. The resolver's
+; relative-path branch turns `./foo` into a file lookup; bare module
+; names fall through and are recorded as external. Tagging as @require
+; lets the resolver distinguish CJS from ESM if it ever needs to.
+(call_expression
+  function: (identifier) @_func
+  arguments: (arguments (string (string_fragment) @path))
+  (#eq? @_func "require")) @require
 )";
 
 // Rust — `use foo::bar;` and `mod foo;`.

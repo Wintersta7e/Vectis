@@ -846,4 +846,32 @@ $$ LANGUAGE SQL;
         << "expected at least one CREATE-statement symbol from SQL grammar";
 }
 
+TEST(ParserTest, ExtractsJavaScriptRequires)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+var view = require('./view');
+var http = require('node:http');
+var express = require('express');
+)";
+    const auto imports = parser->extract_imports(Language::JavaScript, source);
+
+    // All three require() calls must be captured. Internal vs external
+    // is the resolver's job; the parser just needs to surface them.
+    ASSERT_GE(imports.size(), 3U);
+
+    bool saw_view    = false;
+    bool saw_http    = false;
+    bool saw_express = false;
+    for (const auto& imp : imports) {
+        EXPECT_EQ(imp.kind, "require");
+        if (imp.import_string == "./view")    { saw_view    = true; }
+        if (imp.import_string == "node:http") { saw_http    = true; }
+        if (imp.import_string == "express")   { saw_express = true; }
+    }
+    EXPECT_TRUE(saw_view);
+    EXPECT_TRUE(saw_http);
+    EXPECT_TRUE(saw_express);
+}
+
 } // namespace
