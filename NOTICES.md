@@ -10,8 +10,6 @@ vcpkg installation tree (`build-win/vcpkg_installed/.../share/`).
 
 | Project | License | Upstream | Role |
 |---|---|---|---|
-| **SDL2** | zlib | <https://libsdl.org> | Window + input + OpenGL context for the Code-mode GUI |
-| **Dear ImGui** (docking branch) | MIT — © Omar Cornut | <https://github.com/ocornut/imgui> | GUI widgets and docking |
 | **tree-sitter** (core C library) | MIT — © Max Brunsfeld and contributors | <https://github.com/tree-sitter/tree-sitter> | Incremental parser framework |
 | **tree-sitter grammars** | MIT (most) | <https://github.com/tree-sitter/> | Language grammars for Python, JS, TS, C, C++, Rust, Java, C#, Go, Ruby, PHP, SQL. Each grammar is a separate repository; see `CMakeLists.txt` for pinned commits. |
 | **SQLite** | Public Domain | <https://sqlite.org> | Persistent code index, FTS5 full-text search |
@@ -20,7 +18,6 @@ vcpkg installation tree (`build-win/vcpkg_installed/.../share/`).
 | **tomlplusplus** | MIT — © Mark Gillard | <https://github.com/marzer/tomlplusplus> | TOML config parsing |
 | **nlohmann/json** | MIT — © Niels Lohmann | <https://github.com/nlohmann/json> | JSON serialization for digest export |
 | **tl::expected** | CC0-1.0 — © Simon Brand | <https://github.com/TartanLlama/expected> | `Result<T>` implementation for C++20 |
-| **portable-file-dialogs** | WTFPL | <https://github.com/samhocevar/portable-file-dialogs> | Native file / folder dialogs in the GUI |
 
 ## Development-time only (not linked into release binaries)
 
