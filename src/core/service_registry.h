@@ -16,7 +16,8 @@ class ConfigManager;
 /// the accessors below. The older cross-mode pub/sub (ContextBus)
 /// was removed with the GUI on 2026-04-22 — the CLI uses direct
 /// callbacks, which is sufficient for a single-consumer tool.
-class ServiceRegistry {
+class ServiceRegistry
+{
 public:
     ServiceRegistry();
     ~ServiceRegistry();

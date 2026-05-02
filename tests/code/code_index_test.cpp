@@ -1,5 +1,3 @@
-#include "code/code_index.h"
-
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -8,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include "code/code_index.h"
 #include "code/dependency.h"
 #include "code/language.h"
 #include "code/symbol.h"
@@ -26,9 +25,9 @@ FileEntry make_file(const std::string& relative, Language language)
 {
     FileEntry f;
     f.path_relative = relative;
-    f.language      = language;
-    f.size          = 0;
-    f.line_count    = 0;
+    f.language = language;
+    f.size = 0;
+    f.line_count = 0;
     return f;
 }
 
@@ -36,11 +35,11 @@ FileEntry make_file(const std::string& relative, Language language)
 Symbol make_symbol(std::int64_t file_id, const std::string& name, SymbolKind kind, int line = 1)
 {
     Symbol s;
-    s.file_id    = file_id;
-    s.name       = name;
-    s.kind       = kind;
+    s.file_id = file_id;
+    s.name = name;
+    s.kind = kind;
     s.line_start = line;
-    s.line_end   = line;
+    s.line_end = line;
     return s;
 }
 
@@ -102,18 +101,18 @@ TEST(CodeIndexTest, SearchSymbols_CaseInsensitiveSubstring)
     CodeIndex idx;
     const auto fid = idx.add_file(make_file("mod.py", Language::Python));
     const std::array<Symbol, 4> syms = {
-        make_symbol(fid, "FooBar",   SymbolKind::Class),
-        make_symbol(fid, "barrier",  SymbolKind::Function),
-        make_symbol(fid, "BAZ",      SymbolKind::Function),
-        make_symbol(fid, "initFoo",  SymbolKind::Function),
+        make_symbol(fid, "FooBar", SymbolKind::Class),
+        make_symbol(fid, "barrier", SymbolKind::Function),
+        make_symbol(fid, "BAZ", SymbolKind::Function),
+        make_symbol(fid, "initFoo", SymbolKind::Function),
     };
     idx.add_symbols(syms);
 
     const auto foo_hits = idx.search_symbols("foo");
-    EXPECT_EQ(foo_hits.size(), 2U);  // FooBar, initFoo
+    EXPECT_EQ(foo_hits.size(), 2U); // FooBar, initFoo
 
     const auto bar_hits = idx.search_symbols("BAR");
-    EXPECT_EQ(bar_hits.size(), 2U);  // FooBar, barrier
+    EXPECT_EQ(bar_hits.size(), 2U); // FooBar, barrier
 
     const auto nothing = idx.search_symbols("zzz");
     EXPECT_TRUE(nothing.empty());
@@ -124,8 +123,8 @@ TEST(CodeIndexTest, SearchSymbols_EmptyQueryReturnsAllUpToLimit)
     CodeIndex idx;
     const auto fid = idx.add_file(make_file("a.py", Language::Python));
     std::array<Symbol, 3> syms = {
-        make_symbol(fid, "one",   SymbolKind::Function),
-        make_symbol(fid, "two",   SymbolKind::Function),
+        make_symbol(fid, "one", SymbolKind::Function),
+        make_symbol(fid, "two", SymbolKind::Function),
         make_symbol(fid, "three", SymbolKind::Function),
     };
     idx.add_symbols(syms);
@@ -161,11 +160,11 @@ TEST(CodeIndexTest, Dependencies_RoundTripOutgoingAndIncoming)
     const auto fb = idx.add_file(make_file("b.cpp", Language::Cpp));
     const auto fc = idx.add_file(make_file("c.cpp", Language::Cpp));
 
-    idx.add_dependency(Dependency{fa, fb, "b.h",        "include"});
-    idx.add_dependency(Dependency{fa, fc, "c.h",        "include"});
-    idx.add_dependency(Dependency{fb, fc, "c.h",        "include"});
+    idx.add_dependency(Dependency{fa, fb, "b.h", "include"});
+    idx.add_dependency(Dependency{fa, fc, "c.h", "include"});
+    idx.add_dependency(Dependency{fb, fc, "c.h", "include"});
     // External — target 0
-    idx.add_dependency(Dependency{fa, 0,  "<vector>",   "include"});
+    idx.add_dependency(Dependency{fa, 0, "<vector>", "include"});
 
     EXPECT_EQ(idx.dependency_count(), 4U);
 
@@ -202,8 +201,8 @@ TEST(CodeIndexTest, Clear_AlsoClearsDependencies)
     Dependency dep;
     dep.source_file_id = fa;
     dep.target_file_id = fb;
-    dep.import_string  = "b.h";
-    dep.kind           = "include";
+    dep.import_string = "b.h";
+    dep.kind = "include";
     idx.add_dependency(std::move(dep));
     EXPECT_EQ(idx.dependency_count(), 1U);
 
@@ -223,8 +222,7 @@ TEST(CodeIndexTest, LanguageCount_CountsDistinctLanguages)
     EXPECT_EQ(idx.language_count(), 2U);
 
     idx.add_file(make_file("README", Language::Unknown));
-    EXPECT_EQ(idx.language_count(), 2U)
-        << "Unknown should not contribute to the language count";
+    EXPECT_EQ(idx.language_count(), 2U) << "Unknown should not contribute to the language count";
 }
 
 TEST(CodeIndexTest, RemoveFile_ClearsSymbolsAndDeps)
@@ -247,8 +245,8 @@ TEST(CodeIndexTest, RemoveFile_ClearsSymbolsAndDeps)
     Dependency dep;
     dep.source_file_id = fa;
     dep.target_file_id = fb;
-    dep.import_string  = "b.h";
-    dep.kind           = "include";
+    dep.import_string = "b.h";
+    dep.kind = "include";
     idx.add_dependency(std::move(dep));
 
     EXPECT_EQ(idx.file_count(), 2U);

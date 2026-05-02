@@ -22,28 +22,31 @@ namespace vectis::code {
 /// One raw import extracted from a file's parse tree. The scanner
 /// collects a vector of these per file and the dependency resolver
 /// turns them into `Dependency` edges in a second pass.
-struct RawImport {
-    std::string import_string;   ///< Raw path text ("./foo", "core/log.h", "fmt")
-    std::string kind;            ///< "include" | "import" | "use" | "require" | "mod"
-    int         line = 0;        ///< 1-based source line
+struct RawImport
+{
+    std::string import_string; ///< Raw path text ("./foo", "core/log.h", "fmt")
+    std::string kind;          ///< "include" | "import" | "use" | "require" | "mod"
+    int line = 0;              ///< 1-based source line
 };
 
-class TreeSitterParser {
+class TreeSitterParser
+{
 public:
     /// Outcome of parsing one file. `symbols.file_id` is always 0 —
     /// the scanner fills it in before handing the batch to
     /// `CodeIndex::add_symbols`.
-    struct ParseResult {
+    struct ParseResult
+    {
         std::vector<Symbol> symbols;
     };
 
     TreeSitterParser();
     ~TreeSitterParser();
 
-    TreeSitterParser(const TreeSitterParser&)            = delete;
+    TreeSitterParser(const TreeSitterParser&) = delete;
     TreeSitterParser& operator=(const TreeSitterParser&) = delete;
-    TreeSitterParser(TreeSitterParser&&)                 = delete;
-    TreeSitterParser& operator=(TreeSitterParser&&)      = delete;
+    TreeSitterParser(TreeSitterParser&&) = delete;
+    TreeSitterParser& operator=(TreeSitterParser&&) = delete;
 
     /// Register the built-in set of grammars (Python, JavaScript,
     /// TypeScript, C, C++, Rust, Java). Idempotent — calling twice is
@@ -60,16 +63,16 @@ public:
     /// Extract raw import statements from a file's contents. Returns
     /// an empty vector for languages that don't yet have an import
     /// query wired up, or when no imports are present. Never throws.
-    [[nodiscard]] std::vector<RawImport>
-    extract_imports(Language language, std::string_view content);
+    [[nodiscard]] std::vector<RawImport> extract_imports(Language language,
+                                                         std::string_view content);
 
     /// Extract the namespace declarations made by a file. Populated
     /// only for C# (block + file-scoped) and PHP today. Returns an
     /// empty vector for any language without a namespace query; never
     /// throws. Used by the dependency resolver to build a
     /// namespace → files map for `using`/`use` resolution.
-    [[nodiscard]] std::vector<std::string>
-    extract_namespaces(Language language, std::string_view content);
+    [[nodiscard]] std::vector<std::string> extract_namespaces(Language language,
+                                                              std::string_view content);
 
     /// True if a grammar and query have been successfully registered
     /// for this language.

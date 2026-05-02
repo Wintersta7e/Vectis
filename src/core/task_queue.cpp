@@ -21,17 +21,19 @@ namespace {
 /// One queued-or-running task together with its cancellation flag.
 /// The flag is heap-allocated via shared_ptr so CancellationToken
 /// copies share the same state.
-struct TaskSlot {
-    TaskQueue::Task                    task;
+struct TaskSlot
+{
+    TaskQueue::Task task;
     std::shared_ptr<std::atomic<bool>> cancel_flag;
 };
 
 } // namespace
 
-struct TaskQueue::Impl {
-    std::mutex               mutex;
-    std::condition_variable  wake;
-    std::deque<TaskSlot>     queue;
+struct TaskQueue::Impl
+{
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<TaskSlot> queue;
     std::vector<std::thread> workers;
 
     /// Set when the TaskQueue is shutting down. Workers exit as soon
@@ -41,8 +43,8 @@ struct TaskQueue::Impl {
     /// Every running task's cancel flag goes here so `cancel_all()`
     /// can flip them without holding the main mutex. Entries are
     /// removed when the task completes.
-    std::mutex                                          running_mutex;
-    std::vector<std::shared_ptr<std::atomic<bool>>>     running_flags;
+    std::mutex running_mutex;
+    std::vector<std::shared_ptr<std::atomic<bool>>> running_flags;
 
     void worker_loop()
     {
@@ -71,17 +73,19 @@ struct TaskQueue::Impl {
             const CancellationToken token(slot.cancel_flag);
             try {
                 slot.task(token);
-            } catch (const std::exception& e) {
+            }
+            catch (const std::exception& e) {
                 VECTIS_LOG_ERROR("TaskQueue: task threw exception: {}", e.what());
-            } catch (...) {
+            }
+            catch (...) {
                 VECTIS_LOG_ERROR("TaskQueue: task threw unknown exception");
             }
 
             // Deregister the cancel flag now that the task is done.
             {
                 const std::scoped_lock lock(running_mutex);
-                const auto it = std::find(
-                    running_flags.begin(), running_flags.end(), slot.cancel_flag);
+                const auto it =
+                    std::find(running_flags.begin(), running_flags.end(), slot.cancel_flag);
                 if (it != running_flags.end()) {
                     running_flags.erase(it);
                 }

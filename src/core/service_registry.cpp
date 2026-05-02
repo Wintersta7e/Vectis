@@ -9,16 +9,17 @@
 
 namespace vectis::core {
 
-struct ServiceRegistry::Impl {
-    ConfigManager            config;
-    services::StorageEngine  storage;
-    services::IndexEngine    index;
+struct ServiceRegistry::Impl
+{
+    ConfigManager config;
+    services::StorageEngine storage;
+    services::IndexEngine index;
 };
 
 ServiceRegistry::ServiceRegistry() : m_impl(std::make_unique<Impl>()) {}
 ServiceRegistry::~ServiceRegistry() = default;
 
-ServiceRegistry::ServiceRegistry(ServiceRegistry&&) noexcept            = default;
+ServiceRegistry::ServiceRegistry(ServiceRegistry&&) noexcept = default;
 ServiceRegistry& ServiceRegistry::operator=(ServiceRegistry&&) noexcept = default;
 
 ConfigManager& ServiceRegistry::config()

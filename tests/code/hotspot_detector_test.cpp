@@ -1,5 +1,3 @@
-#include "code/hotspot_detector.h"
-
 #include <array>
 #include <cstdint>
 #include <string>
@@ -9,6 +7,7 @@
 
 #include "code/code_index.h"
 #include "code/dependency.h"
+#include "code/hotspot_detector.h"
 #include "code/language.h"
 #include "code/symbol.h"
 
@@ -28,18 +27,17 @@ std::int64_t add_file(CodeIndex& idx, const std::string& path, int lines = 0)
 {
     FileEntry f;
     f.path_relative = path;
-    f.language      = Language::Cpp;
-    f.line_count    = lines;
+    f.language = Language::Cpp;
+    f.line_count = lines;
     return idx.add_file(std::move(f));
 }
 
-void add_method(CodeIndex& idx, std::int64_t file_id,
-                const std::string& name, int complexity)
+void add_method(CodeIndex& idx, std::int64_t file_id, const std::string& name, int complexity)
 {
     Symbol s;
-    s.file_id    = file_id;
-    s.name       = name;
-    s.kind       = SymbolKind::Method;
+    s.file_id = file_id;
+    s.name = name;
+    s.kind = SymbolKind::Method;
     s.complexity = complexity;
     idx.add_symbols(std::array<Symbol, 1>{s});
 }
@@ -48,8 +46,8 @@ TEST(HotspotDetectorTest, HighComplexityFunction_Flagged)
 {
     CodeIndex idx;
     const auto file = add_file(idx, "heavy.cpp", 100);
-    add_method(idx, file, "simple",    3);   // below threshold
-    add_method(idx, file, "gnarly",    42);  // major hotspot
+    add_method(idx, file, "simple", 3);  // below threshold
+    add_method(idx, file, "gnarly", 42); // major hotspot
 
     const auto hotspots = detect_hotspots(idx);
     ASSERT_FALSE(hotspots.empty());
@@ -96,7 +94,7 @@ TEST(HotspotDetectorTest, HighFanOut_Flagged)
         Dependency dep;
         dep.source_file_id = hub;
         dep.target_file_id = target;
-        dep.kind           = "include";
+        dep.kind = "include";
         idx.add_dependency(std::move(dep));
     }
 
@@ -124,8 +122,8 @@ TEST(HotspotDetectorTest, BelowThresholds_NoHotspots)
 TEST(HotspotDetectorTest, SortedBySeverityDescending)
 {
     CodeIndex idx;
-    const auto minor_file = add_file(idx, "minor.cpp", 501);   // just-over
-    const auto major_file = add_file(idx, "major.cpp", 3000);  // 3x over
+    const auto minor_file = add_file(idx, "minor.cpp", 501);  // just-over
+    const auto major_file = add_file(idx, "major.cpp", 3000); // 3x over
     (void)minor_file;
     (void)major_file;
 

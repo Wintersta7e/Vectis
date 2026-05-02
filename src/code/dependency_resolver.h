@@ -21,11 +21,12 @@ namespace vectis::code {
 /// builds before resolution begins, used for C# `using X.Y;` and PHP
 /// `use X\Y;` statements where one using resolves to every file
 /// declaring that namespace.
-struct FileImports {
-    std::int64_t             file_id  = 0;
-    Language                 language = Language::Unknown;
-    std::filesystem::path    relative_path;     ///< relative to project root
-    std::vector<RawImport>   imports;
+struct FileImports
+{
+    std::int64_t file_id = 0;
+    Language language = Language::Unknown;
+    std::filesystem::path relative_path; ///< relative to project root
+    std::vector<RawImport> imports;
     std::vector<std::string> declared_namespaces;
 };
 
@@ -54,9 +55,7 @@ struct FileImports {
 /// `target_file_id = 0` and the raw import string preserved — it
 /// shows up in `dependencies_of(file_id)` but not in any
 /// `dependents_of(...)` result.
-void resolve_all(
-    CodeIndex&                             index,
-    const std::filesystem::path&           project_root,
-    const std::vector<FileImports>&        per_file);
+void resolve_all(CodeIndex& index, const std::filesystem::path& project_root,
+                 const std::vector<FileImports>& per_file);
 
 } // namespace vectis::code

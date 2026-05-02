@@ -24,15 +24,16 @@ namespace vectis::code {
 /// other. Stat counters (`file_count`, `symbol_count`,
 /// `language_count`) are backed by atomics so the status bar can poll
 /// them every frame without taking any lock.
-class CodeIndex {
+class CodeIndex
+{
 public:
     CodeIndex() = default;
     ~CodeIndex() = default;
 
-    CodeIndex(const CodeIndex&)            = delete;
+    CodeIndex(const CodeIndex&) = delete;
     CodeIndex& operator=(const CodeIndex&) = delete;
-    CodeIndex(CodeIndex&&)                 = delete;
-    CodeIndex& operator=(CodeIndex&&)      = delete;
+    CodeIndex(CodeIndex&&) = delete;
+    CodeIndex& operator=(CodeIndex&&) = delete;
 
     // ----- Mutation (writer thread) -----------------------------------
 
@@ -72,20 +73,17 @@ public:
     /// Case-insensitive substring search over symbol names. Results
     /// are sorted by name. Capped at `limit` matches to keep the UI
     /// responsive on large indexes.
-    [[nodiscard]] std::vector<Symbol>
-    search_symbols(std::string_view query, std::size_t limit = 500) const;
+    [[nodiscard]] std::vector<Symbol> search_symbols(std::string_view query,
+                                                     std::size_t limit = 500) const;
 
     /// Outgoing edges for the given file (what this file depends on).
-    [[nodiscard]] std::vector<Dependency>
-    dependencies_of(std::int64_t file_id) const;
+    [[nodiscard]] std::vector<Dependency> dependencies_of(std::int64_t file_id) const;
 
     /// Incoming edges for the given file (what depends on this file).
-    [[nodiscard]] std::vector<Dependency>
-    dependents_of(std::int64_t file_id) const;
+    [[nodiscard]] std::vector<Dependency> dependents_of(std::int64_t file_id) const;
 
     /// Snapshot of every dependency edge in the project.
-    [[nodiscard]] std::vector<Dependency>
-    all_dependencies() const;
+    [[nodiscard]] std::vector<Dependency> all_dependencies() const;
 
     // ----- Stats (lock-free atomic reads) -----------------------------
 
@@ -119,23 +117,23 @@ public:
 
 private:
     mutable std::shared_mutex m_mutex;
-    std::vector<FileEntry>    m_files;   // index == file_id - 1
-    std::vector<Symbol>       m_symbols;
+    std::vector<FileEntry> m_files; // index == file_id - 1
+    std::vector<Symbol> m_symbols;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_by_file;
 
     // Dependency graph — edges are stored once in `m_dependencies`
     // and indexed twice (by source and target) for O(1) lookup.
-    std::vector<Dependency>                                    m_dependencies;
+    std::vector<Dependency> m_dependencies;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_outgoing;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_incoming;
 
-    std::atomic<std::size_t>    m_file_count{0};
-    std::atomic<std::size_t>    m_symbol_count{0};
-    std::atomic<std::size_t>    m_dependency_count{0};
-    std::atomic<std::uint32_t>  m_language_bits{0};
-    std::atomic<std::uint64_t>  m_generation{0};
-    std::int64_t                m_next_file_id   = 1;
-    std::int64_t                m_next_symbol_id = 1;
+    std::atomic<std::size_t> m_file_count{0};
+    std::atomic<std::size_t> m_symbol_count{0};
+    std::atomic<std::size_t> m_dependency_count{0};
+    std::atomic<std::uint32_t> m_language_bits{0};
+    std::atomic<std::uint64_t> m_generation{0};
+    std::int64_t m_next_file_id = 1;
+    std::int64_t m_next_symbol_id = 1;
 };
 
 } // namespace vectis::code

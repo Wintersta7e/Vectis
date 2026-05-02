@@ -11,9 +11,7 @@ namespace {
 
 [[nodiscard]] bool has_glob_meta(std::string_view s) noexcept
 {
-    return std::ranges::any_of(s, [](char c) {
-        return c == '*' || c == '?' || c == '[';
-    });
+    return std::ranges::any_of(s, [](char c) { return c == '*' || c == '?' || c == '['; });
 }
 
 /// Reduce one gitignore line to a bare directory name, or return an
@@ -22,9 +20,7 @@ namespace {
 {
     // Trim trailing whitespace + CR (CRLF-flavoured files survive a
     // text-mode read on some platforms with the \r intact).
-    while (!line.empty() && (line.back() == '\r' ||
-                             line.back() == ' '  ||
-                             line.back() == '\t')) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
         line.remove_suffix(1);
     }
     // Trim leading whitespace.
@@ -32,10 +28,18 @@ namespace {
         line.remove_prefix(1);
     }
 
-    if (line.empty())               { return {}; }
-    if (line.front() == '#')        { return {}; }   // comment
-    if (line.front() == '!')        { return {}; }   // negation (unsupported)
-    if (has_glob_meta(line))        { return {}; }   // wildcard (unsupported)
+    if (line.empty()) {
+        return {};
+    }
+    if (line.front() == '#') {
+        return {};
+    } // comment
+    if (line.front() == '!') {
+        return {};
+    } // negation (unsupported)
+    if (has_glob_meta(line)) {
+        return {};
+    } // wildcard (unsupported)
 
     // Strip leading `/` — in gitignore this anchors the pattern to the
     // repo root, but our basename-matching scanner ignores path depth
@@ -60,8 +64,7 @@ namespace {
 
 } // namespace
 
-std::unordered_set<std::string>
-read_gitignore_dir_patterns(const std::filesystem::path& root)
+std::unordered_set<std::string> read_gitignore_dir_patterns(const std::filesystem::path& root)
 {
     std::unordered_set<std::string> result;
 

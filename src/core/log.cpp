@@ -16,13 +16,13 @@ namespace vectis::core::log {
 
 namespace {
 
-constexpr const char*  k_logger_name        = "vectis";
-constexpr const char*  k_log_file_name      = "vectis.log";
-constexpr const char*  k_logs_subdir        = "logs";
-constexpr std::size_t  k_max_file_bytes     = std::size_t{5} * 1024 * 1024;
-constexpr std::size_t  k_max_rotated_files  = 3;
-constexpr const char*  k_log_level_env      = "VECTIS_LOG_LEVEL";
-constexpr const char*  k_log_pattern        = "[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v";
+constexpr const char* k_logger_name = "vectis";
+constexpr const char* k_log_file_name = "vectis.log";
+constexpr const char* k_logs_subdir = "logs";
+constexpr std::size_t k_max_file_bytes = std::size_t{5} * 1024 * 1024;
+constexpr std::size_t k_max_rotated_files = 3;
+constexpr const char* k_log_level_env = "VECTIS_LOG_LEVEL";
+constexpr const char* k_log_pattern = "[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v";
 
 /// The single shared logger, accessed through a Meyers-singleton accessor.
 /// Held as a `shared_ptr` into spdlog's registry so we can null it out
@@ -46,24 +46,33 @@ constexpr const char*  k_log_pattern        = "[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %
     }
 
     const std::string_view value{raw};
-    if (value == "trace") {    return spdlog::level::trace;
-}
-    if (value == "debug") {    return spdlog::level::debug;
-}
-    if (value == "info") {     return spdlog::level::info;
-}
-    if (value == "warn") {     return spdlog::level::warn;
-}
-    if (value == "warning") {  return spdlog::level::warn;
-}
-    if (value == "error") {    return spdlog::level::err;
-}
-    if (value == "err") {      return spdlog::level::err;
-}
-    if (value == "critical") { return spdlog::level::critical;
-}
-    if (value == "off") {      return spdlog::level::off;
-}
+    if (value == "trace") {
+        return spdlog::level::trace;
+    }
+    if (value == "debug") {
+        return spdlog::level::debug;
+    }
+    if (value == "info") {
+        return spdlog::level::info;
+    }
+    if (value == "warn") {
+        return spdlog::level::warn;
+    }
+    if (value == "warning") {
+        return spdlog::level::warn;
+    }
+    if (value == "error") {
+        return spdlog::level::err;
+    }
+    if (value == "err") {
+        return spdlog::level::err;
+    }
+    if (value == "critical") {
+        return spdlog::level::critical;
+    }
+    if (value == "off") {
+        return spdlog::level::off;
+    }
     return spdlog::level::info;
 }
 
@@ -82,10 +91,8 @@ Result<void> init(const std::filesystem::path& data_dir)
     std::error_code ec;
     std::filesystem::create_directories(logs_dir, ec);
     if (ec) {
-        return make_error(
-            ErrorKind::IoError,
-            "failed to create logs directory: " + ec.message(),
-            logs_dir.string());
+        return make_error(ErrorKind::IoError, "failed to create logs directory: " + ec.message(),
+                          logs_dir.string());
     }
 
     const std::filesystem::path log_file = logs_dir / k_log_file_name;
@@ -96,8 +103,7 @@ Result<void> init(const std::filesystem::path& data_dir)
         auto stderr_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
 
         std::vector<spdlog::sink_ptr> sinks{file_sink, stderr_sink};
-        auto logger = std::make_shared<spdlog::logger>(
-            k_logger_name, sinks.begin(), sinks.end());
+        auto logger = std::make_shared<spdlog::logger>(k_logger_name, sinks.begin(), sinks.end());
 
         logger->set_level(level_from_env());
         logger->flush_on(spdlog::level::warn);
@@ -105,11 +111,11 @@ Result<void> init(const std::filesystem::path& data_dir)
 
         spdlog::register_logger(logger);
         slot = std::move(logger);
-    } catch (const std::exception& e) {
-        return make_error(
-            ErrorKind::IoError,
-            std::string{"failed to create log sinks: "} + e.what(),
-            log_file.string());
+    }
+    catch (const std::exception& e) {
+        return make_error(ErrorKind::IoError,
+                          std::string{"failed to create log sinks: "} + e.what(),
+                          log_file.string());
     }
 
     return {};
@@ -124,7 +130,8 @@ void shutdown() noexcept
     try {
         slot->flush();
         spdlog::drop(k_logger_name);
-    } catch (...) { // NOLINT(bugprone-empty-catch)
+    }
+    catch (...) { // NOLINT(bugprone-empty-catch)
         // Intentional swallow: shutdown is noexcept and must not propagate
         // exceptions during program teardown. Any spdlog flush/drop failure
         // here is unrecoverable; we still reset the slot below so subsequent

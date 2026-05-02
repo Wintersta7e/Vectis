@@ -12,7 +12,8 @@ namespace vectis::core {
 /// Categories of errors that can flow through the Result<T> pipeline.
 /// Each value corresponds to a failure domain; the `Error::message` field
 /// carries the human-readable detail.
-enum class ErrorKind : std::uint8_t {
+enum class ErrorKind : std::uint8_t
+{
     IoError,
     ParseError,
     NetworkError,
@@ -30,10 +31,11 @@ enum class ErrorKind : std::uint8_t {
 /// Rich error value propagated via `Result<T>`.
 /// Includes a source-location for diagnostics; prefer constructing via
 /// `make_error()` so the location is captured at the call site.
-struct Error {
-    ErrorKind            kind{};
-    std::string          message;
-    std::string          context;
+struct Error
+{
+    ErrorKind kind{};
+    std::string message;
+    std::string context;
     std::source_location location;
 };
 
@@ -42,8 +44,7 @@ struct Error {
 /// Built on `tl::expected` for compatibility with C++20 (the standard
 /// `std::expected` requires C++23). The alias intentionally matches the
 /// `std::expected<T, E>` API surface so a future migration is a header swap.
-template <typename T>
-using Result = tl::expected<T, Error>;
+template <typename T> using Result = tl::expected<T, Error>;
 
 /// Construct an unexpected `Error` suitable for returning from a
 /// `Result<T>`-returning function. Source location is captured at the
@@ -51,11 +52,9 @@ using Result = tl::expected<T, Error>;
 ///
 /// Example:
 ///     return make_error(ErrorKind::ConfigError, "parse failed", path.string());
-[[nodiscard]] inline tl::unexpected<Error> make_error(
-    ErrorKind            kind,
-    std::string          message,
-    std::string          context  = {},
-    std::source_location location = std::source_location::current())
+[[nodiscard]] inline tl::unexpected<Error>
+make_error(ErrorKind kind, std::string message, std::string context = {},
+           std::source_location location = std::source_location::current())
 {
     return tl::unexpected<Error>(Error{kind, std::move(message), std::move(context), location});
 }
@@ -64,14 +63,22 @@ using Result = tl::expected<T, Error>;
 [[nodiscard]] constexpr std::string_view error_kind_to_string(ErrorKind kind) noexcept
 {
     switch (kind) {
-        case ErrorKind::IoError:       return "IoError";
-        case ErrorKind::ParseError:    return "ParseError";
-        case ErrorKind::NetworkError:  return "NetworkError";
-        case ErrorKind::StorageError:  return "StorageError";
-        case ErrorKind::AIError:       return "AIError";
-        case ErrorKind::ConfigError:   return "ConfigError";
-        case ErrorKind::PlatformError: return "PlatformError";
-        case ErrorKind::Cancelled:     return "Cancelled";
+    case ErrorKind::IoError:
+        return "IoError";
+    case ErrorKind::ParseError:
+        return "ParseError";
+    case ErrorKind::NetworkError:
+        return "NetworkError";
+    case ErrorKind::StorageError:
+        return "StorageError";
+    case ErrorKind::AIError:
+        return "AIError";
+    case ErrorKind::ConfigError:
+        return "ConfigError";
+    case ErrorKind::PlatformError:
+        return "PlatformError";
+    case ErrorKind::Cancelled:
+        return "Cancelled";
     }
     return "UnknownError";
 }

@@ -1,5 +1,3 @@
-#include "code/code_index_store.h"
-
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -8,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "code/code_index.h"
+#include "code/code_index_store.h"
 #include "code/dependency.h"
 #include "code/language.h"
 #include "code/symbol.h"
@@ -19,7 +18,8 @@ namespace fs = std::filesystem;
 using namespace vectis::code;
 using vectis::services::StorageEngine;
 
-class CodeIndexStoreTest : public ::testing::Test {
+class CodeIndexStoreTest : public ::testing::Test
+{
 protected:
     void SetUp() override
     {
@@ -43,65 +43,65 @@ protected:
     {
         FileEntry f1;
         f1.path_relative = "src/main.cpp";
-        f1.language      = Language::Cpp;
-        f1.size          = 1024;
-        f1.line_count    = 42;
-        f1.content_hash  = "abcdef0123456789";
+        f1.language = Language::Cpp;
+        f1.size = 1024;
+        f1.line_count = 42;
+        f1.content_hash = "abcdef0123456789";
         m_file1_id = m_index.add_file(std::move(f1));
 
         FileEntry f2;
         f2.path_relative = "src/lib.rs";
-        f2.language      = Language::Rust;
-        f2.size          = 512;
-        f2.line_count    = 20;
-        f2.content_hash  = "1234567890abcdef";
+        f2.language = Language::Rust;
+        f2.size = 512;
+        f2.line_count = 20;
+        f2.content_hash = "1234567890abcdef";
         m_file2_id = m_index.add_file(std::move(f2));
 
         // Add symbols to file1.
         Symbol s1;
-        s1.file_id    = m_file1_id;
-        s1.name       = "main";
-        s1.kind       = SymbolKind::Function;
+        s1.file_id = m_file1_id;
+        s1.name = "main";
+        s1.kind = SymbolKind::Function;
         s1.line_start = 10;
-        s1.line_end   = 40;
-        s1.signature  = "int main(int argc, char** argv)";
+        s1.line_end = 40;
+        s1.signature = "int main(int argc, char** argv)";
         s1.complexity = 5;
 
         Symbol s2;
-        s2.file_id    = m_file1_id;
-        s2.name       = "Config";
-        s2.kind       = SymbolKind::Struct;
+        s2.file_id = m_file1_id;
+        s2.name = "Config";
+        s2.kind = SymbolKind::Struct;
         s2.line_start = 1;
-        s2.line_end   = 8;
-        s2.members    = {"name", "value", "count"};
+        s2.line_end = 8;
+        s2.members = {"name", "value", "count"};
 
         m_index.add_symbols(std::vector<Symbol>{s1, s2});
 
         // Add a symbol to file2.
         Symbol s3;
-        s3.file_id    = m_file2_id;
-        s3.name       = "run";
-        s3.kind       = SymbolKind::Function;
+        s3.file_id = m_file2_id;
+        s3.name = "run";
+        s3.kind = SymbolKind::Function;
         s3.line_start = 5;
-        s3.line_end   = 18;
-        s3.parent_id  = 1; // some parent
+        s3.line_end = 18;
+        s3.parent_id = 1; // some parent
         m_index.add_symbols(std::vector<Symbol>{s3});
 
         // Add a dependency.
         Dependency dep;
         dep.source_file_id = m_file1_id;
         dep.target_file_id = m_file2_id;
-        dep.kind           = "include";
-        dep.import_string  = "lib.rs";
+        dep.kind = "include";
+        dep.import_string = "lib.rs";
         m_index.add_dependency(std::move(dep));
     }
 
-    StorageEngine  m_storage;
-    CodeIndex      m_index;
-    fs::path       m_tmp_dir;
-    fs::path       m_db_path;
-    std::int64_t   m_file1_id = 0;
-    std::int64_t   m_file2_id = 0;
+    StorageEngine m_storage;
+    CodeIndex m_index;
+    fs::path m_tmp_dir;
+    fs::path m_db_path;
+    std::int64_t m_file1_id = 0;
+    std::int64_t m_file2_id = 0;
 };
 
 TEST_F(CodeIndexStoreTest, SaveAndLoad_RoundTrip)
@@ -109,7 +109,7 @@ TEST_F(CodeIndexStoreTest, SaveAndLoad_RoundTrip)
     populate_index();
 
     CacheMetadata meta;
-    meta.project_root   = "/some/project";
+    meta.project_root = "/some/project";
     meta.scan_timestamp = "2026-04-10T12:00:00Z";
 
     auto save_result = save_index(m_storage, m_index, meta);
@@ -128,7 +128,7 @@ TEST_F(CodeIndexStoreTest, SaveAndLoad_RoundTrip)
     EXPECT_EQ(loaded.file_count(), 2U);
     const auto files = loaded.snapshot_files();
     ASSERT_EQ(files.size(), 2U);
-    EXPECT_EQ(files[0].path_relative, "src/lib.rs");   // sorted by path
+    EXPECT_EQ(files[0].path_relative, "src/lib.rs"); // sorted by path
     EXPECT_EQ(files[1].path_relative, "src/main.cpp");
 
     // Verify symbols.

@@ -7,8 +7,9 @@
 namespace vectis::services {
 
 /// One numbered schema migration applied during StorageEngine::migrate().
-struct Migration {
-    int              version;
+struct Migration
+{
+    int version;
     std::string_view name;
     std::string_view sql;
 };

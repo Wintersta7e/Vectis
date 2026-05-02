@@ -19,95 +19,53 @@ namespace {
 [[nodiscard]] bool is_decision_point(std::string_view type, Language language) noexcept
 {
     switch (language) {
-        case Language::Cpp:
-        case Language::C: {
-            return type == "if_statement" ||
-                   type == "while_statement" ||
-                   type == "for_statement" ||
-                   type == "for_range_loop" ||
-                   type == "do_statement" ||
-                   type == "case_statement" ||
-                   type == "conditional_expression" ||
-                   type == "&&" ||
-                   type == "||";
-        }
-        case Language::Python: {
-            return type == "if_statement" ||
-                   type == "while_statement" ||
-                   type == "for_statement" ||
-                   type == "elif_clause" ||
-                   type == "conditional_expression" ||
-                   type == "boolean_operator" ||
-                   type == "try_statement" ||
-                   type == "except_clause";
-        }
-        case Language::JavaScript:
-        case Language::TypeScript: {
-            return type == "if_statement" ||
-                   type == "while_statement" ||
-                   type == "for_statement" ||
-                   type == "for_in_statement" ||
-                   type == "do_statement" ||
-                   type == "switch_case" ||
-                   type == "ternary_expression" ||
-                   type == "&&" ||
-                   type == "||";
-        }
-        case Language::Rust: {
-            return type == "if_expression" ||
-                   type == "while_expression" ||
-                   type == "for_expression" ||
-                   type == "loop_expression" ||
-                   type == "match_arm" ||
-                   type == "&&" ||
-                   type == "||";
-        }
-        case Language::Java:
-        case Language::CSharp: {
-            return type == "if_statement" ||
-                   type == "while_statement" ||
-                   type == "for_statement" ||
-                   type == "enhanced_for_statement" ||
-                   type == "for_each_statement" ||
-                   type == "do_statement" ||
-                   type == "case_statement" ||
-                   type == "ternary_expression" ||
-                   type == "conditional_expression" ||
-                   type == "catch_clause";
-        }
-        case Language::Go: {
-            return type == "if_statement" ||
-                   type == "for_statement" ||
-                   type == "type_switch_statement" ||
-                   type == "expression_switch_statement" ||
-                   type == "expression_case" ||
-                   type == "select_statement";
-        }
-        case Language::Ruby: {
-            return type == "if" ||
-                   type == "elsif" ||
-                   type == "unless" ||
-                   type == "while" ||
-                   type == "until" ||
-                   type == "for" ||
-                   type == "when" ||
-                   type == "conditional" ||
-                   type == "rescue";
-        }
-        case Language::Php: {
-            return type == "if_statement" ||
-                   type == "while_statement" ||
-                   type == "for_statement" ||
-                   type == "foreach_statement" ||
-                   type == "do_statement" ||
-                   type == "case_statement" ||
-                   type == "conditional_expression" ||
-                   type == "match_expression";
-        }
-        case Language::Sql:
-        case Language::Unknown:
-        default:
-            return false;
+    case Language::Cpp:
+    case Language::C: {
+        return type == "if_statement" || type == "while_statement" || type == "for_statement" ||
+               type == "for_range_loop" || type == "do_statement" || type == "case_statement" ||
+               type == "conditional_expression" || type == "&&" || type == "||";
+    }
+    case Language::Python: {
+        return type == "if_statement" || type == "while_statement" || type == "for_statement" ||
+               type == "elif_clause" || type == "conditional_expression" ||
+               type == "boolean_operator" || type == "try_statement" || type == "except_clause";
+    }
+    case Language::JavaScript:
+    case Language::TypeScript: {
+        return type == "if_statement" || type == "while_statement" || type == "for_statement" ||
+               type == "for_in_statement" || type == "do_statement" || type == "switch_case" ||
+               type == "ternary_expression" || type == "&&" || type == "||";
+    }
+    case Language::Rust: {
+        return type == "if_expression" || type == "while_expression" || type == "for_expression" ||
+               type == "loop_expression" || type == "match_arm" || type == "&&" || type == "||";
+    }
+    case Language::Java:
+    case Language::CSharp: {
+        return type == "if_statement" || type == "while_statement" || type == "for_statement" ||
+               type == "enhanced_for_statement" || type == "for_each_statement" ||
+               type == "do_statement" || type == "case_statement" || type == "ternary_expression" ||
+               type == "conditional_expression" || type == "catch_clause";
+    }
+    case Language::Go: {
+        return type == "if_statement" || type == "for_statement" ||
+               type == "type_switch_statement" || type == "expression_switch_statement" ||
+               type == "expression_case" || type == "select_statement";
+    }
+    case Language::Ruby: {
+        return type == "if" || type == "elsif" || type == "unless" || type == "while" ||
+               type == "until" || type == "for" || type == "when" || type == "conditional" ||
+               type == "rescue";
+    }
+    case Language::Php: {
+        return type == "if_statement" || type == "while_statement" || type == "for_statement" ||
+               type == "foreach_statement" || type == "do_statement" || type == "case_statement" ||
+               type == "conditional_expression" || type == "match_expression";
+    }
+    case Language::Sql:
+    case Language::Unknown:
+    default:
+        return false;
     }
 }
 

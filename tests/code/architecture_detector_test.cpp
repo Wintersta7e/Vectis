@@ -1,5 +1,3 @@
-#include "code/architecture_detector.h"
-
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include "code/architecture_detector.h"
 #include "code/code_index.h"
 #include "code/language.h"
 #include "code/symbol.h"
@@ -22,13 +21,12 @@ using vectis::code::detect_architecture;
 using vectis::code::FileEntry;
 using vectis::code::Language;
 
-void add_file(CodeIndex& idx, const std::string& path,
-              Language lang = Language::Cpp)
+void add_file(CodeIndex& idx, const std::string& path, Language lang = Language::Cpp)
 {
     FileEntry f;
     f.path_relative = path;
-    f.language      = lang;
-    f.line_count    = 10;
+    f.language = lang;
+    f.line_count = 10;
     idx.add_file(std::move(f));
 }
 
@@ -42,10 +40,10 @@ TEST(ArchitectureDetectorTest, EmptyProject_IsUnknown)
 TEST(ArchitectureDetectorTest, ClassicMvc_DetectsMvc)
 {
     CodeIndex idx;
-    add_file(idx, "models/user.py",       Language::Python);
-    add_file(idx, "views/user_view.py",   Language::Python);
+    add_file(idx, "models/user.py", Language::Python);
+    add_file(idx, "views/user_view.py", Language::Python);
     add_file(idx, "controllers/user_ctrl.py", Language::Python);
-    add_file(idx, "main.py",              Language::Python);
+    add_file(idx, "main.py", Language::Python);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::Mvc);
@@ -56,9 +54,9 @@ TEST(ArchitectureDetectorTest, Layered_DetectsLayered)
 {
     CodeIndex idx;
     add_file(idx, "src/controllers/user.cpp", Language::Cpp);
-    add_file(idx, "src/services/user.cpp",    Language::Cpp);
+    add_file(idx, "src/services/user.cpp", Language::Cpp);
     add_file(idx, "src/repositories/user.cpp", Language::Cpp);
-    add_file(idx, "main.cpp",                 Language::Cpp);
+    add_file(idx, "main.cpp", Language::Cpp);
 
     const auto result = detect_architecture(idx, "/fake");
     // Three layered signals (controllers, services, repositories)
@@ -71,9 +69,9 @@ TEST(ArchitectureDetectorTest, FrontendSpa_DetectsSpaByDirectoryStructure)
 {
     CodeIndex idx;
     add_file(idx, "src/components/Button.tsx", Language::TypeScript);
-    add_file(idx, "src/components/Card.tsx",   Language::TypeScript);
-    add_file(idx, "src/pages/index.tsx",       Language::TypeScript);
-    add_file(idx, "src/pages/about.tsx",       Language::TypeScript);
+    add_file(idx, "src/components/Card.tsx", Language::TypeScript);
+    add_file(idx, "src/pages/index.tsx", Language::TypeScript);
+    add_file(idx, "src/pages/about.tsx", Language::TypeScript);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::FrontendSpa);
@@ -82,8 +80,8 @@ TEST(ArchitectureDetectorTest, FrontendSpa_DetectsSpaByDirectoryStructure)
 TEST(ArchitectureDetectorTest, FrontendSpa_DetectsSpaByConfigFile)
 {
     CodeIndex idx;
-    add_file(idx, "src/App.tsx",               Language::TypeScript);
-    add_file(idx, "vite.config.ts",            Language::TypeScript);
+    add_file(idx, "src/App.tsx", Language::TypeScript);
+    add_file(idx, "vite.config.ts", Language::TypeScript);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::FrontendSpa);
@@ -93,9 +91,9 @@ TEST(ArchitectureDetectorTest, FrontendSpa_DetectsSpaByConfigFile)
 TEST(ArchitectureDetectorTest, Monorepo_DetectsPackagesPlusMultipleMains)
 {
     CodeIndex idx;
-    add_file(idx, "packages/api/main.go",      Language::Go);
-    add_file(idx, "packages/worker/main.go",   Language::Go);
-    add_file(idx, "packages/shared/util.go",   Language::Go);
+    add_file(idx, "packages/api/main.go", Language::Go);
+    add_file(idx, "packages/worker/main.go", Language::Go);
+    add_file(idx, "packages/shared/util.go", Language::Go);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
@@ -122,21 +120,21 @@ TEST(ArchitectureDetectorTest, PluginModularLayering_DetectedAsLayered)
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::Layered);
     EXPECT_GE(result.confidence, 70);
-    EXPECT_NE(result.reasoning.find("core"),     std::string::npos);
-    EXPECT_NE(result.reasoning.find("modes"),    std::string::npos);
+    EXPECT_NE(result.reasoning.find("core"), std::string::npos);
+    EXPECT_NE(result.reasoning.find("modes"), std::string::npos);
     EXPECT_NE(result.reasoning.find("platform"), std::string::npos);
-    EXPECT_NE(result.reasoning.find("ui"),       std::string::npos);
+    EXPECT_NE(result.reasoning.find("ui"), std::string::npos);
 }
 
 TEST(ArchitectureDetectorTest, HexagonalArchitecture_DetectedAsLayered)
 {
     // Hexagonal / clean architecture: adapters + ports + domain.
     CodeIndex idx;
-    add_file(idx, "src/domain/user.rs",              Language::Rust);
-    add_file(idx, "src/adapters/http/handler.rs",    Language::Rust);
-    add_file(idx, "src/ports/user_repository.rs",    Language::Rust);
-    add_file(idx, "src/infrastructure/db.rs",        Language::Rust);
-    add_file(idx, "src/main.rs",                     Language::Rust);
+    add_file(idx, "src/domain/user.rs", Language::Rust);
+    add_file(idx, "src/adapters/http/handler.rs", Language::Rust);
+    add_file(idx, "src/ports/user_repository.rs", Language::Rust);
+    add_file(idx, "src/infrastructure/db.rs", Language::Rust);
+    add_file(idx, "src/main.rs", Language::Rust);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::Layered);
@@ -146,7 +144,7 @@ TEST(ArchitectureDetectorTest, HexagonalArchitecture_DetectedAsLayered)
 TEST(ArchitectureDetectorTest, SmallProject_DefaultsToMonolith)
 {
     CodeIndex idx;
-    add_file(idx, "main.cpp",  Language::Cpp);
+    add_file(idx, "main.cpp", Language::Cpp);
     add_file(idx, "helper.cpp", Language::Cpp);
 
     const auto result = detect_architecture(idx, "/fake");
@@ -163,17 +161,14 @@ TEST(ArchitectureDetectorTest, FixtureSubtreesDoNotPolluteReasoning)
     // reach the classifier.
     CodeIndex idx;
     // Real project shape — plugin / modular layering (Vectis-like).
-    add_file(idx, "src/core/app.cpp",    Language::Cpp);
-    add_file(idx, "src/core/log.cpp",    Language::Cpp);
+    add_file(idx, "src/core/app.cpp", Language::Cpp);
+    add_file(idx, "src/core/log.cpp", Language::Cpp);
     add_file(idx, "src/platform/io.cpp", Language::Cpp);
-    add_file(idx, "src/main.cpp",        Language::Cpp);
+    add_file(idx, "src/main.cpp", Language::Cpp);
     // Test fixtures that must NOT inject signals.
-    add_file(idx, "tests/fixtures/code/sample-java/models/User.java",
-             Language::Java);
-    add_file(idx, "tests/fixtures/code/sample-multimodule/business/dao/Foo.java",
-             Language::Java);
-    add_file(idx, "tests/fixtures/code/sample-mvc/controllers/Home.java",
-             Language::Java);
+    add_file(idx, "tests/fixtures/code/sample-java/models/User.java", Language::Java);
+    add_file(idx, "tests/fixtures/code/sample-multimodule/business/dao/Foo.java", Language::Java);
+    add_file(idx, "tests/fixtures/code/sample-mvc/controllers/Home.java", Language::Java);
 
     const auto result = detect_architecture(idx, "/fake");
 
@@ -183,9 +178,9 @@ TEST(ArchitectureDetectorTest, FixtureSubtreesDoNotPolluteReasoning)
     EXPECT_NE(result.label, ArchitectureLabel::Mvc);
     // Reasoning must not cite `models/`, `dao/`, or `controllers/` —
     // they live under a fixture subtree that was pruned.
-    EXPECT_EQ(result.reasoning.find("models"),      std::string::npos)
+    EXPECT_EQ(result.reasoning.find("models"), std::string::npos)
         << "reasoning leaked fixture segment `models`: " << result.reasoning;
-    EXPECT_EQ(result.reasoning.find("dao"),         std::string::npos)
+    EXPECT_EQ(result.reasoning.find("dao"), std::string::npos)
         << "reasoning leaked fixture segment `dao`: " << result.reasoning;
     EXPECT_EQ(result.reasoning.find("controllers"), std::string::npos)
         << "reasoning leaked fixture segment `controllers`: " << result.reasoning;
@@ -199,24 +194,21 @@ TEST(ArchitectureDetectorTest, MonorepoReasoningCitesActualMatch)
     // misleading consumers reading the digest.
     CodeIndex idx;
     add_file(idx, "libs/utils/main.go", Language::Go);
-    add_file(idx, "libs/api/main.go",   Language::Go);
+    add_file(idx, "libs/api/main.go", Language::Go);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
-    EXPECT_NE(result.reasoning.find("libs"),     std::string::npos);
+    EXPECT_NE(result.reasoning.find("libs"), std::string::npos);
     EXPECT_EQ(result.reasoning.find("packages"), std::string::npos);
-    EXPECT_EQ(result.reasoning.find("apps"),     std::string::npos);
+    EXPECT_EQ(result.reasoning.find("apps"), std::string::npos);
 }
 
 TEST(ArchitectureDetectorTest, Mvvm_DetectsViewModelsPlusViews)
 {
     CodeIndex idx;
-    add_file(idx, "src/FlowForge.UI/ViewModels/MainWindowViewModel.cs",
-             Language::CSharp);
-    add_file(idx, "src/FlowForge.UI/ViewModels/DialogViewModel.cs",
-             Language::CSharp);
-    add_file(idx, "src/FlowForge.UI/Views/MainWindow.xaml.cs",
-             Language::CSharp);
+    add_file(idx, "src/FlowForge.UI/ViewModels/MainWindowViewModel.cs", Language::CSharp);
+    add_file(idx, "src/FlowForge.UI/ViewModels/DialogViewModel.cs", Language::CSharp);
+    add_file(idx, "src/FlowForge.UI/Views/MainWindow.xaml.cs", Language::CSharp);
     add_file(idx, "src/FlowForge.UI/App.xaml.cs", Language::CSharp);
 
     const auto result = detect_architecture(idx, "/fake");
@@ -230,10 +222,10 @@ TEST(ArchitectureDetectorTest, Mvvm_DetectsViewModelsPlusViews)
 TEST(ArchitectureDetectorTest, CleanArchitecture_DetectsThreeLayerFolders)
 {
     CodeIndex idx;
-    add_file(idx, "Domain/Entities/User.cs",               Language::CSharp);
-    add_file(idx, "Application/UseCases/CreateUser.cs",    Language::CSharp);
-    add_file(idx, "Infrastructure/Persistence/Db.cs",      Language::CSharp);
-    add_file(idx, "Presentation/Controllers/UserCtl.cs",   Language::CSharp);
+    add_file(idx, "Domain/Entities/User.cs", Language::CSharp);
+    add_file(idx, "Application/UseCases/CreateUser.cs", Language::CSharp);
+    add_file(idx, "Infrastructure/Persistence/Db.cs", Language::CSharp);
+    add_file(idx, "Presentation/Controllers/UserCtl.cs", Language::CSharp);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::CleanArchitecture);
@@ -246,8 +238,8 @@ TEST(ArchitectureDetectorTest, DotNetSolution_DetectsMultipleDottedProjects)
     // Two sibling projects under src/, each with a dotted name.
     // No ViewModels/Views (so MVVM doesn't pre-empt) and no
     // Domain/Application trio (so Clean doesn't pre-empt).
-    add_file(idx, "src/Example.CLI/Program.cs",   Language::CSharp);
-    add_file(idx, "src/Example.Core/Engine.cs",   Language::CSharp);
+    add_file(idx, "src/Example.CLI/Program.cs", Language::CSharp);
+    add_file(idx, "src/Example.Core/Engine.cs", Language::CSharp);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::DotNetSolution);
@@ -269,7 +261,7 @@ fs::path fresh_tmp(const char* tag)
     static std::uint64_t counter = 0;
     ++counter;
     fs::path p = fs::temp_directory_path() /
-        ("vectis_arch_test_" + std::string(tag) + "_" + std::to_string(counter));
+                 ("vectis_arch_test_" + std::string(tag) + "_" + std::to_string(counter));
     std::error_code ec;
     fs::remove_all(p, ec);
     fs::create_directories(p, ec);
@@ -315,8 +307,8 @@ TEST(ArchitectureDetectorTest, NpmWorkspaces_ReadsPackageJson)
 }
 )");
     CodeIndex idx;
-    add_file(idx, "packages/ui/src/index.ts",    Language::TypeScript);
-    add_file(idx, "packages/core/src/index.ts",  Language::TypeScript);
+    add_file(idx, "packages/ui/src/index.ts", Language::TypeScript);
+    add_file(idx, "packages/core/src/index.ts", Language::TypeScript);
 
     const auto result = detect_architecture(idx, root);
     EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
@@ -328,8 +320,7 @@ TEST(ArchitectureDetectorTest, NpmWorkspaces_ReadsPackageJson)
 TEST(ArchitectureDetectorTest, PnpmWorkspace_DetectedByYaml)
 {
     const fs::path root = fresh_tmp("pnpm");
-    write_file(root / "pnpm-workspace.yaml",
-               "packages:\n  - 'packages/*'\n");
+    write_file(root / "pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n");
     CodeIndex idx;
     add_file(idx, "packages/a/src/index.ts", Language::TypeScript);
     add_file(idx, "packages/b/src/index.ts", Language::TypeScript);
@@ -368,13 +359,12 @@ TEST(ArchitectureDetectorTest, LernaAndTurbo_AlsoDetected)
 TEST(ArchitectureDetectorTest, PythonSrcLayout_DetectsMultiplePackages)
 {
     const fs::path root = fresh_tmp("python");
-    write_file(root / "pyproject.toml",
-               "[project]\nname = \"sample\"\nversion = \"0.0.0\"\n");
+    write_file(root / "pyproject.toml", "[project]\nname = \"sample\"\nversion = \"0.0.0\"\n");
     CodeIndex idx;
-    add_file(idx, "src/pkg_a/__init__.py",     Language::Python);
-    add_file(idx, "src/pkg_a/module.py",       Language::Python);
-    add_file(idx, "src/pkg_b/__init__.py",     Language::Python);
-    add_file(idx, "src/pkg_b/helpers.py",      Language::Python);
+    add_file(idx, "src/pkg_a/__init__.py", Language::Python);
+    add_file(idx, "src/pkg_a/module.py", Language::Python);
+    add_file(idx, "src/pkg_b/__init__.py", Language::Python);
+    add_file(idx, "src/pkg_b/helpers.py", Language::Python);
 
     const auto result = detect_architecture(idx, root);
     EXPECT_EQ(result.label, ArchitectureLabel::Monorepo);
@@ -389,11 +379,10 @@ TEST(ArchitectureDetectorTest, PythonSrcLayout_SinglePackageIsNotMonorepo)
     // A normal library with one package doesn't warrant Monorepo. The
     // detector should fall through to the earlier heuristics.
     const fs::path root = fresh_tmp("python_single");
-    write_file(root / "pyproject.toml",
-               "[project]\nname = \"sample\"\n");
+    write_file(root / "pyproject.toml", "[project]\nname = \"sample\"\n");
     CodeIndex idx;
     add_file(idx, "src/mylib/__init__.py", Language::Python);
-    add_file(idx, "src/mylib/core.py",     Language::Python);
+    add_file(idx, "src/mylib/core.py", Language::Python);
 
     const auto result = detect_architecture(idx, root);
     EXPECT_NE(result.label, ArchitectureLabel::Monorepo);
@@ -441,10 +430,10 @@ TEST(ArchitectureDetectorTest, LibraryLayout_DetectsIncludeAndSrcWithoutMain)
     // src/. A test driver under test/ must NOT defeat detection — pure
     // libraries routinely ship their own tests.
     CodeIndex idx;
-    add_file(idx, "include/foo.h",  Language::Cpp);
-    add_file(idx, "src/foo.cpp",    Language::Cpp);
+    add_file(idx, "include/foo.h", Language::Cpp);
+    add_file(idx, "src/foo.cpp", Language::Cpp);
     add_file(idx, "src/helper.cpp", Language::Cpp);
-    add_file(idx, "test/main.cpp",  Language::Cpp);
+    add_file(idx, "test/main.cpp", Language::Cpp);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_EQ(result.label, ArchitectureLabel::Library);
@@ -458,8 +447,8 @@ TEST(ArchitectureDetectorTest, LibraryLayout_DoesNotFireWhenSrcHasMain)
     // must yield to Monolith here.
     CodeIndex idx;
     add_file(idx, "include/foo.h", Language::Cpp);
-    add_file(idx, "src/main.cpp",  Language::Cpp);
-    add_file(idx, "src/foo.cpp",   Language::Cpp);
+    add_file(idx, "src/main.cpp", Language::Cpp);
+    add_file(idx, "src/foo.cpp", Language::Cpp);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_NE(result.label, ArchitectureLabel::Library);

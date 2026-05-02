@@ -1,5 +1,3 @@
-#include "cli/cli_main.h"
-
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -10,16 +8,18 @@
 
 #include <gtest/gtest.h>
 
+#include "cli/cli_main.h"
+
 namespace {
 
 namespace fs = std::filesystem;
 
 /// Pack C-string literals into the `char**` shape `run()` needs. The
 /// caller keeps `argv` alive for as long as the returned vector is used.
-class ArgvHolder {
+class ArgvHolder
+{
 public:
-    explicit ArgvHolder(std::vector<std::string> args)
-        : m_storage(std::move(args))
+    explicit ArgvHolder(std::vector<std::string> args) : m_storage(std::move(args))
     {
         m_argv.reserve(m_storage.size() + 1);
         for (auto& s : m_storage) {
@@ -28,12 +28,12 @@ public:
         m_argv.push_back(nullptr);
     }
 
-    int          argc() const { return static_cast<int>(m_storage.size()); }
+    int argc() const { return static_cast<int>(m_storage.size()); }
     char* const* argv() const { return m_argv.data(); }
 
 private:
     std::vector<std::string> m_storage;
-    std::vector<char*>       m_argv;
+    std::vector<char*> m_argv;
 };
 
 /// Build a minimal project tree under `dir` with one C++ source file.
@@ -54,8 +54,7 @@ fs::path unique_tmp_dir(std::string_view tag)
 {
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     return fs::temp_directory_path() /
-           ("vectis_cli_test_" + std::string(tag) + "_" +
-            std::to_string(now));
+           ("vectis_cli_test_" + std::string(tag) + "_" + std::to_string(now));
 }
 
 } // namespace
@@ -67,8 +66,14 @@ TEST(CliCacheTest, FirstRunCreatesDbAndEmitsDigest)
     const fs::path out = project / "digest.json";
 
     ArgvHolder args({
-        "vectis", "digest", project.string(),
-        "--cache", "--format", "slim", "--output", out.string(),
+        "vectis",
+        "digest",
+        project.string(),
+        "--cache",
+        "--format",
+        "slim",
+        "--output",
+        out.string(),
     });
     EXPECT_EQ(vectis::cli::run(args.argc(), const_cast<char**>(args.argv())), 0);
 
@@ -87,8 +92,8 @@ TEST(CliCacheTest, WarmRunPicksUpNewFile)
     const fs::path out = project / "digest.json";
 
     const std::vector<std::string> common = {
-        "vectis", "digest", project.string(),
-        "--cache", "--format", "slim", "--output", out.string(),
+        "vectis",   "digest", project.string(), "--cache",
+        "--format", "slim",   "--output",       out.string(),
     };
 
     // Cold run populates the cache.
@@ -113,8 +118,7 @@ TEST(CliCacheTest, WarmRunPicksUpNewFile)
     // Read the second digest and make sure `world.cpp` is listed. The
     // slim JSON contains a `files` array of paths.
     std::ifstream in(out);
-    std::string   body((std::istreambuf_iterator<char>(in)),
-                        std::istreambuf_iterator<char>());
+    std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     EXPECT_NE(body.find("world.cpp"), std::string::npos);
 
     fs::remove_all(project);
@@ -122,14 +126,20 @@ TEST(CliCacheTest, WarmRunPicksUpNewFile)
 
 TEST(CliCacheTest, CacheDirOverrideKeepsProjectClean)
 {
-    const fs::path project   = unique_tmp_dir("override");
+    const fs::path project = unique_tmp_dir("override");
     const fs::path cache_dir = unique_tmp_dir("override_cache");
     stage_tiny_project(project);
 
     ArgvHolder args({
-        "vectis", "digest", project.string(),
-        "--cache-dir", cache_dir.string(),
-        "--format", "slim", "--output", "-",
+        "vectis",
+        "digest",
+        project.string(),
+        "--cache-dir",
+        cache_dir.string(),
+        "--format",
+        "slim",
+        "--output",
+        "-",
     });
     // Send stdout nowhere: freopen `/dev/null` to keep the test output
     // clean. Windows uses `NUL` instead.

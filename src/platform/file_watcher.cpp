@@ -12,10 +12,11 @@
 #ifdef __linux__
 #include <cerrno>
 #include <cstring>
-#include <sys/inotify.h>
-#include <unistd.h>
 #include <unordered_map>
 #include <vector>
+
+#include <sys/inotify.h>
+#include <unistd.h>
 #endif
 
 namespace vectis::platform {
@@ -31,38 +32,38 @@ namespace fs = std::filesystem;
 
 #ifdef __linux__
 
-struct FileWatcher::Impl {
-    int                                 inotify_fd = -1;
-    fs::path                            root;
-    Callback                            callback;
-    std::unordered_map<int, fs::path>   wd_to_path; // watch descriptor → relative dir path
-    bool                                watching = false;
+struct FileWatcher::Impl
+{
+    int inotify_fd = -1;
+    fs::path root;
+    Callback callback;
+    std::unordered_map<int, fs::path> wd_to_path; // watch descriptor → relative dir path
+    bool watching = false;
 
     void add_watch_recursive(const fs::path& dir, const fs::path& relative)
     {
-        const int wd = inotify_add_watch(
-            inotify_fd, dir.c_str(),
-            IN_CLOSE_WRITE | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO);
+        const int wd =
+            inotify_add_watch(inotify_fd, dir.c_str(),
+                              IN_CLOSE_WRITE | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO);
 
         if (wd < 0) {
             if (errno == ENOSPC) {
-                VECTIS_LOG_WARN(
-                    "FileWatcher: inotify watch limit reached — "
-                    "some subdirectories won't be watched. "
-                    "Consider increasing fs.inotify.max_user_watches");
+                VECTIS_LOG_WARN("FileWatcher: inotify watch limit reached — "
+                                "some subdirectories won't be watched. "
+                                "Consider increasing fs.inotify.max_user_watches");
                 return;
             }
-            VECTIS_LOG_DEBUG(
-                "FileWatcher: inotify_add_watch failed for '{}': {}",
-                dir.string(), std::strerror(errno));
+            VECTIS_LOG_DEBUG("FileWatcher: inotify_add_watch failed for '{}': {}", dir.string(),
+                             std::strerror(errno));
             return;
         }
         wd_to_path[wd] = relative;
 
         std::error_code ec;
         for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (ec) { break;
-}
+            if (ec) {
+                break;
+            }
             if (entry.is_directory(ec) && !ec) {
                 const auto child_rel = relative / entry.path().filename();
                 add_watch_recursive(entry.path(), child_rel);
@@ -71,11 +72,14 @@ struct FileWatcher::Impl {
     }
 };
 
-FileWatcher::FileWatcher()  : m_impl(std::make_unique<Impl>()) {}
+FileWatcher::FileWatcher() : m_impl(std::make_unique<Impl>()) {}
 
-FileWatcher::~FileWatcher() { stop(); }
+FileWatcher::~FileWatcher()
+{
+    stop();
+}
 
-FileWatcher::FileWatcher(FileWatcher&&) noexcept            = default;
+FileWatcher::FileWatcher(FileWatcher&&) noexcept = default;
 FileWatcher& FileWatcher::operator=(FileWatcher&&) noexcept = default;
 
 Result<void> FileWatcher::watch(const fs::path& root, Callback on_change)
@@ -88,14 +92,13 @@ Result<void> FileWatcher::watch(const fs::path& root, Callback on_change)
                           std::string("inotify_init1 failed: ") + std::strerror(errno));
     }
 
-    m_impl->root     = root;
+    m_impl->root = root;
     m_impl->callback = std::move(on_change);
     m_impl->add_watch_recursive(root, fs::path{});
     m_impl->watching = true;
 
-    VECTIS_LOG_INFO(
-        "FileWatcher: watching '{}' ({} directories)",
-        root.string(), m_impl->wd_to_path.size());
+    VECTIS_LOG_INFO("FileWatcher: watching '{}' ({} directories)", root.string(),
+                    m_impl->wd_to_path.size());
 
     return {};
 }
@@ -114,15 +117,17 @@ void FileWatcher::stop()
 
 void FileWatcher::poll()
 {
-    if (!m_impl->watching) { return;
-}
+    if (!m_impl->watching) {
+        return;
+    }
 
     // Read as many events as are available (non-blocking).
     alignas(inotify_event) std::array<char, 4096> buf{};
     while (true) {
         const auto len = ::read(m_impl->inotify_fd, buf.data(), buf.size());
-        if (len <= 0) { break;
-}
+        if (len <= 0) {
+            break;
+        }
 
         const char* ptr = buf.data();
         const char* end = buf.data() + len;
@@ -130,7 +135,8 @@ void FileWatcher::poll()
             // inotify delivers a packed stream of variable-length
             // `inotify_event` records; the kernel ABI requires byte-pointer
             // reinterpretation to walk them.
-            const auto* event = reinterpret_cast<const inotify_event*>(ptr); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+            const auto* event = reinterpret_cast<const inotify_event*>(ptr);
 
             if (event->len > 0 && m_impl->callback) {
                 const auto wd_it = m_impl->wd_to_path.find(event->wd);
@@ -142,7 +148,8 @@ void FileWatcher::poll()
                         if ((event->mask & IN_ISDIR) != 0U) {
                             const fs::path full = m_impl->root / relative;
                             m_impl->add_watch_recursive(full, relative);
-                        } else {
+                        }
+                        else {
                             m_impl->callback(relative, FileChangeType::Created);
                         }
                     }
@@ -156,7 +163,8 @@ void FileWatcher::poll()
                         if ((event->mask & IN_ISDIR) != 0U) {
                             const fs::path full = m_impl->root / relative;
                             m_impl->add_watch_recursive(full, relative);
-                        } else {
+                        }
+                        else {
                             m_impl->callback(relative, FileChangeType::Created);
                         }
                     }
@@ -179,14 +187,15 @@ bool FileWatcher::is_watching() const
 
 #else
 
-struct FileWatcher::Impl {
+struct FileWatcher::Impl
+{
     bool watching = false;
 };
 
-FileWatcher::FileWatcher()  : m_impl(std::make_unique<Impl>()) {}
+FileWatcher::FileWatcher() : m_impl(std::make_unique<Impl>()) {}
 FileWatcher::~FileWatcher() = default;
 
-FileWatcher::FileWatcher(FileWatcher&&) noexcept            = default;
+FileWatcher::FileWatcher(FileWatcher&&) noexcept = default;
 FileWatcher& FileWatcher::operator=(FileWatcher&&) noexcept = default;
 
 Result<void> FileWatcher::watch(const fs::path& /*root*/, Callback /*on_change*/)

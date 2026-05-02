@@ -25,16 +25,12 @@ namespace {
 /// `dao/`, a test harness's `main.cc`) is not architecturally
 /// representative of the project.
 const std::unordered_set<std::string> k_non_source_subtree_names = {
-    "tests", "test",
-    "fixtures", "__fixtures__",
-    "docs", "doc",
-    "examples", "example",
-    "vendor", "third_party",
+    "tests", "test",     "fixtures", "__fixtures__", "docs",
+    "doc",   "examples", "example",  "vendor",       "third_party",
 };
 
 /// True if any segment of `path_relative` matches a stop-name above.
-[[nodiscard]] bool is_under_non_source_subtree(
-    const std::filesystem::path& path_relative)
+[[nodiscard]] bool is_under_non_source_subtree(const std::filesystem::path& path_relative)
 {
     std::filesystem::path dir = path_relative;
     if (dir.has_filename()) {
@@ -61,8 +57,7 @@ const std::unordered_set<std::string> k_non_source_subtree_names = {
 /// `src/App.UI/ViewModels/...` and monorepo
 /// `packages/frontend/src/components/...` both need depth-3+ signals
 /// and wouldn't detect correctly with a naive depth cap.
-[[nodiscard]] std::unordered_set<std::string>
-collect_directory_segments(const CodeIndex& index)
+[[nodiscard]] std::unordered_set<std::string> collect_directory_segments(const CodeIndex& index)
 {
     std::unordered_set<std::string> segments;
     for (const FileEntry& file : index.snapshot_files()) {
@@ -89,8 +84,7 @@ collect_directory_segments(const CodeIndex& index)
 /// — the hallmark of a .NET solution layout with one project per
 /// dotted-name directory. The leaf filename is explicitly excluded
 /// (otherwise every `main.py` or `vite.config.ts` would count).
-[[nodiscard]] std::size_t
-count_dotted_project_dirs(const CodeIndex& index)
+[[nodiscard]] std::size_t count_dotted_project_dirs(const CodeIndex& index)
 {
     std::unordered_set<std::string> dotted;
     for (const FileEntry& file : index.snapshot_files()) {
@@ -98,14 +92,12 @@ count_dotted_project_dirs(const CodeIndex& index)
         if (dir.has_filename()) {
             dir.remove_filename();
         }
-        auto       it  = dir.begin();
+        auto it = dir.begin();
         const auto end = dir.end();
         for (int depth = 0; depth < 2 && it != end; ++depth, ++it) {
             const std::string s = it->string();
             // Dotfiles (`.git`, `.vs`, `.worktrees`) don't count.
-            if (s.size() > 2 && s.front() != '.' &&
-                s.find('.') != std::string::npos)
-            {
+            if (s.size() > 2 && s.front() != '.' && s.find('.') != std::string::npos) {
                 dotted.insert(s);
             }
         }
@@ -116,8 +108,7 @@ count_dotted_project_dirs(const CodeIndex& index)
 /// True if any scanned file has `name` as its leaf filename. Used to
 /// spot entry points (`main.*`) and framework config files
 /// (`package.json`, `Cargo.toml`, `next.config.js`).
-[[nodiscard]] bool any_file_named(
-    const CodeIndex& index, std::string_view name)
+[[nodiscard]] bool any_file_named(const CodeIndex& index, std::string_view name)
 {
     const auto files = index.snapshot_files();
     return std::ranges::any_of(files, [&](const FileEntry& file) {
@@ -150,8 +141,7 @@ count_dotted_project_dirs(const CodeIndex& index)
 /// Read a text file (capped to 64 KiB so malformed huge files can't
 /// stall the detector). Returns empty on any I/O error — all callers
 /// treat an empty payload as "not present / not detected".
-[[nodiscard]] std::string
-read_text_capped(const std::filesystem::path& path)
+[[nodiscard]] std::string read_text_capped(const std::filesystem::path& path)
 {
     std::error_code ec;
     if (!std::filesystem::exists(path, ec) || ec) {
@@ -162,7 +152,7 @@ read_text_capped(const std::filesystem::path& path)
         return {};
     }
     constexpr std::streamsize k_max = static_cast<std::streamsize>(64) * 1024;
-    std::string               out;
+    std::string out;
     out.resize(k_max);
     in.read(out.data(), k_max);
     out.resize(static_cast<std::size_t>(in.gcount()));
@@ -184,17 +174,13 @@ detect_rust_workspace(const std::filesystem::path& project_root)
     // closing bracket. Avoids matching `[workspace.metadata]` etc.
     // which are sub-tables and don't imply a workspace on their own.
     std::istringstream in(body);
-    std::string        line;
+    std::string line;
     while (std::getline(in, line)) {
         std::size_t i = 0;
-        while (i < line.size() &&
-               std::isspace(static_cast<unsigned char>(line[i])) != 0)
-        {
+        while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i])) != 0) {
             ++i;
         }
-        if (i + 11 <= line.size() &&
-            line.compare(i, 11, "[workspace]") == 0)
-        {
+        if (i + 11 <= line.size() && line.compare(i, 11, "[workspace]") == 0) {
             return std::string{"Cargo workspace (Rust multi-crate layout)"};
         }
     }
@@ -210,9 +196,7 @@ detect_rust_workspace(const std::filesystem::path& project_root)
 detect_npm_monorepo(const std::filesystem::path& project_root)
 {
     std::error_code ec;
-    if (std::filesystem::exists(project_root / "pnpm-workspace.yaml", ec) &&
-        !ec)
-    {
+    if (std::filesystem::exists(project_root / "pnpm-workspace.yaml", ec) && !ec) {
         return std::string{"pnpm workspace (pnpm-workspace.yaml)"};
     }
     ec.clear();
@@ -225,9 +209,7 @@ detect_npm_monorepo(const std::filesystem::path& project_root)
     }
 
     const std::string pkg = read_text_capped(project_root / "package.json");
-    if (!pkg.empty() &&
-        pkg.find("\"workspaces\"") != std::string::npos)
-    {
+    if (!pkg.empty() && pkg.find("\"workspaces\"") != std::string::npos) {
         return std::string{"npm workspaces (package.json \"workspaces\")"};
     }
     return std::nullopt;
@@ -239,12 +221,10 @@ detect_npm_monorepo(const std::filesystem::path& project_root)
 ///   * Poetry / PEP 621 multi-package project (same, heuristically).
 /// Returns a reasoning string if the signal fires, nullopt otherwise.
 [[nodiscard]] std::optional<std::string>
-detect_python_packages(const std::filesystem::path& project_root,
-                       const CodeIndex&             index)
+detect_python_packages(const std::filesystem::path& project_root, const CodeIndex& index)
 {
     std::error_code ec;
-    const bool has_pyproject =
-        std::filesystem::exists(project_root / "pyproject.toml", ec) && !ec;
+    const bool has_pyproject = std::filesystem::exists(project_root / "pyproject.toml", ec) && !ec;
     if (!has_pyproject) {
         return std::nullopt;
     }
@@ -270,8 +250,7 @@ detect_python_packages(const std::filesystem::path& project_root,
     }
     if (src_packages.size() >= 2) {
         return std::string{"pyproject.toml + src-layout with " +
-                           std::to_string(src_packages.size()) +
-                           " packages"};
+                           std::to_string(src_packages.size()) + " packages"};
     }
     return std::nullopt;
 }
@@ -281,31 +260,41 @@ detect_python_packages(const std::filesystem::path& project_root,
 std::string_view architecture_label_name(ArchitectureLabel label) noexcept
 {
     switch (label) {
-        case ArchitectureLabel::Monolith:          return "Monolith";
-        case ArchitectureLabel::Layered:           return "Layered";
-        case ArchitectureLabel::Mvc:               return "MVC";
-        case ArchitectureLabel::Monorepo:          return "Monorepo";
-        case ArchitectureLabel::FrontendSpa:       return "Frontend SPA";
-        case ArchitectureLabel::ApiBackend:        return "API Backend";
-        case ArchitectureLabel::Mvvm:              return "MVVM";
-        case ArchitectureLabel::CleanArchitecture: return "Clean Architecture";
-        case ArchitectureLabel::DotNetSolution:    return ".NET Solution";
-        case ArchitectureLabel::Library:           return "Library";
-        case ArchitectureLabel::Unknown:           return "Unknown";
+    case ArchitectureLabel::Monolith:
+        return "Monolith";
+    case ArchitectureLabel::Layered:
+        return "Layered";
+    case ArchitectureLabel::Mvc:
+        return "MVC";
+    case ArchitectureLabel::Monorepo:
+        return "Monorepo";
+    case ArchitectureLabel::FrontendSpa:
+        return "Frontend SPA";
+    case ArchitectureLabel::ApiBackend:
+        return "API Backend";
+    case ArchitectureLabel::Mvvm:
+        return "MVVM";
+    case ArchitectureLabel::CleanArchitecture:
+        return "Clean Architecture";
+    case ArchitectureLabel::DotNetSolution:
+        return ".NET Solution";
+    case ArchitectureLabel::Library:
+        return "Library";
+    case ArchitectureLabel::Unknown:
+        return "Unknown";
     }
     return "Unknown";
 }
 
-ArchitectureDescription
-detect_architecture(const CodeIndex& index,
-                    const std::filesystem::path& project_root)
+ArchitectureDescription detect_architecture(const CodeIndex& index,
+                                            const std::filesystem::path& project_root)
 {
     ArchitectureDescription out;
 
     const std::size_t file_count = index.file_count();
     if (file_count == 0) {
-        out.label      = ArchitectureLabel::Unknown;
-        out.reasoning  = "no source files found";
+        out.label = ArchitectureLabel::Unknown;
+        out.reasoning = "no source files found";
         out.confidence = 0;
         return out;
     }
@@ -317,20 +306,20 @@ detect_architecture(const CodeIndex& index,
     // directory shape. Accuracy over guesswork.
     if (!project_root.empty()) {
         if (auto r = detect_rust_workspace(project_root); r) {
-            out.label      = ArchitectureLabel::Monorepo;
-            out.reasoning  = std::move(*r);
+            out.label = ArchitectureLabel::Monorepo;
+            out.reasoning = std::move(*r);
             out.confidence = 92;
             return out;
         }
         if (auto r = detect_npm_monorepo(project_root); r) {
-            out.label      = ArchitectureLabel::Monorepo;
-            out.reasoning  = std::move(*r);
+            out.label = ArchitectureLabel::Monorepo;
+            out.reasoning = std::move(*r);
             out.confidence = 90;
             return out;
         }
         if (auto r = detect_python_packages(project_root, index); r) {
-            out.label      = ArchitectureLabel::Monorepo;
-            out.reasoning  = std::move(*r);
+            out.label = ArchitectureLabel::Monorepo;
+            out.reasoning = std::move(*r);
             out.confidence = 85;
             return out;
         }
@@ -342,8 +331,8 @@ detect_architecture(const CodeIndex& index,
     // Top-level `packages/`, `apps/`, `libs/` plus multiple main.*
     // files typically mean an npm / cargo / bazel monorepo.
     const bool has_packages = segments.contains("packages");
-    const bool has_apps     = segments.contains("apps");
-    const bool has_libs     = segments.contains("libs");
+    const bool has_apps = segments.contains("apps");
+    const bool has_libs = segments.contains("libs");
     const bool has_packages_top = has_packages || has_apps || has_libs;
     const std::size_t main_count = count_main_files(index);
     if (has_packages_top && main_count >= 2) {
@@ -354,13 +343,13 @@ detect_architecture(const CodeIndex& index,
         const char* which = "libs";
         if (has_packages) {
             which = "packages";
-        } else if (has_apps) {
+        }
+        else if (has_apps) {
             which = "apps";
         }
-        out.label      = ArchitectureLabel::Monorepo;
-        out.reasoning  = std::string{"top-level `"} + which + "/` plus " +
-                         std::to_string(main_count) +
-                         " entry points suggests a monorepo layout";
+        out.label = ArchitectureLabel::Monorepo;
+        out.reasoning = std::string{"top-level `"} + which + "/` plus " +
+                        std::to_string(main_count) + " entry points suggests a monorepo layout";
         out.confidence = 85;
         return out;
     }
@@ -377,19 +366,20 @@ detect_architecture(const CodeIndex& index,
     //     and which the original list was missing.
     const std::vector<std::string_view> layered_signals = {
         // Classic layered
-        "controllers", "services", "repositories", "models",
-        "domain", "handlers", "dao", "routes",
+        "controllers", "services", "repositories", "models", "domain", "handlers", "dao", "routes",
         // Plugin / modular layering
         "core", "modes", "plugins", "ui", "platform",
         // Hexagonal / clean architecture
         "adapters", "ports", "infrastructure", "infra", "engine"};
     std::size_t layered_matches = 0;
-    std::string layered_reason  = "found: ";
-    bool        first_match     = true;
+    std::string layered_reason = "found: ";
+    bool first_match = true;
     for (const std::string_view needle : layered_signals) {
         if (segments.contains(std::string{needle})) {
             ++layered_matches;
-            if (!first_match) { layered_reason += ", "; }
+            if (!first_match) {
+                layered_reason += ", ";
+            }
             layered_reason += std::string{needle};
             first_match = false;
         }
@@ -400,18 +390,16 @@ detect_architecture(const CodeIndex& index,
     // Presentation (case-insensitive is unnecessary — filesystems on
     // Windows are case-insensitive but the convention is PascalCase).
     const auto has_any = [&](std::initializer_list<std::string_view> names) {
-        return std::ranges::any_of(names, [&](std::string_view n) {
-            return segments.contains(std::string{n});
-        });
+        return std::ranges::any_of(
+            names, [&](std::string_view n) { return segments.contains(std::string{n}); });
     };
-    const int clean_hits = (segments.contains("Domain")         ? 1 : 0)
-                         + (segments.contains("Application")    ? 1 : 0)
-                         + (segments.contains("Infrastructure") ? 1 : 0)
-                         + (segments.contains("Presentation")   ? 1 : 0);
+    const int clean_hits =
+        (segments.contains("Domain") ? 1 : 0) + (segments.contains("Application") ? 1 : 0) +
+        (segments.contains("Infrastructure") ? 1 : 0) + (segments.contains("Presentation") ? 1 : 0);
     if (clean_hits >= 3) {
-        out.label      = ArchitectureLabel::CleanArchitecture;
-        out.reasoning  = "Domain/Application/Infrastructure/Presentation "
-                         "layering (Clean / hexagonal architecture)";
+        out.label = ArchitectureLabel::CleanArchitecture;
+        out.reasoning = "Domain/Application/Infrastructure/Presentation "
+                        "layering (Clean / hexagonal architecture)";
         out.confidence = 85;
         return out;
     }
@@ -421,9 +409,9 @@ detect_architecture(const CodeIndex& index,
     // modern .NET UI frameworks (WPF, Avalonia, MAUI) put each in its
     // own folder inside a UI project.
     if (segments.contains("ViewModels") && segments.contains("Views")) {
-        out.label      = ArchitectureLabel::Mvvm;
-        out.reasoning  = "`ViewModels/` and `Views/` directories "
-                         "(MVVM UI layer)";
+        out.label = ArchitectureLabel::Mvvm;
+        out.reasoning = "`ViewModels/` and `Views/` directories "
+                        "(MVVM UI layer)";
         out.confidence = 85;
         return out;
     }
@@ -433,23 +421,21 @@ detect_architecture(const CodeIndex& index,
     // `FlowForge.UI` / `FlowForge.CLI` / `FlowForge.Core` strongly
     // suggest a `.sln` with one `.csproj` per dotted directory.
     if (count_dotted_project_dirs(index) >= 2) {
-        out.label      = ArchitectureLabel::DotNetSolution;
-        out.reasoning  = "multiple sibling directories with dotted "
-                         "names (typical .NET multi-project solution)";
+        out.label = ArchitectureLabel::DotNetSolution;
+        out.reasoning = "multiple sibling directories with dotted "
+                        "names (typical .NET multi-project solution)";
         out.confidence = 75;
         return out;
     }
 
     // MVC is a stricter layered variant: it needs `models`,
     // `views`, and `controllers` (or equivalent) all present.
-    const bool has_mvc_trio =
-        segments.contains("models") &&
-        segments.contains("views") &&
-        segments.contains("controllers");
+    const bool has_mvc_trio = segments.contains("models") && segments.contains("views") &&
+                              segments.contains("controllers");
     if (has_mvc_trio) {
-        out.label      = ArchitectureLabel::Mvc;
-        out.reasoning  = "found `models/`, `views/`, and `controllers/` "
-                         "directories (classic MVC layout)";
+        out.label = ArchitectureLabel::Mvc;
+        out.reasoning = "found `models/`, `views/`, and `controllers/` "
+                        "directories (classic MVC layout)";
         out.confidence = 90;
         return out;
     }
@@ -459,25 +445,22 @@ detect_architecture(const CodeIndex& index,
     // src/components/ + src/pages/, or the presence of common
     // framework config files.
     const bool has_components = segments.contains("components");
-    const bool has_pages      = segments.contains("pages");
+    const bool has_pages = segments.contains("pages");
     const bool has_spa_config =
-        any_file_named(index, "next.config.js") ||
-        any_file_named(index, "vite.config.ts") ||
-        any_file_named(index, "vite.config.js") ||
-        any_file_named(index, "nuxt.config.ts");
+        any_file_named(index, "next.config.js") || any_file_named(index, "vite.config.ts") ||
+        any_file_named(index, "vite.config.js") || any_file_named(index, "nuxt.config.ts");
     if ((has_components && has_pages) || has_spa_config) {
         out.label = ArchitectureLabel::FrontendSpa;
-        out.reasoning = has_spa_config
-            ? "framework config file detected (next/vite/nuxt)"
-            : "found `components/` and `pages/` directories";
+        out.reasoning = has_spa_config ? "framework config file detected (next/vite/nuxt)"
+                                       : "found `components/` and `pages/` directories";
         out.confidence = 80;
         return out;
     }
 
     // --- Layered fallback ------------------------------------------
     if (layered_matches >= 3) {
-        out.label      = ArchitectureLabel::Layered;
-        out.reasoning  = layered_reason;
+        out.label = ArchitectureLabel::Layered;
+        out.reasoning = layered_reason;
         out.confidence = 70;
         return out;
     }
@@ -485,13 +468,12 @@ detect_architecture(const CodeIndex& index,
     // --- API backend indicators ------------------------------------
     // A handlers/ or routes/ directory plus no src/pages or frontend
     // config files implies an API backend.
-    if ((segments.contains("handlers") || segments.contains("routes")) &&
-        !has_pages && !has_spa_config)
-    {
-        out.label      = ArchitectureLabel::ApiBackend;
-        out.reasoning  = segments.contains("handlers")
-            ? "found `handlers/` directory, no frontend config"
-            : "found `routes/` directory, no frontend config";
+    if ((segments.contains("handlers") || segments.contains("routes")) && !has_pages &&
+        !has_spa_config) {
+        out.label = ArchitectureLabel::ApiBackend;
+        out.reasoning = segments.contains("handlers")
+                            ? "found `handlers/` directory, no frontend config"
+                            : "found `routes/` directory, no frontend config";
         out.confidence = 60;
         return out;
     }
@@ -502,13 +484,12 @@ detect_architecture(const CodeIndex& index,
     // libraries (fmt, spdlog, nlohmann/json) and many SDKs ship like
     // this. Goes before Monolith so a header+impl split doesn't fall
     // through to "single entry point, no distinctive layout".
-    const bool has_public_iface =
-        segments.contains("include") || segments.contains("lib");
+    const bool has_public_iface = segments.contains("include") || segments.contains("lib");
     if (has_public_iface && segments.contains("src") && main_count == 0) {
-        out.label      = ArchitectureLabel::Library;
-        out.reasoning  = segments.contains("include")
-            ? "found `include/` + `src/` with no entry point — library layout"
-            : "found `lib/` + `src/` with no entry point — library layout";
+        out.label = ArchitectureLabel::Library;
+        out.reasoning = segments.contains("include")
+                            ? "found `include/` + `src/` with no entry point — library layout"
+                            : "found `lib/` + `src/` with no entry point — library layout";
         out.confidence = 75;
         return out;
     }
@@ -518,10 +499,10 @@ detect_architecture(const CodeIndex& index,
     if (main_count <= 1 || layered_matches > 0) {
         out.label = ArchitectureLabel::Monolith;
         if (layered_matches > 0) {
-            out.reasoning = "single entry point with partial layering (" +
-                            layered_reason + ")";
+            out.reasoning = "single entry point with partial layering (" + layered_reason + ")";
             out.confidence = 50;
-        } else {
+        }
+        else {
             out.reasoning = "single entry point, no distinctive layout";
             out.confidence = 40;
         }
@@ -529,8 +510,8 @@ detect_architecture(const CodeIndex& index,
     }
 
     // Fallback — nothing matched.
-    out.label      = ArchitectureLabel::Unknown;
-    out.reasoning  = "no distinctive architectural indicators found";
+    out.label = ArchitectureLabel::Unknown;
+    out.reasoning = "no distinctive architectural indicators found";
     out.confidence = 10;
     return out;
 }

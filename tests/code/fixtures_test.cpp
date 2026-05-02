@@ -1,7 +1,5 @@
-#include "code/scanner.h"
-
-#include <atomic>
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -9,11 +7,12 @@
 
 #include <gtest/gtest.h>
 
-#include "core/task_queue.h"
 #include "code/code_index.h"
 #include "code/language.h"
 #include "code/parser.h"
+#include "code/scanner.h"
 #include "code/symbol.h"
+#include "core/task_queue.h"
 
 // VECTIS_FIXTURE_DIR is injected as a compile-time definition from
 // tests/CMakeLists.txt so the tests can find `tests/fixtures/code/`
@@ -24,7 +23,6 @@
 
 namespace {
 
-using vectis::core::CancellationToken;
 using vectis::code::CodeIndex;
 using vectis::code::Language;
 using vectis::code::ScanConfig;
@@ -34,14 +32,14 @@ using vectis::code::ScanSummary;
 using vectis::code::Symbol;
 using vectis::code::SymbolKind;
 using vectis::code::TreeSitterParser;
+using vectis::core::CancellationToken;
 
 /// Helper: does the index contain a symbol by this name (any kind)?
 bool index_has_symbol(const CodeIndex& index, std::string_view name)
 {
     const auto matches = index.search_symbols(name);
-    return std::any_of(matches.begin(), matches.end(), [&](const Symbol& s) {
-        return s.name == name;
-    });
+    return std::any_of(matches.begin(), matches.end(),
+                       [&](const Symbol& s) { return s.name == name; });
 }
 
 /// Run a scan of a fixture subdirectory into the given index. Caller
@@ -56,19 +54,15 @@ void scan_fixture(std::string_view fixture_name, CodeIndex& index)
     parser.register_builtin_languages();
 
     ScanConfig cfg;
-    cfg.root  = fixture_root;
+    cfg.root = fixture_root;
     cfg.epoch = 1;
 
     std::atomic<std::int64_t> epoch{1};
-    const CancellationToken   token{};
+    const CancellationToken token{};
 
     const auto result = Scanner::run(
-        cfg, index, parser,
-        [](const ScanProgress&) {},
-        [](const ScanSummary&) {},
-        token, epoch);
-    EXPECT_TRUE(result.has_value())
-        << "scan of fixture '" << fixture_name << "' failed";
+        cfg, index, parser, [](const ScanProgress&) {}, [](const ScanSummary&) {}, token, epoch);
+    EXPECT_TRUE(result.has_value()) << "scan of fixture '" << fixture_name << "' failed";
 }
 
 TEST(FixturesTest, SamplePython_ScansAndExtractsSymbols)
@@ -141,8 +135,7 @@ TEST(FixturesTest, SampleCpp_ScannerPopulatesDependencies)
 
     // widget.cpp includes widget.hpp, main.cpp includes widget.hpp.
     // The scanner should register both as dependency edges.
-    EXPECT_GE(index.dependency_count(), 2U)
-        << "expected at least 2 #include edges in sample-cpp";
+    EXPECT_GE(index.dependency_count(), 2U) << "expected at least 2 #include edges in sample-cpp";
 
     // Find the widget.hpp file id and assert someone depends on it.
     std::int64_t widget_hpp_id = 0;

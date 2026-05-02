@@ -12,11 +12,11 @@
 
 #include <tree_sitter/api.h>
 
-#include "core/log.h"
 #include "code/complexity_analyzer.h"
 #include "code/language.h"
 #include "code/parser_queries.h"
 #include "code/symbol.h"
+#include "core/log.h"
 
 // -----------------------------------------------------------------------------
 // Tree-sitter grammar entry points.
@@ -50,14 +50,30 @@ namespace {
 /// caller should skip those captures.
 [[nodiscard]] SymbolKind capture_name_to_kind(std::string_view capture_name) noexcept
 {
-    if (capture_name == "function")  { return SymbolKind::Function;  }
-    if (capture_name == "method")    { return SymbolKind::Method;    }
-    if (capture_name == "class")     { return SymbolKind::Class;     }
-    if (capture_name == "struct")    { return SymbolKind::Struct;    }
-    if (capture_name == "interface") { return SymbolKind::Interface; }
-    if (capture_name == "enum")      { return SymbolKind::Enum;      }
-    if (capture_name == "type")      { return SymbolKind::Type;      }
-    if (capture_name == "namespace") { return SymbolKind::Namespace; }
+    if (capture_name == "function") {
+        return SymbolKind::Function;
+    }
+    if (capture_name == "method") {
+        return SymbolKind::Method;
+    }
+    if (capture_name == "class") {
+        return SymbolKind::Class;
+    }
+    if (capture_name == "struct") {
+        return SymbolKind::Struct;
+    }
+    if (capture_name == "interface") {
+        return SymbolKind::Interface;
+    }
+    if (capture_name == "enum") {
+        return SymbolKind::Enum;
+    }
+    if (capture_name == "type") {
+        return SymbolKind::Type;
+    }
+    if (capture_name == "namespace") {
+        return SymbolKind::Namespace;
+    }
     return SymbolKind::Unknown;
 }
 
@@ -68,14 +84,15 @@ namespace {
 {
     std::string out;
     out.reserve(source.size());
-    bool last_was_space = true;  // leading whitespace becomes nothing
+    bool last_was_space = true; // leading whitespace becomes nothing
     for (const char ch : source) {
         if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
             if (!last_was_space) {
                 out.push_back(' ');
                 last_was_space = true;
             }
-        } else {
+        }
+        else {
             out.push_back(ch);
             last_was_space = false;
         }
@@ -98,8 +115,8 @@ namespace {
 [[nodiscard]] std::string extract_signature(TSNode node, std::string_view content)
 {
     const std::string_view node_type{ts_node_type(node)};
-    const std::uint32_t    node_start = ts_node_start_byte(node);
-    std::uint32_t          node_end   = ts_node_end_byte(node);
+    const std::uint32_t node_start = ts_node_start_byte(node);
+    std::uint32_t node_end = ts_node_end_byte(node);
 
     if (node_start >= content.size() || node_end > content.size() || node_end <= node_start) {
         return {};
@@ -110,26 +127,22 @@ namespace {
         // compound_statement or a function-try-block.
         const std::uint32_t child_count = ts_node_named_child_count(node);
         for (std::uint32_t i = 0; i < child_count; ++i) {
-            const TSNode           child      = ts_node_named_child(node, i);
+            const TSNode child = ts_node_named_child(node, i);
             const std::string_view child_type{ts_node_type(child)};
-            if (child_type == "compound_statement" ||
-                child_type == "try_statement" ||
-                child_type == "field_initializer_list")
-            {
+            if (child_type == "compound_statement" || child_type == "try_statement" ||
+                child_type == "field_initializer_list") {
                 node_end = ts_node_start_byte(child);
                 break;
             }
         }
-    } else if (node_type == "declaration" || node_type == "field_declaration") {
+    }
+    else if (node_type == "declaration" || node_type == "field_declaration") {
         // Trim trailing whitespace and the terminating semicolon so the
         // signature doesn't carry a dangling ';'.
         while (node_end > node_start &&
-               (content[node_end - 1] == ' ' ||
-                content[node_end - 1] == '\t' ||
-                content[node_end - 1] == '\n' ||
-                content[node_end - 1] == '\r' ||
-                content[node_end - 1] == ';'))
-        {
+               (content[node_end - 1] == ' ' || content[node_end - 1] == '\t' ||
+                content[node_end - 1] == '\n' || content[node_end - 1] == '\r' ||
+                content[node_end - 1] == ';')) {
             --node_end;
         }
     }
@@ -137,8 +150,7 @@ namespace {
     if (node_end <= node_start) {
         return {};
     }
-    return normalize_whitespace(
-        content.substr(node_start, node_end - node_start));
+    return normalize_whitespace(content.substr(node_start, node_end - node_start));
 }
 
 /// True if a given symbol kind is function-like and should carry a
@@ -172,7 +184,7 @@ namespace {
 [[nodiscard]] std::string node_text(TSNode node, std::string_view content)
 {
     const std::uint32_t start = ts_node_start_byte(node);
-    const std::uint32_t end   = ts_node_end_byte(node);
+    const std::uint32_t end = ts_node_end_byte(node);
     if (start > content.size() || end > content.size() || end < start) {
         return {};
     }
@@ -182,8 +194,7 @@ namespace {
 /// Walk an `enum_specifier` node and append the name of every
 /// enumerator (enum value) to `out`. Tree-sitter-cpp represents these
 /// as `enum_specifier > enumerator_list > enumerator > identifier`.
-void collect_enum_values(TSNode enum_node, std::string_view content,
-                         std::vector<std::string>& out)
+void collect_enum_values(TSNode enum_node, std::string_view content, std::vector<std::string>& out)
 {
     const std::uint32_t n = ts_node_named_child_count(enum_node);
     for (std::uint32_t i = 0; i < n; ++i) {
@@ -264,23 +275,25 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
 
 } // namespace
 
-struct TreeSitterParser::Impl {
+struct TreeSitterParser::Impl
+{
     TSParser* parser = nullptr;
 
-    struct LanguageEntry {
-        const TSLanguage* grammar          = nullptr;
-        TSQuery*          query            = nullptr; ///< symbol query
-        TSQuery*          import_query     = nullptr; ///< imports query, may be null
-        TSQuery*          namespace_query  = nullptr; ///< namespace-decl query, may be null
+    struct LanguageEntry
+    {
+        const TSLanguage* grammar = nullptr;
+        TSQuery* query = nullptr;           ///< symbol query
+        TSQuery* import_query = nullptr;    ///< imports query, may be null
+        TSQuery* namespace_query = nullptr; ///< namespace-decl query, may be null
     };
 
     std::unordered_map<Language, LanguageEntry> languages;
 
-    Impl()                       = default;
-    Impl(const Impl&)            = delete;
+    Impl() = default;
+    Impl(const Impl&) = delete;
     Impl& operator=(const Impl&) = delete;
-    Impl(Impl&&)                 = delete;
-    Impl& operator=(Impl&&)      = delete;
+    Impl(Impl&&) = delete;
+    Impl& operator=(Impl&&) = delete;
 
     ~Impl()
     {
@@ -313,70 +326,54 @@ struct TreeSitterParser::Impl {
         }
 
         std::uint32_t error_offset = 0;
-        TSQueryError  error_type   = TSQueryErrorNone;
-        TSQuery*      query        = ts_query_new(
-            grammar,
-            query_source.data(),
-            static_cast<std::uint32_t>(query_source.size()),
-            &error_offset,
-            &error_type);
+        TSQueryError error_type = TSQueryErrorNone;
+        TSQuery* query = ts_query_new(grammar, query_source.data(),
+                                      static_cast<std::uint32_t>(query_source.size()),
+                                      &error_offset, &error_type);
 
         if (query == nullptr) {
-            VECTIS_LOG_WARN(
-                "failed to compile tree-sitter query for {} (error {}, offset {})",
-                language_name(lang),
-                static_cast<int>(error_type),
-                error_offset);
+            VECTIS_LOG_WARN("failed to compile tree-sitter query for {} (error {}, offset {})",
+                            language_name(lang), static_cast<int>(error_type), error_offset);
             return false;
         }
 
         // Import query is optional — if it fails or is empty, the
         // language is still "supported" for symbols; it just won't
         // contribute to the dependency graph.
-        TSQuery*               import_query       = nullptr;
+        TSQuery* import_query = nullptr;
         const std::string_view import_query_source = import_query_for(lang);
         if (!import_query_source.empty()) {
             std::uint32_t import_error_offset = 0;
-            TSQueryError  import_error_type   = TSQueryErrorNone;
-            import_query = ts_query_new(
-                grammar,
-                import_query_source.data(),
-                static_cast<std::uint32_t>(import_query_source.size()),
-                &import_error_offset,
-                &import_error_type);
+            TSQueryError import_error_type = TSQueryErrorNone;
+            import_query = ts_query_new(grammar, import_query_source.data(),
+                                        static_cast<std::uint32_t>(import_query_source.size()),
+                                        &import_error_offset, &import_error_type);
             if (import_query == nullptr) {
-                VECTIS_LOG_WARN(
-                    "failed to compile import query for {} (error {}, offset {})",
-                    language_name(lang),
-                    static_cast<int>(import_error_type),
-                    import_error_offset);
+                VECTIS_LOG_WARN("failed to compile import query for {} (error {}, offset {})",
+                                language_name(lang), static_cast<int>(import_error_type),
+                                import_error_offset);
             }
         }
 
         // Namespace-declaration query — also optional. Currently only
         // C# and PHP populate this; see `namespace_query_for`.
-        TSQuery*               namespace_query        = nullptr;
+        TSQuery* namespace_query = nullptr;
         const std::string_view namespace_query_source = namespace_query_for(lang);
         if (!namespace_query_source.empty()) {
             std::uint32_t ns_error_offset = 0;
-            TSQueryError  ns_error_type   = TSQueryErrorNone;
-            namespace_query = ts_query_new(
-                grammar,
-                namespace_query_source.data(),
-                static_cast<std::uint32_t>(namespace_query_source.size()),
-                &ns_error_offset,
-                &ns_error_type);
+            TSQueryError ns_error_type = TSQueryErrorNone;
+            namespace_query =
+                ts_query_new(grammar, namespace_query_source.data(),
+                             static_cast<std::uint32_t>(namespace_query_source.size()),
+                             &ns_error_offset, &ns_error_type);
             if (namespace_query == nullptr) {
-                VECTIS_LOG_WARN(
-                    "failed to compile namespace query for {} (error {}, offset {})",
-                    language_name(lang),
-                    static_cast<int>(ns_error_type),
-                    ns_error_offset);
+                VECTIS_LOG_WARN("failed to compile namespace query for {} (error {}, offset {})",
+                                language_name(lang), static_cast<int>(ns_error_type),
+                                ns_error_offset);
             }
         }
 
-        languages[lang] = LanguageEntry{
-            grammar, query, import_query, namespace_query};
+        languages[lang] = LanguageEntry{grammar, query, import_query, namespace_query};
         return true;
     }
 };
@@ -394,23 +391,24 @@ std::size_t TreeSitterParser::register_builtin_languages()
         return m_impl->languages.size();
     }
 
-    struct Entry {
-        Language          lang;
+    struct Entry
+    {
+        Language lang;
         const TSLanguage* grammar;
     };
     const std::array<Entry, 12> builtins = {{
-        {Language::Python,     tree_sitter_python()},
+        {Language::Python, tree_sitter_python()},
         {Language::JavaScript, tree_sitter_javascript()},
         {Language::TypeScript, tree_sitter_typescript()},
-        {Language::C,          tree_sitter_c()},
-        {Language::Cpp,        tree_sitter_cpp()},
-        {Language::Rust,       tree_sitter_rust()},
-        {Language::Java,       tree_sitter_java()},
-        {Language::CSharp,     tree_sitter_c_sharp()},
-        {Language::Go,         tree_sitter_go()},
-        {Language::Ruby,       tree_sitter_ruby()},
-        {Language::Php,        tree_sitter_php()},
-        {Language::Sql,        tree_sitter_sql()},
+        {Language::C, tree_sitter_c()},
+        {Language::Cpp, tree_sitter_cpp()},
+        {Language::Rust, tree_sitter_rust()},
+        {Language::Java, tree_sitter_java()},
+        {Language::CSharp, tree_sitter_c_sharp()},
+        {Language::Go, tree_sitter_go()},
+        {Language::Ruby, tree_sitter_ruby()},
+        {Language::Php, tree_sitter_php()},
+        {Language::Sql, tree_sitter_sql()},
     }};
 
     std::size_t registered = 0;
@@ -427,8 +425,8 @@ bool TreeSitterParser::supports(Language language) const noexcept
     return m_impl->languages.find(language) != m_impl->languages.end();
 }
 
-TreeSitterParser::ParseResult
-TreeSitterParser::parse_file(Language language, std::string_view content)
+TreeSitterParser::ParseResult TreeSitterParser::parse_file(Language language,
+                                                           std::string_view content)
 {
     ParseResult result;
 
@@ -448,50 +446,48 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
         return result;
     }
 
-    TSTree* tree = ts_parser_parse_string(
-        m_impl->parser,
-        nullptr,
-        content.data(),
-        static_cast<std::uint32_t>(content.size()));
+    TSTree* tree = ts_parser_parse_string(m_impl->parser, nullptr, content.data(),
+                                          static_cast<std::uint32_t>(content.size()));
     if (tree == nullptr) {
         VECTIS_LOG_WARN("ts_parser_parse_string returned null for {}", language_name(language));
         return result;
     }
 
-    const TSNode   root   = ts_tree_root_node(tree);
+    const TSNode root = ts_tree_root_node(tree);
     TSQueryCursor* cursor = ts_query_cursor_new();
     ts_query_cursor_exec(cursor, entry.query, root);
 
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
         Symbol symbol;
-        bool   has_name = false;
-        bool   has_kind = false;
-        bool   skip_this_match = false;  // set for local-scope false positives
+        bool has_name = false;
+        bool has_kind = false;
+        bool skip_this_match = false; // set for local-scope false positives
 
         for (std::uint16_t i = 0; i < match.capture_count; ++i) {
-            const TSQueryCapture& capture       = match.captures[i];
-            std::uint32_t         capture_len   = 0;
-            const char*           capture_chars = ts_query_capture_name_for_id(
-                entry.query, capture.index, &capture_len);
+            const TSQueryCapture& capture = match.captures[i];
+            std::uint32_t capture_len = 0;
+            const char* capture_chars =
+                ts_query_capture_name_for_id(entry.query, capture.index, &capture_len);
             const std::string_view capture_name(capture_chars, capture_len);
 
             if (capture_name == "name") {
                 const std::uint32_t start = ts_node_start_byte(capture.node);
-                const std::uint32_t end   = ts_node_end_byte(capture.node);
+                const std::uint32_t end = ts_node_end_byte(capture.node);
                 if (end <= content.size() && start <= end) {
                     symbol.name.assign(content.data() + start, end - start);
                     has_name = true;
                 }
-            } else {
+            }
+            else {
                 const SymbolKind kind = capture_name_to_kind(capture_name);
                 if (kind != SymbolKind::Unknown) {
                     symbol.kind = kind;
                     has_kind = true;
                     const TSPoint start_pt = ts_node_start_point(capture.node);
-                    const TSPoint end_pt   = ts_node_end_point(capture.node);
+                    const TSPoint end_pt = ts_node_end_point(capture.node);
                     symbol.line_start = static_cast<int>(start_pt.row) + 1;
-                    symbol.line_end   = static_cast<int>(end_pt.row) + 1;
+                    symbol.line_end = static_cast<int>(end_pt.row) + 1;
 
                     // Reject local-scope declarations that look like
                     // function declarations to tree-sitter but are
@@ -501,19 +497,18 @@ TreeSitterParser::parse_file(Language language, std::string_view content)
                     // `declaration` → `function` patterns.
                     if (kind == SymbolKind::Function &&
                         std::string_view{ts_node_type(capture.node)} == "declaration" &&
-                        is_inside_function_body(capture.node))
-                    {
+                        is_inside_function_body(capture.node)) {
                         skip_this_match = true;
                     }
 
                     if (kind_has_signature(kind)) {
                         symbol.signature = extract_signature(capture.node, content);
-                        symbol.complexity = compute_cyclomatic_complexity(
-                            capture.node, language);
+                        symbol.complexity = compute_cyclomatic_complexity(capture.node, language);
                     }
                     if (kind == SymbolKind::Enum) {
                         collect_enum_values(capture.node, content, symbol.members);
-                    } else if (kind == SymbolKind::Struct) {
+                    }
+                    else if (kind == SymbolKind::Struct) {
                         collect_struct_fields(capture.node, content, symbol.members);
                     }
                 }
@@ -547,8 +542,8 @@ namespace {
 
 } // namespace
 
-std::vector<RawImport>
-TreeSitterParser::extract_imports(Language language, std::string_view content)
+std::vector<RawImport> TreeSitterParser::extract_imports(Language language,
+                                                         std::string_view content)
 {
     std::vector<RawImport> result;
 
@@ -569,33 +564,32 @@ TreeSitterParser::extract_imports(Language language, std::string_view content)
         return result;
     }
 
-    TSTree* tree = ts_parser_parse_string(
-        m_impl->parser, nullptr, content.data(),
-        static_cast<std::uint32_t>(content.size()));
+    TSTree* tree = ts_parser_parse_string(m_impl->parser, nullptr, content.data(),
+                                          static_cast<std::uint32_t>(content.size()));
     if (tree == nullptr) {
         return result;
     }
 
-    const TSNode   root   = ts_tree_root_node(tree);
+    const TSNode root = ts_tree_root_node(tree);
     TSQueryCursor* cursor = ts_query_cursor_new();
     ts_query_cursor_exec(cursor, entry.import_query, root);
 
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
-        RawImport       raw;
-        bool            has_path = false;
-        bool            has_kind = false;
+        RawImport raw;
+        bool has_path = false;
+        bool has_kind = false;
 
         for (std::uint16_t i = 0; i < match.capture_count; ++i) {
-            const TSQueryCapture& capture       = match.captures[i];
-            std::uint32_t         capture_len   = 0;
-            const char*           capture_chars = ts_query_capture_name_for_id(
-                entry.import_query, capture.index, &capture_len);
+            const TSQueryCapture& capture = match.captures[i];
+            std::uint32_t capture_len = 0;
+            const char* capture_chars =
+                ts_query_capture_name_for_id(entry.import_query, capture.index, &capture_len);
             const std::string_view capture_name(capture_chars, capture_len);
 
             if (capture_name == "path") {
                 const std::uint32_t start = ts_node_start_byte(capture.node);
-                const std::uint32_t end   = ts_node_end_byte(capture.node);
+                const std::uint32_t end = ts_node_end_byte(capture.node);
                 if (end > content.size() || start > end) {
                     continue;
                 }
@@ -604,12 +598,14 @@ TreeSitterParser::extract_imports(Language language, std::string_view content)
                 path_text = unquote(path_text, '\'');
                 raw.import_string.assign(path_text);
                 has_path = true;
-            } else if (!capture_name.empty() && capture_name.front() == '_') {
+            }
+            else if (!capture_name.empty() && capture_name.front() == '_') {
                 // Convention: `@_xxx` captures exist only to feed
                 // `#match?`/`#eq?` predicates (e.g. the Ruby method-name
                 // check). They must not be confused with the kind tag.
                 continue;
-            } else {
+            }
+            else {
                 // `@include`, `@import`, `@use`, `@require`, `@mod`
                 // are treated as the kind tag — whichever fires is
                 // stored verbatim.
@@ -630,8 +626,8 @@ TreeSitterParser::extract_imports(Language language, std::string_view content)
     return result;
 }
 
-std::vector<std::string>
-TreeSitterParser::extract_namespaces(Language language, std::string_view content)
+std::vector<std::string> TreeSitterParser::extract_namespaces(Language language,
+                                                              std::string_view content)
 {
     std::vector<std::string> result;
 
@@ -650,38 +646,35 @@ TreeSitterParser::extract_namespaces(Language language, std::string_view content
     if (!ts_parser_set_language(m_impl->parser, entry.grammar)) {
         return result;
     }
-    TSTree* tree = ts_parser_parse_string(
-        m_impl->parser, nullptr, content.data(),
-        static_cast<std::uint32_t>(content.size()));
+    TSTree* tree = ts_parser_parse_string(m_impl->parser, nullptr, content.data(),
+                                          static_cast<std::uint32_t>(content.size()));
     if (tree == nullptr) {
         return result;
     }
 
-    const TSNode   root   = ts_tree_root_node(tree);
+    const TSNode root = ts_tree_root_node(tree);
     TSQueryCursor* cursor = ts_query_cursor_new();
     ts_query_cursor_exec(cursor, entry.namespace_query, root);
 
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
         for (std::uint16_t i = 0; i < match.capture_count; ++i) {
-            const TSQueryCapture& capture     = match.captures[i];
-            std::uint32_t         name_len    = 0;
-            const char*           name_chars  = ts_query_capture_name_for_id(
-                entry.namespace_query, capture.index, &name_len);
+            const TSQueryCapture& capture = match.captures[i];
+            std::uint32_t name_len = 0;
+            const char* name_chars =
+                ts_query_capture_name_for_id(entry.namespace_query, capture.index, &name_len);
             const std::string_view capture_name(name_chars, name_len);
             if (capture_name != "name") {
                 continue;
             }
             const std::uint32_t start = ts_node_start_byte(capture.node);
-            const std::uint32_t end   = ts_node_end_byte(capture.node);
+            const std::uint32_t end = ts_node_end_byte(capture.node);
             if (end > content.size() || start > end) {
                 continue;
             }
             std::string ns{content.substr(start, end - start)};
             // Strip stray whitespace from the captured span.
-            while (!ns.empty() &&
-                   std::isspace(static_cast<unsigned char>(ns.back())) != 0)
-            {
+            while (!ns.empty() && std::isspace(static_cast<unsigned char>(ns.back())) != 0) {
                 ns.pop_back();
             }
             if (!ns.empty()) {

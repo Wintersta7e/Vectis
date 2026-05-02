@@ -1,5 +1,3 @@
-#include "platform/file_watcher.h"
-
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include "platform/file_watcher.h"
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -17,12 +17,14 @@ using vectis::platform::FileWatcher;
 
 #ifdef __linux__
 
-struct Event {
-    fs::path       path;
+struct Event
+{
+    fs::path path;
     FileChangeType type;
 };
 
-class FileWatcherTest : public ::testing::Test {
+class FileWatcherTest : public ::testing::Test
+{
 protected:
     void SetUp() override
     {
@@ -38,15 +40,14 @@ protected:
     }
 
     FileWatcher m_watcher;
-    fs::path    m_tmp_dir;
+    fs::path m_tmp_dir;
     std::vector<Event> m_events;
 
     void start_watching()
     {
-        auto r = m_watcher.watch(m_tmp_dir,
-            [this](const fs::path& path, FileChangeType type) {
-                m_events.push_back({path, type});
-            });
+        auto r = m_watcher.watch(m_tmp_dir, [this](const fs::path& path, FileChangeType type) {
+            m_events.push_back({path, type});
+        });
         ASSERT_TRUE(r) << r.error().message;
     }
 
@@ -106,9 +107,7 @@ TEST_F(FileWatcherTest, DetectsModifiedFile)
 
     bool found_modify = false;
     for (const auto& e : m_events) {
-        if (e.path.filename() == "existing.txt" &&
-            e.type == FileChangeType::Modified)
-        {
+        if (e.path.filename() == "existing.txt" && e.type == FileChangeType::Modified) {
             found_modify = true;
         }
     }
@@ -131,9 +130,7 @@ TEST_F(FileWatcherTest, DetectsDeletedFile)
 
     bool found_delete = false;
     for (const auto& e : m_events) {
-        if (e.path.filename() == "doomed.txt" &&
-            e.type == FileChangeType::Deleted)
-        {
+        if (e.path.filename() == "doomed.txt" && e.type == FileChangeType::Deleted) {
             found_delete = true;
         }
     }

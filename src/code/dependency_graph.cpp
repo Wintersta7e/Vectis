@@ -19,16 +19,17 @@ namespace {
 /// each node is visited exactly once. Uses explicit recursion
 /// because tree depths on large codebases can overrun the default
 /// thread stack; see `strongconnect_iterative` below.
-struct TarjanState {
+struct TarjanState
+{
     /// Adjacency list: source_file_id -> list of internal target_file_ids.
     std::unordered_map<std::int64_t, std::vector<std::int64_t>> adj;
 
     /// Tarjan scratch state, keyed by file_id.
-    std::unordered_map<std::int64_t, int>  index_of;
-    std::unordered_map<std::int64_t, int>  lowlink_of;
+    std::unordered_map<std::int64_t, int> index_of;
+    std::unordered_map<std::int64_t, int> lowlink_of;
     std::unordered_map<std::int64_t, bool> on_stack;
-    std::vector<std::int64_t>              stack_vec;
-    int                                    next_index = 0;
+    std::vector<std::int64_t> stack_vec;
+    int next_index = 0;
 
     /// Output — all SCCs of size > 1 (or size 1 with self-loop).
     std::vector<DependencyCycle> cycles;
@@ -38,14 +39,15 @@ struct TarjanState {
     /// in-progress vertex and the iterator through its neighbors.
     void strongconnect_iterative(std::int64_t root)
     {
-        struct Frame {
+        struct Frame
+        {
             std::int64_t v;
-            std::size_t  neighbor_idx;
+            std::size_t neighbor_idx;
         };
         std::vector<Frame> frames;
 
         // --- Enter root -----
-        index_of[root]   = next_index;
+        index_of[root] = next_index;
         lowlink_of[root] = next_index;
         ++next_index;
         stack_vec.push_back(root);
@@ -63,7 +65,7 @@ struct TarjanState {
                     const std::int64_t w = neighbors[frame.neighbor_idx++];
                     if (index_of.find(w) == index_of.end()) {
                         // Descend into w.
-                        index_of[w]   = next_index;
+                        index_of[w] = next_index;
                         lowlink_of[w] = next_index;
                         ++next_index;
                         stack_vec.push_back(w);
@@ -73,8 +75,7 @@ struct TarjanState {
                         break;
                     }
                     if (on_stack[w]) {
-                        lowlink_of[frame.v] =
-                            std::min(lowlink_of[frame.v], index_of[w]);
+                        lowlink_of[frame.v] = std::min(lowlink_of[frame.v], index_of[w]);
                     }
                 }
             }
@@ -98,10 +99,9 @@ struct TarjanState {
                 }
                 // Only keep cycles: size > 1, OR size 1 with a self-
                 // loop (i.e. the node has an edge to itself).
-                const bool has_self_loop =
-                    (scc.file_ids.size() == 1) &&
-                    (std::find(adj[frame.v].begin(), adj[frame.v].end(), frame.v) !=
-                     adj[frame.v].end());
+                const bool has_self_loop = (scc.file_ids.size() == 1) &&
+                                           (std::find(adj[frame.v].begin(), adj[frame.v].end(),
+                                                      frame.v) != adj[frame.v].end());
                 if (scc.file_ids.size() > 1 || has_self_loop) {
                     cycles.push_back(std::move(scc));
                 }
@@ -126,7 +126,7 @@ std::vector<DependencyCycle> detect_cycles(const CodeIndex& index)
     // Build the adjacency list from internal (resolved) edges only.
     for (const Dependency& dep : index.all_dependencies()) {
         if (dep.target_file_id == 0) {
-            continue;  // external, doesn't participate in cycles
+            continue; // external, doesn't participate in cycles
         }
         state.adj[dep.source_file_id].push_back(dep.target_file_id);
     }

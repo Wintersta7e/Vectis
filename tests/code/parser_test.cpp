@@ -1,5 +1,3 @@
-#include "code/parser.h"
-
 #include <algorithm>
 #include <cstddef>
 #include <string>
@@ -8,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "code/language.h"
+#include "code/parser.h"
 #include "code/symbol.h"
 
 namespace {
@@ -20,9 +19,8 @@ using vectis::code::TreeSitterParser;
 /// Helper: does the result contain a symbol with the given name + kind?
 bool has_symbol(const std::vector<Symbol>& symbols, std::string_view name, SymbolKind kind)
 {
-    return std::any_of(symbols.begin(), symbols.end(), [&](const Symbol& s) {
-        return s.name == name && s.kind == kind;
-    });
+    return std::any_of(symbols.begin(), symbols.end(),
+                       [&](const Symbol& s) { return s.name == name && s.kind == kind; });
 }
 
 /// Build a parser with the full builtin set registered once per test.
@@ -67,7 +65,7 @@ class Gamma:
 )";
     const auto result = parser->parse_file(Language::Python, source);
     EXPECT_TRUE(has_symbol(result.symbols, "alpha", SymbolKind::Function));
-    EXPECT_TRUE(has_symbol(result.symbols, "beta",  SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "beta", SymbolKind::Function));
     EXPECT_TRUE(has_symbol(result.symbols, "Gamma", SymbolKind::Class));
 }
 
@@ -93,11 +91,11 @@ interface User {
 type UserId = string;
 )";
     const auto result = parser->parse_file(Language::TypeScript, source);
-    EXPECT_TRUE(has_symbol(result.symbols, "doThing",     SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "doThing", SymbolKind::Function));
     EXPECT_TRUE(has_symbol(result.symbols, "UserService", SymbolKind::Class));
-    EXPECT_TRUE(has_symbol(result.symbols, "findById",    SymbolKind::Method));
-    EXPECT_TRUE(has_symbol(result.symbols, "User",        SymbolKind::Interface));
-    EXPECT_TRUE(has_symbol(result.symbols, "UserId",      SymbolKind::Type));
+    EXPECT_TRUE(has_symbol(result.symbols, "findById", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "User", SymbolKind::Interface));
+    EXPECT_TRUE(has_symbol(result.symbols, "UserId", SymbolKind::Type));
 }
 
 TEST(ParserTest, ExtractsCppClassesAndFunctions)
@@ -123,10 +121,10 @@ int free_function(int a, int b) {
 } // namespace demo
 )";
     const auto result = parser->parse_file(Language::Cpp, source);
-    EXPECT_TRUE(has_symbol(result.symbols, "Point",         SymbolKind::Struct));
-    EXPECT_TRUE(has_symbol(result.symbols, "Widget",        SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "Point", SymbolKind::Struct));
+    EXPECT_TRUE(has_symbol(result.symbols, "Widget", SymbolKind::Class));
     EXPECT_TRUE(has_symbol(result.symbols, "free_function", SymbolKind::Function));
-    EXPECT_TRUE(has_symbol(result.symbols, "demo",          SymbolKind::Namespace));
+    EXPECT_TRUE(has_symbol(result.symbols, "demo", SymbolKind::Namespace));
 }
 
 TEST(ParserTest, ExtractsRustFunctionsAndTraits)
@@ -151,9 +149,9 @@ pub enum Direction {
 }
 )";
     const auto result = parser->parse_file(Language::Rust, source);
-    EXPECT_TRUE(has_symbol(result.symbols, "hello",     SymbolKind::Function));
-    EXPECT_TRUE(has_symbol(result.symbols, "Config",    SymbolKind::Struct));
-    EXPECT_TRUE(has_symbol(result.symbols, "Greet",     SymbolKind::Interface));
+    EXPECT_TRUE(has_symbol(result.symbols, "hello", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "Config", SymbolKind::Struct));
+    EXPECT_TRUE(has_symbol(result.symbols, "Greet", SymbolKind::Interface));
     EXPECT_TRUE(has_symbol(result.symbols, "Direction", SymbolKind::Enum));
 }
 
@@ -193,7 +191,8 @@ int multiply(
     for (const auto& sym : result.symbols) {
         if (sym.name == "add") {
             EXPECT_EQ(sym.signature, "int add(int a, int b)");
-        } else if (sym.name == "multiply") {
+        }
+        else if (sym.name == "multiply") {
             // Whitespace-normalized, multi-line collapsed to one line.
             EXPECT_EQ(sym.signature, "int multiply( int lhs, int rhs) const noexcept");
         }
@@ -300,7 +299,7 @@ struct User {
     const auto result = parser->parse_file(Language::Cpp, source);
 
     bool saw_point = false;
-    bool saw_user  = false;
+    bool saw_user = false;
     for (const auto& sym : result.symbols) {
         if (sym.kind != SymbolKind::Struct) {
             continue;
@@ -362,8 +361,7 @@ enum Color { Red, Blue };
     const auto result = parser->parse_file(Language::Cpp, source);
     for (const auto& sym : result.symbols) {
         if (sym.kind == SymbolKind::Class || sym.kind == SymbolKind::Struct ||
-            sym.kind == SymbolKind::Enum  || sym.kind == SymbolKind::Namespace)
-        {
+            sym.kind == SymbolKind::Enum || sym.kind == SymbolKind::Namespace) {
             EXPECT_TRUE(sym.signature.empty())
                 << sym.name << " had unexpected signature: " << sym.signature;
         }
@@ -396,7 +394,7 @@ int foo() { return 0; }
     // skipped; only the two quoted includes should show up.
     ASSERT_EQ(imports.size(), 2U);
     EXPECT_EQ(imports[0].import_string, "core/log.h");
-    EXPECT_EQ(imports[0].kind,          "include");
+    EXPECT_EQ(imports[0].kind, "include");
     EXPECT_EQ(imports[1].import_string, "platform/file_io.h");
 }
 
@@ -420,9 +418,15 @@ from .helpers import greet
     bool saw_typing = false;
     bool saw_models_user = false;
     for (const auto& imp : imports) {
-        if (imp.import_string == "os") { saw_os = true; }
-        if (imp.import_string == "typing") { saw_typing = true; }
-        if (imp.import_string == "models.user") { saw_models_user = true; }
+        if (imp.import_string == "os") {
+            saw_os = true;
+        }
+        if (imp.import_string == "typing") {
+            saw_typing = true;
+        }
+        if (imp.import_string == "models.user") {
+            saw_models_user = true;
+        }
     }
     EXPECT_TRUE(saw_os);
     EXPECT_TRUE(saw_typing);
@@ -462,7 +466,9 @@ mod helpers;
     // scoped_identifier captures, plus helpers from the mod_item.
     bool saw_helpers = false;
     for (const auto& imp : imports) {
-        if (imp.import_string == "helpers") { saw_helpers = true; }
+        if (imp.import_string == "helpers") {
+            saw_helpers = true;
+        }
     }
     EXPECT_TRUE(saw_helpers);
 }
@@ -501,9 +507,15 @@ namespace SampleApp {}
     bool saw_collections = false;
     bool saw_models = false;
     for (const auto& imp : imports) {
-        if (imp.import_string == "System")                    { saw_system = true; }
-        if (imp.import_string == "System.Collections.Generic"){ saw_collections = true; }
-        if (imp.import_string == "SampleApp.Models")          { saw_models = true; }
+        if (imp.import_string == "System") {
+            saw_system = true;
+        }
+        if (imp.import_string == "System.Collections.Generic") {
+            saw_collections = true;
+        }
+        if (imp.import_string == "SampleApp.Models") {
+            saw_models = true;
+        }
         EXPECT_EQ(imp.kind, "use");
     }
     EXPECT_TRUE(saw_system);
@@ -530,9 +542,15 @@ import "os"
     bool saw_user = false;
     bool saw_os = false;
     for (const auto& imp : imports) {
-        if (imp.import_string == "fmt")                      { saw_fmt = true; }
-        if (imp.import_string == "example.com/sample/user") { saw_user = true; }
-        if (imp.import_string == "os")                       { saw_os = true; }
+        if (imp.import_string == "fmt") {
+            saw_fmt = true;
+        }
+        if (imp.import_string == "example.com/sample/user") {
+            saw_user = true;
+        }
+        if (imp.import_string == "os") {
+            saw_os = true;
+        }
     }
     EXPECT_TRUE(saw_fmt);
     EXPECT_TRUE(saw_user);
@@ -551,8 +569,12 @@ require_relative 'lib/greeter'
     bool saw_json = false;
     bool saw_lib = false;
     for (const auto& imp : imports) {
-        if (imp.import_string == "json")         { saw_json = true; }
-        if (imp.import_string == "lib/greeter")  { saw_lib = true; }
+        if (imp.import_string == "json") {
+            saw_json = true;
+        }
+        if (imp.import_string == "lib/greeter") {
+            saw_lib = true;
+        }
         EXPECT_EQ(imp.kind, "require");
     }
     EXPECT_TRUE(saw_json);
@@ -571,7 +593,7 @@ use App\Services\UserService;
     ASSERT_GE(imports.size(), 3U);
     bool saw_require = false;
     bool saw_include = false;
-    bool saw_use     = false;
+    bool saw_use = false;
     for (const auto& imp : imports) {
         if (imp.import_string == "src/UserService.php") {
             saw_require = true;
@@ -596,8 +618,7 @@ TEST(ParserTest, ExtractImports_EmptyForSql)
     auto parser = make_parser();
     // SQL import semantics (FK graph / sqlplus @includes) not yet spec'd —
     // the query stays empty and extraction yields no results.
-    const auto imports = parser->extract_imports(
-        Language::Sql, "CREATE TABLE users (id INT);");
+    const auto imports = parser->extract_imports(Language::Sql, "CREATE TABLE users (id INT);");
     EXPECT_TRUE(imports.empty());
 }
 
@@ -672,12 +693,15 @@ using Models = SampleApp.Models;
     const auto imports = parser->extract_imports(Language::CSharp, source);
     ASSERT_GE(imports.size(), 3U);
     bool saw_system = false;
-    bool saw_math   = false;
+    bool saw_math = false;
     bool saw_models = false;
     for (const auto& imp : imports) {
-        if (imp.import_string == "System")             saw_system = true;
-        if (imp.import_string == "System.Math")        saw_math   = true;
-        if (imp.import_string == "SampleApp.Models")   saw_models = true;
+        if (imp.import_string == "System")
+            saw_system = true;
+        if (imp.import_string == "System.Math")
+            saw_math = true;
+        if (imp.import_string == "SampleApp.Models")
+            saw_models = true;
     }
     EXPECT_TRUE(saw_system);
     EXPECT_TRUE(saw_math);
@@ -736,9 +760,9 @@ namespace MyApp.Services
 )";
     const auto result = parser->parse_file(Language::CSharp, source);
     EXPECT_TRUE(has_symbol(result.symbols, "IUserService", SymbolKind::Interface));
-    EXPECT_TRUE(has_symbol(result.symbols, "UserService",  SymbolKind::Class));
-    EXPECT_TRUE(has_symbol(result.symbols, "FindById",     SymbolKind::Method));
-    EXPECT_TRUE(has_symbol(result.symbols, "UserStatus",   SymbolKind::Enum));
+    EXPECT_TRUE(has_symbol(result.symbols, "UserService", SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "FindById", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "UserStatus", SymbolKind::Enum));
 }
 
 TEST(ParserTest, ExtractsGoFunctionsMethodsAndTypes)
@@ -766,8 +790,8 @@ func (u *User) Greet() string {
 )";
     const auto result = parser->parse_file(Language::Go, source);
     EXPECT_TRUE(has_symbol(result.symbols, "NewUser", SymbolKind::Function));
-    EXPECT_TRUE(has_symbol(result.symbols, "Greet",   SymbolKind::Method));
-    EXPECT_TRUE(has_symbol(result.symbols, "User",    SymbolKind::Type));
+    EXPECT_TRUE(has_symbol(result.symbols, "Greet", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "User", SymbolKind::Type));
     EXPECT_TRUE(has_symbol(result.symbols, "Service", SymbolKind::Type));
 }
 
@@ -788,10 +812,10 @@ module Greetings
 end
 )";
     const auto result = parser->parse_file(Language::Ruby, source);
-    EXPECT_TRUE(has_symbol(result.symbols, "Greetings",  SymbolKind::Namespace));
-    EXPECT_TRUE(has_symbol(result.symbols, "Greeter",    SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "Greetings", SymbolKind::Namespace));
+    EXPECT_TRUE(has_symbol(result.symbols, "Greeter", SymbolKind::Class));
     EXPECT_TRUE(has_symbol(result.symbols, "initialize", SymbolKind::Method));
-    EXPECT_TRUE(has_symbol(result.symbols, "hello",      SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "hello", SymbolKind::Method));
 }
 
 TEST(ParserTest, ExtractsPhpClassesAndFunctions)
@@ -815,10 +839,10 @@ function bootstrap(): void {
 }
 )";
     const auto result = parser->parse_file(Language::Php, source);
-    EXPECT_TRUE(has_symbol(result.symbols, "UserRepository",          SymbolKind::Interface));
-    EXPECT_TRUE(has_symbol(result.symbols, "EloquentUserRepository",  SymbolKind::Class));
-    EXPECT_TRUE(has_symbol(result.symbols, "findById",                SymbolKind::Method));
-    EXPECT_TRUE(has_symbol(result.symbols, "bootstrap",               SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "UserRepository", SymbolKind::Interface));
+    EXPECT_TRUE(has_symbol(result.symbols, "EloquentUserRepository", SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "findById", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "bootstrap", SymbolKind::Function));
 }
 
 TEST(ParserTest, ExtractsSqlTablesViewsAndFunctions)
@@ -860,14 +884,20 @@ var express = require('express');
     // is the resolver's job; the parser just needs to surface them.
     ASSERT_GE(imports.size(), 3U);
 
-    bool saw_view    = false;
-    bool saw_http    = false;
+    bool saw_view = false;
+    bool saw_http = false;
     bool saw_express = false;
     for (const auto& imp : imports) {
         EXPECT_EQ(imp.kind, "require");
-        if (imp.import_string == "./view")    { saw_view    = true; }
-        if (imp.import_string == "node:http") { saw_http    = true; }
-        if (imp.import_string == "express")   { saw_express = true; }
+        if (imp.import_string == "./view") {
+            saw_view = true;
+        }
+        if (imp.import_string == "node:http") {
+            saw_http = true;
+        }
+        if (imp.import_string == "express") {
+            saw_express = true;
+        }
     }
     EXPECT_TRUE(saw_view);
     EXPECT_TRUE(saw_http);

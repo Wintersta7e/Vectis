@@ -4,8 +4,7 @@
 
 namespace demo {
 
-Widget::Widget(std::string name, Rect bounds)
-    : m_name(std::move(name)), m_bounds(bounds) {}
+Widget::Widget(std::string name, Rect bounds) : m_name(std::move(name)), m_bounds(bounds) {}
 
 Widget::~Widget() = default;
 

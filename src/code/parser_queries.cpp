@@ -311,19 +311,32 @@ constexpr std::string_view k_namespaces_java = R"(
 std::string_view query_for(Language language) noexcept
 {
     switch (language) {
-        case Language::Python:     return k_query_python;
-        case Language::JavaScript: return k_query_javascript;
-        case Language::TypeScript: return k_query_typescript;
-        case Language::C:          return k_query_c;
-        case Language::Cpp:        return k_query_cpp;
-        case Language::Rust:       return k_query_rust;
-        case Language::Java:       return k_query_java;
-        case Language::CSharp:     return k_query_csharp;
-        case Language::Go:         return k_query_go;
-        case Language::Ruby:       return k_query_ruby;
-        case Language::Php:        return k_query_php;
-        case Language::Sql:        return k_query_sql;
-        case Language::Unknown:    return {};
+    case Language::Python:
+        return k_query_python;
+    case Language::JavaScript:
+        return k_query_javascript;
+    case Language::TypeScript:
+        return k_query_typescript;
+    case Language::C:
+        return k_query_c;
+    case Language::Cpp:
+        return k_query_cpp;
+    case Language::Rust:
+        return k_query_rust;
+    case Language::Java:
+        return k_query_java;
+    case Language::CSharp:
+        return k_query_csharp;
+    case Language::Go:
+        return k_query_go;
+    case Language::Ruby:
+        return k_query_ruby;
+    case Language::Php:
+        return k_query_php;
+    case Language::Sql:
+        return k_query_sql;
+    case Language::Unknown:
+        return {};
     }
     return {};
 }
@@ -331,21 +344,31 @@ std::string_view query_for(Language language) noexcept
 std::string_view import_query_for(Language language) noexcept
 {
     switch (language) {
-        case Language::Python:     return k_imports_python;
-        case Language::JavaScript:
-        case Language::TypeScript: return k_imports_ts_js;
-        case Language::C:
-        case Language::Cpp:        return k_imports_c_cpp;
-        case Language::Rust:       return k_imports_rust;
-        case Language::Java:       return k_imports_java;
-        case Language::CSharp:     return k_imports_csharp;
-        case Language::Go:         return k_imports_go;
-        case Language::Ruby:       return k_imports_ruby;
-        case Language::Php:        return k_imports_php;
-        // SQL import semantics (FK / table references / sqlplus @includes)
-        // haven't been spec'd yet; keep empty until we settle the design.
-        case Language::Sql:
-        case Language::Unknown:    return {};
+    case Language::Python:
+        return k_imports_python;
+    case Language::JavaScript:
+    case Language::TypeScript:
+        return k_imports_ts_js;
+    case Language::C:
+    case Language::Cpp:
+        return k_imports_c_cpp;
+    case Language::Rust:
+        return k_imports_rust;
+    case Language::Java:
+        return k_imports_java;
+    case Language::CSharp:
+        return k_imports_csharp;
+    case Language::Go:
+        return k_imports_go;
+    case Language::Ruby:
+        return k_imports_ruby;
+    case Language::Php:
+        return k_imports_php;
+    // SQL import semantics (FK / table references / sqlplus @includes)
+    // haven't been spec'd yet; keep empty until we settle the design.
+    case Language::Sql:
+    case Language::Unknown:
+        return {};
     }
     return {};
 }
@@ -353,13 +376,17 @@ std::string_view import_query_for(Language language) noexcept
 std::string_view namespace_query_for(Language language) noexcept
 {
     switch (language) {
-        case Language::CSharp: return k_namespaces_csharp;
-        case Language::Php:    return k_namespaces_php;
-        // Java uses the index only as a wildcard-import fallback
-        // (`import com.foo.*;`); specific imports still resolve through
-        // the path-based `match_java_dotted`.
-        case Language::Java:   return k_namespaces_java;
-        default:               return {};
+    case Language::CSharp:
+        return k_namespaces_csharp;
+    case Language::Php:
+        return k_namespaces_php;
+    // Java uses the index only as a wildcard-import fallback
+    // (`import com.foo.*;`); specific imports still resolve through
+    // the path-based `match_java_dotted`.
+    case Language::Java:
+        return k_namespaces_java;
+    default:
+        return {};
     }
 }
 

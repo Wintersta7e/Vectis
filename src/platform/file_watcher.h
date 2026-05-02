@@ -10,7 +10,8 @@
 namespace vectis::platform {
 
 /// Type of file-system change detected by the watcher.
-enum class FileChangeType : std::uint8_t {
+enum class FileChangeType : std::uint8_t
+{
     Created,
     Modified,
     Deleted,
@@ -23,23 +24,24 @@ enum class FileChangeType : std::uint8_t {
 ///
 /// The watcher is polled from the main thread each frame via `poll()`,
 /// which dispatches queued events through the user-provided callback.
-class FileWatcher {
+class FileWatcher
+{
 public:
-    using Callback = std::function<void(const std::filesystem::path& relative_path,
-                                        FileChangeType type)>;
+    using Callback =
+        std::function<void(const std::filesystem::path& relative_path, FileChangeType type)>;
 
     FileWatcher();
     ~FileWatcher();
 
-    FileWatcher(const FileWatcher&)            = delete;
+    FileWatcher(const FileWatcher&) = delete;
     FileWatcher& operator=(const FileWatcher&) = delete;
     FileWatcher(FileWatcher&&) noexcept;
     FileWatcher& operator=(FileWatcher&&) noexcept;
 
     /// Begin watching `root` recursively. Callback is invoked from
     /// `poll()` on the main thread with paths relative to `root`.
-    [[nodiscard]] vectis::core::Result<void>
-    watch(const std::filesystem::path& root, Callback on_change);
+    [[nodiscard]] vectis::core::Result<void> watch(const std::filesystem::path& root,
+                                                   Callback on_change);
 
     /// Stop watching and release all OS resources.
     void stop();

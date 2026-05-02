@@ -22,12 +22,13 @@ namespace vectis::core {
 ///   but reports a `Result` error on a present-but-malformed file.
 /// - API tokens are **never** read from the file. Modes read them from the
 ///   environment via `get_env()`.
-class ConfigManager {
+class ConfigManager
+{
 public:
     ConfigManager();
     ~ConfigManager();
 
-    ConfigManager(const ConfigManager&)            = delete;
+    ConfigManager(const ConfigManager&) = delete;
     ConfigManager& operator=(const ConfigManager&) = delete;
     ConfigManager(ConfigManager&&) noexcept;
     ConfigManager& operator=(ConfigManager&&) noexcept;
@@ -49,8 +50,8 @@ public:
     [[nodiscard]] std::int64_t get_int(std::string_view key, std::int64_t fallback) const;
     [[nodiscard]] double get_double(std::string_view key, double fallback) const;
     [[nodiscard]] bool get_bool(std::string_view key, bool fallback) const;
-    [[nodiscard]] std::vector<std::string> get_string_array(
-        std::string_view key, std::vector<std::string> fallback) const;
+    [[nodiscard]] std::vector<std::string>
+    get_string_array(std::string_view key, std::vector<std::string> fallback) const;
 
     /// Look up an environment variable. This is a thin pass-through to
     /// `vectis::platform::get_env` and is exposed here so modes have a

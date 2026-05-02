@@ -18,8 +18,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include "core/log.h"
-#include "core/result.h"
 #include "code/architecture_detector.h"
 #include "code/code_index.h"
 #include "code/dependency.h"
@@ -27,6 +25,8 @@
 #include "code/hotspot_detector.h"
 #include "code/language.h"
 #include "code/symbol.h"
+#include "core/log.h"
+#include "core/result.h"
 #include "platform/file_io.h"
 
 namespace vectis::code {
@@ -42,7 +42,7 @@ constexpr const char* k_vectis_version = "0.1.0";
 /// across the GCC versions Vectis targets.
 [[nodiscard]] std::string current_utc_rfc3339()
 {
-    const auto now  = std::chrono::system_clock::now();
+    const auto now = std::chrono::system_clock::now();
     const auto time = std::chrono::system_clock::to_time_t(now);
 
     std::tm utc{};
@@ -61,8 +61,7 @@ constexpr const char* k_vectis_version = "0.1.0";
 
 /// Sorted unique list of language display names for every file in
 /// the index. `Unknown` is excluded.
-[[nodiscard]] std::vector<std::string> distinct_language_names(
-    const std::vector<FileEntry>& files)
+[[nodiscard]] std::vector<std::string> distinct_language_names(const std::vector<FileEntry>& files)
 {
     std::set<std::string> names;
     for (const FileEntry& file : files) {
@@ -92,15 +91,13 @@ constexpr const char* k_vectis_version = "0.1.0";
 /// Serialize one file entry to JSON. `include_details` controls
 /// whether per-file `size`, `lines`, and `symbols` are written — the
 /// slim format skips them.
-[[nodiscard]] nlohmann::json file_to_json(
-    const FileEntry&     file,
-    const CodeIndex&     index,
-    bool                 include_details)
+[[nodiscard]] nlohmann::json file_to_json(const FileEntry& file, const CodeIndex& index,
+                                          bool include_details)
 {
     nlohmann::json node = {
         // `generic_string()` forces forward slashes on Windows so the
         // digest stays cross-platform portable.
-        {"path",     file.path_relative.generic_string()},
+        {"path", file.path_relative.generic_string()},
         {"language", std::string{language_name(file.language)}},
     };
 
@@ -108,7 +105,7 @@ constexpr const char* k_vectis_version = "0.1.0";
         return node;
     }
 
-    node["size"]  = file.size;
+    node["size"] = file.size;
     node["lines"] = file.line_count;
 
     nlohmann::json symbols_array = nlohmann::json::array();
@@ -141,8 +138,7 @@ constexpr const char* k_vectis_version = "0.1.0";
 /// re-walk the file list on every lookup.
 using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
-[[nodiscard]] FileIdToPath build_file_id_to_path(
-    const std::vector<FileEntry>& files)
+[[nodiscard]] FileIdToPath build_file_id_to_path(const std::vector<FileEntry>& files)
 {
     FileIdToPath out;
     out.reserve(files.size());
@@ -152,8 +148,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     return out;
 }
 
-[[nodiscard]] std::string path_for(
-    const FileIdToPath& lookup, std::int64_t file_id)
+[[nodiscard]] std::string path_for(const FileIdToPath& lookup, std::int64_t file_id)
 {
     const auto it = lookup.find(file_id);
     return it == lookup.end() ? std::string{} : it->second;
@@ -165,10 +160,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 ///   null with the raw import_string carried on the edge.
 /// - `cycles`: array of arrays of paths, one per detected cycle.
 /// - `stats`: totals for quick scanning.
-[[nodiscard]] nlohmann::json build_dependency_graph_json(
-    const CodeIndex&         index,
-    const FileIdToPath&      lookup,
-    bool                     include_externals)
+[[nodiscard]] nlohmann::json build_dependency_graph_json(const CodeIndex& index,
+                                                         const FileIdToPath& lookup,
+                                                         bool include_externals)
 {
     nlohmann::json graph;
     nlohmann::json edges_array = nlohmann::json::array();
@@ -183,17 +177,18 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                 continue;
             }
             nlohmann::json edge;
-            edge["source"]         = path_for(lookup, dep.source_file_id);
-            edge["target"]         = nullptr;
+            edge["source"] = path_for(lookup, dep.source_file_id);
+            edge["target"] = nullptr;
             edge["target_external"] = dep.import_string;
-            edge["kind"]           = dep.kind;
+            edge["kind"] = dep.kind;
             edges_array.push_back(std::move(edge));
-        } else {
+        }
+        else {
             ++internal_count;
             nlohmann::json edge;
             edge["source"] = path_for(lookup, dep.source_file_id);
             edge["target"] = path_for(lookup, dep.target_file_id);
-            edge["kind"]   = dep.kind;
+            edge["kind"] = dep.kind;
             edges_array.push_back(std::move(edge));
         }
     }
@@ -213,7 +208,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     }
 
     nlohmann::json stats;
-    stats["total_edges"]    = internal_count + external_count;
+    stats["total_edges"] = internal_count + external_count;
     stats["internal_edges"] = internal_count;
     stats["external_edges"] = external_count;
     graph["stats"] = std::move(stats);
@@ -224,9 +219,8 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 /// Read the first `max_lines` lines of `abs_path` (trimmed). Returns an
 /// empty string on any I/O error — hotspot excerpts are an
 /// "if-you-can" enrichment and should never fail a digest.
-[[nodiscard]] std::string
-read_hotspot_excerpt(const std::filesystem::path& abs_path,
-                     std::size_t                  max_lines)
+[[nodiscard]] std::string read_hotspot_excerpt(const std::filesystem::path& abs_path,
+                                               std::size_t max_lines)
 {
     std::error_code ec;
     if (!std::filesystem::exists(abs_path, ec) || ec) {
@@ -256,11 +250,9 @@ read_hotspot_excerpt(const std::filesystem::path& abs_path,
 /// Build an excerpt string for one hotspot. For function-level
 /// hotspots with a known symbol range, use the function body; for
 /// file-level hotspots use the first 30 lines of the file.
-[[nodiscard]] std::string
-build_hotspot_excerpt(const CodeIndex&             index,
-                      const Hotspot&               h,
-                      const std::filesystem::path& project_root,
-                      const FileIdToPath&          lookup)
+[[nodiscard]] std::string build_hotspot_excerpt(const CodeIndex& index, const Hotspot& h,
+                                                const std::filesystem::path& project_root,
+                                                const FileIdToPath& lookup)
 {
     const std::string rel_path_str = path_for(lookup, h.file_id);
     if (rel_path_str.empty() || project_root.empty()) {
@@ -272,22 +264,18 @@ build_hotspot_excerpt(const CodeIndex&             index,
     if (h.symbol_id != 0) {
         const auto symbols = index.symbols_in_file(h.file_id);
         for (const Symbol& s : symbols) {
-            if (s.id == h.symbol_id &&
-                s.line_start > 0 && s.line_end >= s.line_start)
-            {
+            if (s.id == h.symbol_id && s.line_start > 0 && s.line_end >= s.line_start) {
                 std::ifstream in(abs_path);
                 if (!in) {
                     break;
                 }
                 std::string line;
-                int         n = 1;
+                int n = 1;
                 std::string out;
                 // Cap body excerpt at 60 lines / 4 KiB so a pathological
                 // mega-function doesn't bloat the digest.
-                constexpr std::size_t k_max_bytes =
-                    static_cast<std::size_t>(4) * 1024;
-                const int             end_line   =
-                    std::min(s.line_end, s.line_start + 60);
+                constexpr std::size_t k_max_bytes = static_cast<std::size_t>(4) * 1024;
+                const int end_line = std::min(s.line_end, s.line_start + 60);
                 while (std::getline(in, line)) {
                     if (n >= s.line_start && n <= end_line) {
                         if (out.size() + line.size() + 1 > k_max_bytes) {
@@ -316,29 +304,24 @@ build_hotspot_excerpt(const CodeIndex&             index,
 /// the relatively expensive file-body excerpts are attached (full
 /// format only). `max_entries == 0` means "no cap"; slim callers pass
 /// a small N (typically 10) to cap total size.
-[[nodiscard]] nlohmann::json build_hotspots_json(
-    const CodeIndex&             index,
-    const FileIdToPath&          lookup,
-    const std::filesystem::path& project_root,
-    bool                         include_excerpts,
-    std::size_t                  max_entries = 0)
+[[nodiscard]] nlohmann::json build_hotspots_json(const CodeIndex& index, const FileIdToPath& lookup,
+                                                 const std::filesystem::path& project_root,
+                                                 bool include_excerpts, std::size_t max_entries = 0)
 {
     nlohmann::json arr = nlohmann::json::array();
     const std::vector<Hotspot> all = detect_hotspots(index);
-    const std::size_t limit =
-        (max_entries == 0) ? all.size() : std::min(all.size(), max_entries);
+    const std::size_t limit = (max_entries == 0) ? all.size() : std::min(all.size(), max_entries);
     for (std::size_t i = 0; i < limit; ++i) {
         const Hotspot& h = all[i];
         nlohmann::json node;
-        node["file"]     = path_for(lookup, h.file_id);
-        node["reason"]   = h.reason;
+        node["file"] = path_for(lookup, h.file_id);
+        node["reason"] = h.reason;
         node["severity"] = h.severity;
         if (h.symbol_id != 0) {
             node["symbol_id"] = h.symbol_id;
         }
         if (include_excerpts) {
-            std::string excerpt =
-                build_hotspot_excerpt(index, h, project_root, lookup);
+            std::string excerpt = build_hotspot_excerpt(index, h, project_root, lookup);
             if (!excerpt.empty()) {
                 node["excerpt"] = std::move(excerpt);
             }
@@ -348,46 +331,43 @@ build_hotspot_excerpt(const CodeIndex&             index,
     return arr;
 }
 
-[[nodiscard]] nlohmann::json build_architecture_json(
-    const CodeIndex&                   index,
-    const std::filesystem::path&       project_root)
+[[nodiscard]] nlohmann::json build_architecture_json(const CodeIndex& index,
+                                                     const std::filesystem::path& project_root)
 {
     const ArchitectureDescription desc = detect_architecture(index, project_root);
     nlohmann::json node;
-    node["label"]      = std::string{architecture_label_name(desc.label)};
-    node["reasoning"]  = desc.reasoning;
+    node["label"] = std::string{architecture_label_name(desc.label)};
+    node["reasoning"] = desc.reasoning;
     node["confidence"] = desc.confidence;
     return node;
 }
 
 /// Build the shared top-level JSON object that full and slim formats
 /// both start from.
-[[nodiscard]] nlohmann::json build_json(
-    const CodeIndex&      index,
-    const ExportOptions&  options,
-    bool                  include_file_details)
+[[nodiscard]] nlohmann::json build_json(const CodeIndex& index, const ExportOptions& options,
+                                        bool include_file_details)
 {
-    const std::vector<FileEntry> files  = index.snapshot_files();
-    const FileIdToPath           lookup = build_file_id_to_path(files);
+    const std::vector<FileEntry> files = index.snapshot_files();
+    const FileIdToPath lookup = build_file_id_to_path(files);
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
-    root["generated_at"]   = current_utc_rfc3339();
+    root["generated_at"] = current_utc_rfc3339();
 
     nlohmann::json project;
-    project["name"]             = effective_project_name(options);
-    project["root"]             = options.project_root.generic_string();
-    project["file_count"]       = files.size();
-    project["symbol_count"]     = index.symbol_count();
+    project["name"] = effective_project_name(options);
+    project["root"] = options.project_root.generic_string();
+    project["file_count"] = files.size();
+    project["symbol_count"] = index.symbol_count();
     project["dependency_count"] = index.dependency_count();
-    project["languages"]        = distinct_language_names(files);
-    root["project"]             = std::move(project);
+    project["languages"] = distinct_language_names(files);
+    root["project"] = std::move(project);
 
     // Walk every file once and reuse the per-file `symbols` array to
     // build the flat top-level `symbols[]`. Re-querying the index per
     // file would double the shared-mutex acquisitions and the symbol
     // copies for no extra information.
-    nlohmann::json files_array  = nlohmann::json::array();
+    nlohmann::json files_array = nlohmann::json::array();
     nlohmann::json symbols_flat = nlohmann::json::array();
     for (const FileEntry& file : files) {
         nlohmann::json file_node = file_to_json(file, index, include_file_details);
@@ -408,38 +388,34 @@ build_hotspot_excerpt(const CodeIndex&             index,
 
     // Dependency graph: full format includes externals + cycles;
     // slim includes only resolved edges (no cycles, no externals).
-    root["dependency_graph"] =
-        build_dependency_graph_json(index, lookup, include_file_details);
+    root["dependency_graph"] = build_dependency_graph_json(index, lookup, include_file_details);
 
     // Architecture is cheap (~150 bytes) and the single highest-value
     // orientation signal — worth emitting in both slim and full.
     root["architecture"] = build_architecture_json(index, options.project_root);
     if (include_file_details) {
-        root["hotspots"] = build_hotspots_json(
-            index, lookup, options.project_root,
-            /*include_excerpts=*/true,
-            /*max_entries=*/0);
+        root["hotspots"] = build_hotspots_json(index, lookup, options.project_root,
+                                               /*include_excerpts=*/true,
+                                               /*max_entries=*/0);
         root["symbols"] = std::move(symbols_flat);
-    } else {
+    }
+    else {
         constexpr std::size_t k_slim_hotspot_cap = 10;
-        root["hotspots"] = build_hotspots_json(
-            index, lookup, options.project_root,
-            /*include_excerpts=*/false,
-            /*max_entries=*/k_slim_hotspot_cap);
+        root["hotspots"] = build_hotspots_json(index, lookup, options.project_root,
+                                               /*include_excerpts=*/false,
+                                               /*max_entries=*/k_slim_hotspot_cap);
     }
 
     return root;
 }
 
 /// Build the Markdown digest as a single string.
-[[nodiscard]] std::string build_markdown(
-    const CodeIndex&      index,
-    const ExportOptions&  options)
+[[nodiscard]] std::string build_markdown(const CodeIndex& index, const ExportOptions& options)
 {
-    const std::vector<FileEntry>   files     = index.snapshot_files();
-    const std::vector<std::string> langs     = distinct_language_names(files);
-    const std::string              proj_name = effective_project_name(options);
-    const std::string              timestamp = current_utc_rfc3339();
+    const std::vector<FileEntry> files = index.snapshot_files();
+    const std::vector<std::string> langs = distinct_language_names(files);
+    const std::string proj_name = effective_project_name(options);
+    const std::string timestamp = current_utc_rfc3339();
 
     std::ostringstream out;
     out << "# " << proj_name << "\n\n";
@@ -462,8 +438,8 @@ build_hotspot_excerpt(const CodeIndex&             index,
     // --- Architecture ---------------------------------------------
     const ArchitectureDescription arch = detect_architecture(index, options.project_root);
     out << "## Architecture\n\n";
-    out << "**" << architecture_label_name(arch.label) << "** "
-        << "(confidence " << static_cast<int>(arch.confidence) << "/100)  \n";
+    out << "**" << architecture_label_name(arch.label) << "** " << "(confidence "
+        << static_cast<int>(arch.confidence) << "/100)  \n";
     if (!arch.reasoning.empty()) {
         out << "_" << arch.reasoning << "_\n";
     }
@@ -474,14 +450,14 @@ build_hotspot_excerpt(const CodeIndex&             index,
     out << "## Hotspots\n\n";
     if (hotspots.empty()) {
         out << "_(none — nothing crossed a complexity, size, or fan-out threshold)_\n\n";
-    } else {
+    }
+    else {
         out << "| Severity | File | Reason |\n";
         out << "|---|---|---|\n";
         const FileIdToPath lookup = build_file_id_to_path(files);
         for (const auto& h : hotspots) {
-            out << "| " << h.severity
-                << " | `" << path_for(lookup, h.file_id) << "`"
-                << " | " << h.reason << " |\n";
+            out << "| " << h.severity << " | `" << path_for(lookup, h.file_id) << "`" << " | "
+                << h.reason << " |\n";
         }
         out << "\n";
         // Per-hotspot body excerpts below the table, fenced and
@@ -489,21 +465,21 @@ build_hotspot_excerpt(const CodeIndex&             index,
         // understand WHY the file is a hotspot without chasing the
         // path manually.
         for (const auto& h : hotspots) {
-            const std::string excerpt = build_hotspot_excerpt(
-                index, h, options.project_root, lookup);
+            const std::string excerpt =
+                build_hotspot_excerpt(index, h, options.project_root, lookup);
             if (excerpt.empty()) {
                 continue;
             }
             const std::string rel_path = path_for(lookup, h.file_id);
-            std::string_view  lang_hint;
+            std::string_view lang_hint;
             for (const FileEntry& f : files) {
                 if (f.id == h.file_id) {
                     lang_hint = language_name(f.language);
                     break;
                 }
             }
-            out << "### `" << rel_path << "` (severity " << h.severity
-                << ")\n\n```" << lang_hint << "\n"
+            out << "### `" << rel_path << "` (severity " << h.severity << ")\n\n```" << lang_hint
+                << "\n"
                 << excerpt << "```\n\n";
         }
     }
@@ -515,11 +491,16 @@ build_hotspot_excerpt(const CodeIndex&             index,
         std::size_t internal_count = 0;
         std::size_t external_count = 0;
         for (const auto& d : all_deps) {
-            if (d.target_file_id == 0) { ++external_count; } else { ++internal_count; }
+            if (d.target_file_id == 0) {
+                ++external_count;
+            }
+            else {
+                ++internal_count;
+            }
         }
         const auto cycles = detect_cycles(index);
-        out << "- Edges: " << all_deps.size()
-            << " (" << internal_count << " internal, " << external_count << " external)\n";
+        out << "- Edges: " << all_deps.size() << " (" << internal_count << " internal, "
+            << external_count << " external)\n";
         out << "- Cycles: " << cycles.size() << "\n";
         if (!cycles.empty()) {
             const FileIdToPath lookup = build_file_id_to_path(files);
@@ -546,8 +527,8 @@ build_hotspot_excerpt(const CodeIndex&             index,
     }
 
     for (const FileEntry& file : files) {
-        out << "### " << file.path_relative.generic_string()
-            << "  _(" << language_name(file.language) << ")_\n\n";
+        out << "### " << file.path_relative.generic_string() << "  _("
+            << language_name(file.language) << ")_\n\n";
 
         const std::vector<Symbol> symbols = index.symbols_in_file(file.id);
         if (symbols.empty()) {
@@ -560,8 +541,8 @@ build_hotspot_excerpt(const CodeIndex&             index,
             // or reader than the bare name. Everything else uses the
             // plain name.
             const std::string& label = sym.signature.empty() ? sym.name : sym.signature;
-            out << "- `" << label << "` ("
-                << symbol_kind_name(sym.kind) << ") — line " << sym.line_start << "\n";
+            out << "- `" << label << "` (" << symbol_kind_name(sym.kind) << ") — line "
+                << sym.line_start << "\n";
 
             // Indented sub-bullet for enum values / struct fields,
             // comma-separated and inline-code-formatted.
@@ -584,13 +565,16 @@ build_hotspot_excerpt(const CodeIndex&             index,
 
 } // namespace
 
-std::filesystem::path default_output_path(
-    const std::filesystem::path& project_root, DigestFormat format)
+std::filesystem::path default_output_path(const std::filesystem::path& project_root,
+                                          DigestFormat format)
 {
     switch (format) {
-        case DigestFormat::Json:     return project_root / "vectis-digest.json";
-        case DigestFormat::Markdown: return project_root / "vectis-digest.md";
-        case DigestFormat::SlimJson: return project_root / "vectis-digest-slim.json";
+    case DigestFormat::Json:
+        return project_root / "vectis-digest.json";
+    case DigestFormat::Markdown:
+        return project_root / "vectis-digest.md";
+    case DigestFormat::SlimJson:
+        return project_root / "vectis-digest-slim.json";
     }
     return project_root / "vectis-digest.json";
 }
@@ -598,33 +582,31 @@ std::filesystem::path default_output_path(
 std::string build_digest_string(const CodeIndex& index, const ExportOptions& options)
 {
     switch (options.format) {
-        case DigestFormat::Json: {
-            const nlohmann::json root = build_json(index, options, /*include_file_details=*/true);
-            return root.dump(2);
-        }
-        case DigestFormat::SlimJson: {
-            const nlohmann::json root = build_json(index, options, /*include_file_details=*/false);
-            return root.dump(2);
-        }
-        case DigestFormat::Markdown: {
-            return build_markdown(index, options);
-        }
+    case DigestFormat::Json: {
+        const nlohmann::json root = build_json(index, options, /*include_file_details=*/true);
+        return root.dump(2);
+    }
+    case DigestFormat::SlimJson: {
+        const nlohmann::json root = build_json(index, options, /*include_file_details=*/false);
+        return root.dump(2);
+    }
+    case DigestFormat::Markdown: {
+        return build_markdown(index, options);
+    }
     }
     return {};
 }
 
-vectis::core::Result<std::filesystem::path>
-export_digest(const CodeIndex& index, const ExportOptions& options)
+vectis::core::Result<std::filesystem::path> export_digest(const CodeIndex& index,
+                                                          const ExportOptions& options)
 {
     if (options.project_root.empty()) {
-        return vectis::core::make_error(
-            vectis::core::ErrorKind::ConfigError,
-            "export_digest called with empty project_root",
-            "digest_exporter");
+        return vectis::core::make_error(vectis::core::ErrorKind::ConfigError,
+                                        "export_digest called with empty project_root",
+                                        "digest_exporter");
     }
 
-    std::filesystem::path out_path =
-        default_output_path(options.project_root, options.format);
+    std::filesystem::path out_path = default_output_path(options.project_root, options.format);
 
     std::error_code ec;
     if (std::filesystem::exists(out_path, ec)) {
@@ -634,22 +616,20 @@ export_digest(const CodeIndex& index, const ExportOptions& options)
     std::string content;
     try {
         content = build_digest_string(index, options);
-    } catch (const std::exception& e) {
-        return vectis::core::make_error(
-            vectis::core::ErrorKind::ParseError,
-            std::string{"failed to serialize digest: "} + e.what(),
-            out_path.string());
+    }
+    catch (const std::exception& e) {
+        return vectis::core::make_error(vectis::core::ErrorKind::ParseError,
+                                        std::string{"failed to serialize digest: "} + e.what(),
+                                        out_path.string());
     }
 
     if (auto r = vectis::platform::write_file(out_path, content); !r) {
-        return vectis::core::make_error(
-            vectis::core::ErrorKind::IoError,
-            std::string{"failed to write digest: "} + r.error().message,
-            out_path.string());
+        return vectis::core::make_error(vectis::core::ErrorKind::IoError,
+                                        std::string{"failed to write digest: "} + r.error().message,
+                                        out_path.string());
     }
 
-    VECTIS_LOG_INFO(
-        "Digest exported: {} ({} bytes)", out_path.string(), content.size());
+    VECTIS_LOG_INFO("Digest exported: {} ({} bytes)", out_path.string(), content.size());
     return out_path;
 }
 

@@ -12,7 +12,8 @@ class CodeIndex;
 /// circular dependency. Files are listed in the order they appear in
 /// the SCC's discovery stack, which is consistent but not otherwise
 /// meaningful.
-struct DependencyCycle {
+struct DependencyCycle
+{
     std::vector<std::int64_t> file_ids;
 };
 
@@ -25,7 +26,6 @@ struct DependencyCycle {
 /// Thread-safety: snapshots the index once at the top of the call,
 /// so concurrent mutation won't corrupt the traversal, but may cause
 /// the returned cycles to reflect a slightly stale state.
-[[nodiscard]] std::vector<DependencyCycle>
-detect_cycles(const CodeIndex& index);
+[[nodiscard]] std::vector<DependencyCycle> detect_cycles(const CodeIndex& index);
 
 } // namespace vectis::code

@@ -19,7 +19,8 @@ class TaskQueue; // forward declaration — `TaskQueue::submit` mints tokens.
 ///
 /// Tokens are cheaply copyable (they hold a shared_ptr); copies of the
 /// same token observe the same stop flag.
-class CancellationToken {
+class CancellationToken
+{
 public:
     /// Default-construct a never-cancelled token. Useful in tests and
     /// in call sites that want to invoke a cancellation-aware function
@@ -33,15 +34,11 @@ public:
     }
 
     /// Flip the stop flag. Idempotent; safe from any thread.
-    void request_stop() noexcept
-    {
-        m_flag->store(true, std::memory_order_release);
-    }
+    void request_stop() noexcept { m_flag->store(true, std::memory_order_release); }
 
 private:
     friend class TaskQueue;
-    explicit CancellationToken(std::shared_ptr<std::atomic<bool>> flag)
-        : m_flag(std::move(flag)) {}
+    explicit CancellationToken(std::shared_ptr<std::atomic<bool>> flag) : m_flag(std::move(flag)) {}
 
     std::shared_ptr<std::atomic<bool>> m_flag;
 };
@@ -59,7 +56,8 @@ private:
 ///   thread (including from inside a task callback, though that's
 ///   rarely useful).
 /// - The destructor must NOT be called from inside a task.
-class TaskQueue {
+class TaskQueue
+{
 public:
     using Task = std::function<void(const CancellationToken&)>;
 
@@ -67,10 +65,10 @@ public:
     explicit TaskQueue(std::size_t worker_count = 1);
     ~TaskQueue();
 
-    TaskQueue(const TaskQueue&)            = delete;
+    TaskQueue(const TaskQueue&) = delete;
     TaskQueue& operator=(const TaskQueue&) = delete;
-    TaskQueue(TaskQueue&&)                 = delete;
-    TaskQueue& operator=(TaskQueue&&)      = delete;
+    TaskQueue(TaskQueue&&) = delete;
+    TaskQueue& operator=(TaskQueue&&) = delete;
 
     /// Push a task onto the queue. The returned token can be used by
     /// the caller to cooperatively cancel this specific task.

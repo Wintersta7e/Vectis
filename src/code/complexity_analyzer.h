@@ -17,7 +17,6 @@ namespace vectis::code {
 ///
 /// Returns 1 for unknown / unsupported languages and for null nodes.
 /// Never throws, never allocates.
-[[nodiscard]] int
-compute_cyclomatic_complexity(TSNode function_node, Language language) noexcept;
+[[nodiscard]] int compute_cyclomatic_complexity(TSNode function_node, Language language) noexcept;
 
 } // namespace vectis::code

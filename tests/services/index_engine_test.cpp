@@ -1,5 +1,3 @@
-#include "services/index_engine/index_engine.h"
-
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -8,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "code/symbol.h"
+#include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 
 namespace {
@@ -16,7 +15,8 @@ namespace fs = std::filesystem;
 using vectis::services::IndexEngine;
 using vectis::services::StorageEngine;
 
-class IndexEngineTest : public ::testing::Test {
+class IndexEngineTest : public ::testing::Test
+{
 protected:
     void SetUp() override
     {
@@ -37,17 +37,17 @@ protected:
     }
 
     StorageEngine m_storage;
-    IndexEngine   m_engine;
-    fs::path      m_tmp_dir;
+    IndexEngine m_engine;
+    fs::path m_tmp_dir;
 };
 
 TEST_F(IndexEngineTest, IndexFileAndSearch)
 {
     m_engine.index_file(1, "src/main.cpp",
-        "int main(int argc, char** argv) {\n"
-        "    auto config = load_config();\n"
-        "    return run(config);\n"
-        "}\n");
+                        "int main(int argc, char** argv) {\n"
+                        "    auto config = load_config();\n"
+                        "    return run(config);\n"
+                        "}\n");
 
     auto results = m_engine.search("config");
     ASSERT_FALSE(results.empty());
@@ -60,10 +60,10 @@ TEST_F(IndexEngineTest, SearchFiles_FiltersToFileSource)
     m_engine.index_file(1, "src/main.cpp", "int main() { return 0; }");
 
     vectis::code::Symbol sym;
-    sym.id        = 100;
-    sym.file_id   = 1;
-    sym.name      = "main";
-    sym.kind      = vectis::code::SymbolKind::Function;
+    sym.id = 100;
+    sym.file_id = 1;
+    sym.name = "main";
+    sym.kind = vectis::code::SymbolKind::Function;
     sym.signature = "int main()";
     m_engine.index_symbols(1, {sym});
 
@@ -96,10 +96,10 @@ TEST_F(IndexEngineTest, RemoveFile_ExcludesFromResults)
 TEST_F(IndexEngineTest, IndexSymbols_SearchableByName)
 {
     vectis::code::Symbol sym;
-    sym.id        = 42;
-    sym.file_id   = 1;
-    sym.name      = "calculate_total";
-    sym.kind      = vectis::code::SymbolKind::Function;
+    sym.id = 42;
+    sym.file_id = 1;
+    sym.name = "calculate_total";
+    sym.kind = vectis::code::SymbolKind::Function;
     sym.signature = "double calculate_total(const Order& order)";
     m_engine.index_symbols(1, {sym});
 
@@ -111,7 +111,7 @@ TEST_F(IndexEngineTest, IndexSymbols_SearchableByName)
 TEST_F(IndexEngineTest, PorterStemming)
 {
     m_engine.index_file(1, "src/runner.cpp",
-        "void running() { /* this function handles running tasks */ }");
+                        "void running() { /* this function handles running tasks */ }");
 
     // "run" should match "running" via porter stemming.
     auto results = m_engine.search_files("run");

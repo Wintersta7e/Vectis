@@ -1,5 +1,3 @@
-#include "code/digest_exporter.h"
-
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -12,6 +10,7 @@
 
 #include "code/code_index.h"
 #include "code/dependency.h"
+#include "code/digest_exporter.h"
 #include "code/language.h"
 #include "code/symbol.h"
 
@@ -22,8 +21,8 @@ using vectis::code::CodeIndex;
 using vectis::code::default_output_path;
 using vectis::code::Dependency;
 using vectis::code::DigestFormat;
-using vectis::code::ExportOptions;
 using vectis::code::export_digest;
+using vectis::code::ExportOptions;
 using vectis::code::FileEntry;
 using vectis::code::Language;
 using vectis::code::Symbol;
@@ -35,25 +34,34 @@ void populate_synthetic_index(CodeIndex& index)
 {
     FileEntry f1;
     f1.path_relative = "src/core/app.cpp";
-    f1.language      = Language::Cpp;
-    f1.size          = 15234;
-    f1.line_count    = 425;
+    f1.language = Language::Cpp;
+    f1.size = 15234;
+    f1.line_count = 425;
     const std::int64_t f1_id = index.add_file(std::move(f1));
 
     FileEntry f2;
     f2.path_relative = "src/scan/scanner.cpp";
-    f2.language      = Language::Cpp;
-    f2.size          = 9123;
-    f2.line_count    = 280;
+    f2.language = Language::Cpp;
+    f2.size = 9123;
+    f2.line_count = 280;
     const std::int64_t f2_id = index.add_file(std::move(f2));
 
     const std::array<Symbol, 6> batch = {
-        Symbol{0, f1_id, "App",        SymbolKind::Class,  13,  460, 0, "",                       {}},
-        Symbol{0, f1_id, "initialize", SymbolKind::Method, 109, 256, 0, "bool App::initialize()", {}},
-        Symbol{0, f1_id, "run",        SymbolKind::Method, 258, 300, 0, "int App::run()",         {}},
-        Symbol{0, f2_id, "Scanner",    SymbolKind::Class,  52,  280, 0, "",                       {}},
-        Symbol{0, f1_id, "ErrorKind",  SymbolKind::Enum,   14,  22,  0, "",                       {"IoError", "ParseError", "NetworkError"}},
-        Symbol{0, f2_id, "Point",      SymbolKind::Struct, 30,  34,  0, "",                       {"x", "y"}},
+        Symbol{0, f1_id, "App", SymbolKind::Class, 13, 460, 0, "", {}},
+        Symbol{
+            0, f1_id, "initialize", SymbolKind::Method, 109, 256, 0, "bool App::initialize()", {}},
+        Symbol{0, f1_id, "run", SymbolKind::Method, 258, 300, 0, "int App::run()", {}},
+        Symbol{0, f2_id, "Scanner", SymbolKind::Class, 52, 280, 0, "", {}},
+        Symbol{0,
+               f1_id,
+               "ErrorKind",
+               SymbolKind::Enum,
+               14,
+               22,
+               0,
+               "",
+               {"IoError", "ParseError", "NetworkError"}},
+        Symbol{0, f2_id, "Point", SymbolKind::Struct, 30, 34, 0, "", {"x", "y"}},
     };
     index.add_symbols(batch);
 }
@@ -61,7 +69,7 @@ void populate_synthetic_index(CodeIndex& index)
 ExportOptions make_options(DigestFormat format, const std::filesystem::path& root)
 {
     ExportOptions options;
-    options.format       = format;
+    options.format = format;
     options.project_root = root;
     options.project_name = "vectis-test";
     return options;
@@ -100,7 +108,7 @@ TEST(DigestExporterTest, Json_WellFormed)
 
     // Find the initialize method and check its signature made it through.
     bool saw_initialize_signature = false;
-    bool saw_errorkind_members    = false;
+    bool saw_errorkind_members = false;
     for (const auto& sym : symbols) {
         if (sym["name"] == "initialize") {
             ASSERT_TRUE(sym.contains("signature"));
@@ -174,10 +182,10 @@ TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
     CodeIndex index;
     populate_synthetic_index(index);
 
-    const std::string full = build_digest_string(
-        index, make_options(DigestFormat::Json,     "/fake/project"));
-    const std::string slim = build_digest_string(
-        index, make_options(DigestFormat::SlimJson, "/fake/project"));
+    const std::string full =
+        build_digest_string(index, make_options(DigestFormat::Json, "/fake/project"));
+    const std::string slim =
+        build_digest_string(index, make_options(DigestFormat::SlimJson, "/fake/project"));
 
     // The tiny 4-symbol fixture doesn't give slim format much room to
     // shine, but it should still be at least 30% smaller than full.
@@ -193,16 +201,16 @@ TEST(DigestExporterTest, Markdown_ContainsHeadingsAndSymbolLines)
     const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
     const std::string content = build_digest_string(index, options);
 
-    EXPECT_NE(content.find("# vectis-test"),                          std::string::npos);
-    EXPECT_NE(content.find("## Overview"),                            std::string::npos);
-    EXPECT_NE(content.find("## Files"),                               std::string::npos);
-    EXPECT_NE(content.find("- Files: 2"),                             std::string::npos);
-    EXPECT_NE(content.find("- Symbols: 6"),                           std::string::npos);
-    EXPECT_NE(content.find("### src/core/app.cpp"),                   std::string::npos);
-    EXPECT_NE(content.find("### src/scan/scanner.cpp"),         std::string::npos);
-    EXPECT_NE(content.find("`App`"),                                  std::string::npos);
-    EXPECT_NE(content.find("`Scanner`"),                              std::string::npos);
-    EXPECT_NE(content.find("line 13"),                                std::string::npos);
+    EXPECT_NE(content.find("# vectis-test"), std::string::npos);
+    EXPECT_NE(content.find("## Overview"), std::string::npos);
+    EXPECT_NE(content.find("## Files"), std::string::npos);
+    EXPECT_NE(content.find("- Files: 2"), std::string::npos);
+    EXPECT_NE(content.find("- Symbols: 6"), std::string::npos);
+    EXPECT_NE(content.find("### src/core/app.cpp"), std::string::npos);
+    EXPECT_NE(content.find("### src/scan/scanner.cpp"), std::string::npos);
+    EXPECT_NE(content.find("`App`"), std::string::npos);
+    EXPECT_NE(content.find("`Scanner`"), std::string::npos);
+    EXPECT_NE(content.find("line 13"), std::string::npos);
 }
 
 TEST(DigestExporterTest, Markdown_RendersSignaturesAndMembers)
@@ -216,19 +224,19 @@ TEST(DigestExporterTest, Markdown_RendersSignaturesAndMembers)
     // Methods with signatures should be rendered with the full
     // signature as the bullet's code span instead of just the name.
     EXPECT_NE(content.find("`bool App::initialize()` (method)"), std::string::npos);
-    EXPECT_NE(content.find("`int App::run()` (method)"),         std::string::npos);
+    EXPECT_NE(content.find("`int App::run()` (method)"), std::string::npos);
 
     // Classes without signatures fall back to the bare name.
-    EXPECT_NE(content.find("`App` (class)"),     std::string::npos);
+    EXPECT_NE(content.find("`App` (class)"), std::string::npos);
     EXPECT_NE(content.find("`Scanner` (class)"), std::string::npos);
 
     // Enum values rendered as an indented comma-separated sub-bullet.
-    EXPECT_NE(content.find("`ErrorKind` (enum)"),                            std::string::npos);
-    EXPECT_NE(content.find("`IoError`, `ParseError`, `NetworkError`"),       std::string::npos);
+    EXPECT_NE(content.find("`ErrorKind` (enum)"), std::string::npos);
+    EXPECT_NE(content.find("`IoError`, `ParseError`, `NetworkError`"), std::string::npos);
 
     // Struct fields rendered similarly.
     EXPECT_NE(content.find("`Point` (struct)"), std::string::npos);
-    EXPECT_NE(content.find("`x`, `y`"),         std::string::npos);
+    EXPECT_NE(content.find("`x`, `y`"), std::string::npos);
 }
 
 TEST(DigestExporterTest, Export_WritesFileAtDefaultLocation)
@@ -238,8 +246,7 @@ TEST(DigestExporterTest, Export_WritesFileAtDefaultLocation)
 
     // Use a real temp directory as the project root so the write path
     // is actually exercised.
-    const auto root = std::filesystem::temp_directory_path() /
-                      "vectis_digest_export_test";
+    const auto root = std::filesystem::temp_directory_path() / "vectis_digest_export_test";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
 
@@ -270,19 +277,15 @@ TEST(DigestExporterTest, Export_ForwardSlashesInPaths)
     // verify no backslashes creep in on any platform.
     const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
     const std::string content = build_digest_string(index, options);
-    EXPECT_EQ(content.find('\\'), std::string::npos)
-        << "backslashes leaked into markdown output";
+    EXPECT_EQ(content.find('\\'), std::string::npos) << "backslashes leaked into markdown output";
 }
 
 TEST(DigestExporterTest, DefaultOutputPath_ForEachFormat)
 {
     const std::filesystem::path root = "/tmp/vectis-project-x";
-    EXPECT_EQ(default_output_path(root, DigestFormat::Json),
-              root / "vectis-digest.json");
-    EXPECT_EQ(default_output_path(root, DigestFormat::Markdown),
-              root / "vectis-digest.md");
-    EXPECT_EQ(default_output_path(root, DigestFormat::SlimJson),
-              root / "vectis-digest-slim.json");
+    EXPECT_EQ(default_output_path(root, DigestFormat::Json), root / "vectis-digest.json");
+    EXPECT_EQ(default_output_path(root, DigestFormat::Markdown), root / "vectis-digest.md");
+    EXPECT_EQ(default_output_path(root, DigestFormat::SlimJson), root / "vectis-digest-slim.json");
 }
 
 TEST(DigestExporterTest, Json_ContainsDependencyGraphAndHotspots)
@@ -292,10 +295,10 @@ TEST(DigestExporterTest, Json_ContainsDependencyGraphAndHotspots)
 
     // Register a dependency so the graph isn't empty.
     Dependency dep;
-    dep.source_file_id = 1;  // app.cpp
-    dep.target_file_id = 2;  // scanner.cpp
-    dep.import_string  = "scanner.h";
-    dep.kind           = "include";
+    dep.source_file_id = 1; // app.cpp
+    dep.target_file_id = 2; // scanner.cpp
+    dep.import_string = "scanner.h";
+    dep.kind = "include";
     index.add_dependency(std::move(dep));
 
     const ExportOptions options = make_options(DigestFormat::Json, "/fake/project");
@@ -345,7 +348,7 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
     EXPECT_TRUE(parsed["hotspots"].is_array());
     EXPECT_LE(parsed["hotspots"].size(), 10U); // capped
     for (const auto& h : parsed["hotspots"]) {
-        EXPECT_FALSE(h.contains("excerpt"));    // excerpts are full-format-only
+        EXPECT_FALSE(h.contains("excerpt")); // excerpts are full-format-only
     }
 
     // Symbols stay full-format-only to keep slim token-cheap.
@@ -362,8 +365,8 @@ TEST(DigestExporterTest, Markdown_ContainsDependencyGraphAndHotspotSections)
     const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
     const std::string content = build_digest_string(index, options);
 
-    EXPECT_NE(content.find("## Architecture"),   std::string::npos);
-    EXPECT_NE(content.find("## Hotspots"),       std::string::npos);
+    EXPECT_NE(content.find("## Architecture"), std::string::npos);
+    EXPECT_NE(content.find("## Hotspots"), std::string::npos);
     EXPECT_NE(content.find("## Dependency Graph"), std::string::npos);
 }
 

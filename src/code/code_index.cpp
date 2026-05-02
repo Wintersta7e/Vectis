@@ -7,9 +7,9 @@
 #include <mutex>
 #include <shared_mutex>
 #include <span>
-#include <unordered_set>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace vectis::code {
@@ -24,8 +24,7 @@ namespace {
     std::string out;
     out.reserve(input.size());
     for (const char ch : input) {
-        out.push_back(static_cast<char>(
-            std::tolower(static_cast<unsigned char>(ch))));
+        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
     }
     return out;
 }
@@ -35,19 +34,32 @@ namespace {
 [[nodiscard]] constexpr std::uint32_t language_bit(Language language) noexcept
 {
     switch (language) {
-        case Language::Python:     return 1U << 0U;
-        case Language::JavaScript: return 1U << 1U;
-        case Language::TypeScript: return 1U << 2U;
-        case Language::C:          return 1U << 3U;
-        case Language::Cpp:        return 1U << 4U;
-        case Language::Rust:       return 1U << 5U;
-        case Language::Java:       return 1U << 6U;
-        case Language::CSharp:     return 1U << 7U;
-        case Language::Go:         return 1U << 8U;
-        case Language::Ruby:       return 1U << 9U;
-        case Language::Php:        return 1U << 10U;
-        case Language::Sql:        return 1U << 11U;
-        case Language::Unknown:    return 0U;
+    case Language::Python:
+        return 1U << 0U;
+    case Language::JavaScript:
+        return 1U << 1U;
+    case Language::TypeScript:
+        return 1U << 2U;
+    case Language::C:
+        return 1U << 3U;
+    case Language::Cpp:
+        return 1U << 4U;
+    case Language::Rust:
+        return 1U << 5U;
+    case Language::Java:
+        return 1U << 6U;
+    case Language::CSharp:
+        return 1U << 7U;
+    case Language::Go:
+        return 1U << 8U;
+    case Language::Ruby:
+        return 1U << 9U;
+    case Language::Php:
+        return 1U << 10U;
+    case Language::Sql:
+        return 1U << 11U;
+    case Language::Unknown:
+        return 0U;
     }
     return 0U;
 }
@@ -85,7 +97,7 @@ void CodeIndex::add_symbols(std::span<const Symbol> symbols)
     m_symbols.reserve(m_symbols.size() + symbols.size());
     for (const Symbol& incoming : symbols) {
         Symbol copy = incoming;
-        copy.id     = m_next_symbol_id++;
+        copy.id = m_next_symbol_id++;
 
         const std::size_t symbol_index = m_symbols.size();
         m_by_file[copy.file_id].push_back(symbol_index);
@@ -162,9 +174,8 @@ void CodeIndex::remove_file(std::int64_t file_id)
     m_symbol_count.store(sc >= symbols_removed ? sc - symbols_removed : 0,
                          std::memory_order_release);
     const auto dc = m_dependency_count.load(std::memory_order_relaxed);
-    m_dependency_count.store(
-        dc >= removed_dep_indices.size() ? dc - removed_dep_indices.size() : 0,
-        std::memory_order_release);
+    m_dependency_count.store(dc >= removed_dep_indices.size() ? dc - removed_dep_indices.size() : 0,
+                             std::memory_order_release);
 
     // Recompute language bitmask from live files.
     std::uint32_t new_bits = 0;
@@ -191,7 +202,7 @@ void CodeIndex::clear()
     m_symbol_count.store(0, std::memory_order_release);
     m_dependency_count.store(0, std::memory_order_release);
     m_language_bits.store(0, std::memory_order_release);
-    m_next_file_id   = 1;
+    m_next_file_id = 1;
     m_next_symbol_id = 1;
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
@@ -232,7 +243,7 @@ std::vector<Symbol> CodeIndex::symbols_in_file(std::int64_t file_id) const
 std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_t limit) const
 {
     std::vector<Symbol> matches;
-    const std::string   needle = to_lower_ascii(query);
+    const std::string needle = to_lower_ascii(query);
 
     {
         const std::shared_lock lock(m_mutex);
@@ -242,17 +253,20 @@ std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_
             // blank while the user clears the filter.
             matches.reserve(std::min(limit, m_symbols.size()));
             for (std::size_t i = 0; i < m_symbols.size() && matches.size() < limit; ++i) {
-                if (m_symbols[i].file_id == 0) { continue; // skip removed
-}
+                if (m_symbols[i].file_id == 0) {
+                    continue; // skip removed
+                }
                 matches.push_back(m_symbols[i]);
             }
-        } else {
+        }
+        else {
             for (const Symbol& sym : m_symbols) {
                 if (matches.size() >= limit) {
                     break;
                 }
-                if (sym.file_id == 0) { continue; // skip removed
-}
+                if (sym.file_id == 0) {
+                    continue; // skip removed
+                }
                 const std::string lower_name = to_lower_ascii(sym.name);
                 if (lower_name.find(needle) != std::string::npos) {
                     matches.push_back(sym);
@@ -261,9 +275,8 @@ std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_
         }
     }
 
-    std::sort(matches.begin(), matches.end(), [](const Symbol& a, const Symbol& b) {
-        return a.name < b.name;
-    });
+    std::sort(matches.begin(), matches.end(),
+              [](const Symbol& a, const Symbol& b) { return a.name < b.name; });
     return matches;
 }
 

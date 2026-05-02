@@ -14,7 +14,7 @@ namespace vectis::core {
 [[nodiscard]] inline std::string fnv1a_hex(std::string_view data) noexcept
 {
     constexpr std::uint64_t k_offset = 14695981039346656037ULL;
-    constexpr std::uint64_t k_prime  = 1099511628211ULL;
+    constexpr std::uint64_t k_prime = 1099511628211ULL;
 
     std::uint64_t hash = k_offset;
     for (const auto byte : data) {
@@ -24,8 +24,7 @@ namespace vectis::core {
 
     // Format as 16-char lowercase hex.
     std::array<char, 17> buf{};
-    std::snprintf(buf.data(), buf.size(), "%016llx",
-                  static_cast<unsigned long long>(hash));
+    std::snprintf(buf.data(), buf.size(), "%016llx", static_cast<unsigned long long>(hash));
     return {buf.data(), 16};
 }
 

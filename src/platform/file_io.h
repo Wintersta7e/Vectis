@@ -35,8 +35,7 @@ namespace vectis::platform {
 
 /// Write `contents` to `path`, replacing any existing file. Parent
 /// directories must already exist.
-[[nodiscard]] vectis::core::Result<void> write_file(
-    const std::filesystem::path& path,
-    std::string_view             contents);
+[[nodiscard]] vectis::core::Result<void> write_file(const std::filesystem::path& path,
+                                                    std::string_view contents);
 
 } // namespace vectis::platform

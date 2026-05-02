@@ -1,5 +1,3 @@
-#include "code/dependency_graph.h"
-
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -9,6 +7,7 @@
 
 #include "code/code_index.h"
 #include "code/dependency.h"
+#include "code/dependency_graph.h"
 #include "code/language.h"
 #include "code/symbol.h"
 
@@ -25,7 +24,7 @@ std::int64_t add_file(CodeIndex& idx, const std::string& path)
 {
     FileEntry f;
     f.path_relative = path;
-    f.language      = Language::Cpp;
+    f.language = Language::Cpp;
     return idx.add_file(std::move(f));
 }
 
@@ -34,20 +33,18 @@ void add_dep(CodeIndex& idx, std::int64_t src, std::int64_t dst)
     Dependency d;
     d.source_file_id = src;
     d.target_file_id = dst;
-    d.kind           = "include";
+    d.kind = "include";
     idx.add_dependency(std::move(d));
 }
 
 /// True if `cycle` contains every id in `expected`, in any order.
-bool cycle_contains_all(const DependencyCycle& cycle,
-                        const std::vector<std::int64_t>& expected)
+bool cycle_contains_all(const DependencyCycle& cycle, const std::vector<std::int64_t>& expected)
 {
     if (cycle.file_ids.size() != expected.size()) {
         return false;
     }
     for (const std::int64_t id : expected) {
-        if (std::find(cycle.file_ids.begin(), cycle.file_ids.end(), id) ==
-            cycle.file_ids.end()) {
+        if (std::find(cycle.file_ids.begin(), cycle.file_ids.end(), id) == cycle.file_ids.end()) {
             return false;
         }
     }

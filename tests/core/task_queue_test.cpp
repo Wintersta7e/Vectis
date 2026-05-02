@@ -1,11 +1,11 @@
-#include "core/task_queue.h"
-
 #include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
 
 #include <gtest/gtest.h>
+
+#include "core/task_queue.h"
 
 namespace {
 
@@ -14,7 +14,7 @@ using vectis::core::TaskQueue;
 
 TEST(TaskQueueTest, Submit_TaskRunsAndCompletes)
 {
-    TaskQueue         q(1);
+    TaskQueue q(1);
     std::atomic<bool> ran{false};
 
     q.submit([&](const CancellationToken&) { ran.store(true); });
@@ -29,7 +29,7 @@ TEST(TaskQueueTest, Submit_TaskRunsAndCompletes)
 
 TEST(TaskQueueTest, CancelAll_FlagsRunningTask)
 {
-    TaskQueue         q(1);
+    TaskQueue q(1);
     std::atomic<bool> observed_cancel{false};
     std::atomic<bool> started{false};
 
@@ -60,10 +60,10 @@ TEST(TaskQueueTest, CancelAll_FlagsRunningTask)
 
 TEST(TaskQueueTest, DrainPending_DropsQueuedTasksBeforeRunning)
 {
-    TaskQueue           q(1);
-    std::atomic<int>    completed{0};
-    std::atomic<bool>   gate{false};
-    std::atomic<bool>   blocker_running{false};
+    TaskQueue q(1);
+    std::atomic<int> completed{0};
+    std::atomic<bool> gate{false};
+    std::atomic<bool> blocker_running{false};
 
     // First task blocks until we release the gate, occupying the only worker.
     q.submit([&](const CancellationToken& token) {
@@ -100,7 +100,7 @@ TEST(TaskQueueTest, Destructor_WhileTasksRunning)
     // must ask the running task to cancel and join cleanly.
     std::atomic<bool> finished_cleanly{false};
     {
-        TaskQueue         q(2);
+        TaskQueue q(2);
         std::atomic<bool> started{false};
 
         q.submit([&](const CancellationToken& token) {
@@ -122,7 +122,7 @@ TEST(TaskQueueTest, Destructor_WhileTasksRunning)
 
 TEST(TaskQueueTest, MultipleWorkers_ParallelExecution)
 {
-    TaskQueue        q(4);
+    TaskQueue q(4);
     std::atomic<int> running{0};
     std::atomic<int> peak_concurrency{0};
     std::atomic<int> done{0};
@@ -130,9 +130,8 @@ TEST(TaskQueueTest, MultipleWorkers_ParallelExecution)
     for (int i = 0; i < 4; ++i) {
         q.submit([&](const CancellationToken&) {
             const int cur = running.fetch_add(1) + 1;
-            int       prev_peak = peak_concurrency.load();
-            while (cur > prev_peak &&
-                   !peak_concurrency.compare_exchange_weak(prev_peak, cur)) {
+            int prev_peak = peak_concurrency.load();
+            while (cur > prev_peak && !peak_concurrency.compare_exchange_weak(prev_peak, cur)) {
                 // retry
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(30));

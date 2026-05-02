@@ -1,10 +1,10 @@
-#include "services/storage_engine/storage_engine.h"
-
 #include <cstdint>
 #include <filesystem>
 #include <string>
 
 #include <gtest/gtest.h>
+
+#include "services/storage_engine/storage_engine.h"
 
 namespace {
 
@@ -12,7 +12,8 @@ namespace fs = std::filesystem;
 using vectis::services::StorageEngine;
 
 /// Each test gets its own temp directory that is removed on tear-down.
-class StorageEngineTest : public ::testing::Test {
+class StorageEngineTest : public ::testing::Test
+{
 protected:
     void SetUp() override
     {
@@ -28,9 +29,9 @@ protected:
         fs::remove_all(m_tmp_dir, ec);
     }
 
-    StorageEngine     m_engine;
-    fs::path          m_tmp_dir;
-    fs::path          m_db_path;
+    StorageEngine m_engine;
+    fs::path m_tmp_dir;
+    fs::path m_db_path;
 };
 
 // ---- Lifecycle tests -------------------------------------------------------
@@ -75,8 +76,7 @@ TEST_F(StorageEngineTest, MigrateCreatesSchema)
     ASSERT_TRUE(r) << r.error().message;
 
     // Verify that the expected tables exist.
-    auto stmt = m_engine.prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+    auto stmt = m_engine.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
     ASSERT_TRUE(stmt);
     auto rows = stmt->query();
     ASSERT_TRUE(rows);
@@ -86,10 +86,10 @@ TEST_F(StorageEngineTest, MigrateCreatesSchema)
         tables.push_back(row.get_text(0));
     }
 
-    EXPECT_NE(std::find(tables.begin(), tables.end(), "files"),          tables.end());
-    EXPECT_NE(std::find(tables.begin(), tables.end(), "symbols"),        tables.end());
-    EXPECT_NE(std::find(tables.begin(), tables.end(), "dependencies"),   tables.end());
-    EXPECT_NE(std::find(tables.begin(), tables.end(), "kv_store"),       tables.end());
+    EXPECT_NE(std::find(tables.begin(), tables.end(), "files"), tables.end());
+    EXPECT_NE(std::find(tables.begin(), tables.end(), "symbols"), tables.end());
+    EXPECT_NE(std::find(tables.begin(), tables.end(), "dependencies"), tables.end());
+    EXPECT_NE(std::find(tables.begin(), tables.end(), "kv_store"), tables.end());
     EXPECT_NE(std::find(tables.begin(), tables.end(), "schema_version"), tables.end());
 }
 
@@ -134,8 +134,8 @@ TEST_F(StorageEngineTest, ExecuteAndQuery)
 TEST_F(StorageEngineTest, PreparedStatementBindAndQuery)
 {
     ASSERT_TRUE(m_engine.open(m_db_path));
-    ASSERT_TRUE(m_engine.execute(
-        "CREATE TABLE kv (key TEXT PRIMARY KEY, int_val INTEGER, real_val REAL)"));
+    ASSERT_TRUE(
+        m_engine.execute("CREATE TABLE kv (key TEXT PRIMARY KEY, int_val INTEGER, real_val REAL)"));
 
     auto ins = m_engine.prepare("INSERT INTO kv VALUES (?, ?, ?)");
     ASSERT_TRUE(ins);

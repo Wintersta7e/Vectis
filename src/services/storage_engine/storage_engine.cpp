@@ -27,29 +27,34 @@ using vectis::core::Result;
 // StorageEngine::Impl
 // ============================================================================
 
-struct StorageEngine::Impl {
-    sqlite3*              db = nullptr;
+struct StorageEngine::Impl
+{
+    sqlite3* db = nullptr;
     std::filesystem::path db_path;
-    std::mutex            write_mutex;
+    std::mutex write_mutex;
 };
 
 // ============================================================================
 // Statement::Impl
 // ============================================================================
 
-struct StorageEngine::Statement::Impl {
+struct StorageEngine::Statement::Impl
+{
     sqlite3_stmt* stmt = nullptr;
-    sqlite3*      db   = nullptr; // borrowed — for last_insert_rowid
+    sqlite3* db = nullptr; // borrowed — for last_insert_rowid
 };
 
 // ============================================================================
 // StorageEngine lifecycle
 // ============================================================================
 
-StorageEngine::StorageEngine()  : m_impl(std::make_unique<Impl>()) {}
-StorageEngine::~StorageEngine() { close(); }
+StorageEngine::StorageEngine() : m_impl(std::make_unique<Impl>()) {}
+StorageEngine::~StorageEngine()
+{
+    close();
+}
 
-StorageEngine::StorageEngine(StorageEngine&&) noexcept            = default;
+StorageEngine::StorageEngine(StorageEngine&&) noexcept = default;
 StorageEngine& StorageEngine::operator=(StorageEngine&&) noexcept = default;
 
 Result<void> StorageEngine::open(const std::filesystem::path& db_path)
@@ -59,16 +64,13 @@ Result<void> StorageEngine::open(const std::filesystem::path& db_path)
     }
 
     const std::string path_str = db_path.string();
-    const int rc = sqlite3_open_v2(
-        path_str.c_str(),
-        &m_impl->db,
-        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
-        nullptr);
+    const int rc =
+        sqlite3_open_v2(path_str.c_str(), &m_impl->db,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr);
 
     if (rc != SQLITE_OK) {
-        std::string msg = m_impl->db != nullptr
-            ? sqlite3_errmsg(m_impl->db)
-            : "sqlite3_open_v2 failed";
+        std::string msg =
+            m_impl->db != nullptr ? sqlite3_errmsg(m_impl->db) : "sqlite3_open_v2 failed";
         if (m_impl->db != nullptr) {
             sqlite3_close_v2(m_impl->db);
             m_impl->db = nullptr;
@@ -111,13 +113,11 @@ Result<void> StorageEngine::migrate()
     }
 
     // Ensure the schema_version table exists.
-    if (auto r = execute(
-            "CREATE TABLE IF NOT EXISTS schema_version ("
-            "  version    INTEGER PRIMARY KEY,"
-            "  applied_at INTEGER"
-            ")");
-        !r)
-    {
+    if (auto r = execute("CREATE TABLE IF NOT EXISTS schema_version ("
+                         "  version    INTEGER PRIMARY KEY,"
+                         "  applied_at INTEGER"
+                         ")");
+        !r) {
         return r;
     }
 
@@ -141,9 +141,8 @@ Result<void> StorageEngine::migrate()
             continue;
         }
 
-        VECTIS_LOG_INFO(
-            "StorageEngine: applying migration v{} '{}'",
-            migration.version, migration.name);
+        VECTIS_LOG_INFO("StorageEngine: applying migration v{} '{}'", migration.version,
+                        migration.name);
 
         // Use begin_transaction/commit which manage the write_mutex.
         if (auto r = begin_transaction(); !r) {
@@ -156,14 +155,14 @@ Result<void> StorageEngine::migrate()
         }
 
         // Record the migration.
-        auto ins = prepare(
-            "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)");
+        auto ins = prepare("INSERT INTO schema_version (version, applied_at) VALUES (?, ?)");
         if (!ins) {
             (void)rollback();
             return tl::unexpected(ins.error());
         }
         const auto now = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+                             std::chrono::system_clock::now().time_since_epoch())
+                             .count();
         ins->bind(1, static_cast<std::int64_t>(migration.version));
         ins->bind(2, static_cast<std::int64_t>(now));
         if (auto r = ins->execute(); !r) {
@@ -201,8 +200,7 @@ Result<void> StorageEngine::execute(std::string_view sql)
     }
 
     char* errmsg = nullptr;
-    const int rc = sqlite3_exec(
-        m_impl->db, std::string(sql).c_str(), nullptr, nullptr, &errmsg);
+    const int rc = sqlite3_exec(m_impl->db, std::string(sql).c_str(), nullptr, nullptr, &errmsg);
 
     if (rc != SQLITE_OK) {
         std::string msg = errmsg != nullptr ? errmsg : "sqlite3_exec failed";
@@ -216,10 +214,7 @@ Result<void> StorageEngine::execute(std::string_view sql)
 // Prepared statements
 // ============================================================================
 
-StorageEngine::Statement::Statement(std::unique_ptr<Impl> impl)
-    : m_impl(std::move(impl))
-{
-}
+StorageEngine::Statement::Statement(std::unique_ptr<Impl> impl) : m_impl(std::move(impl)) {}
 
 StorageEngine::Statement::~Statement()
 {
@@ -228,7 +223,7 @@ StorageEngine::Statement::~Statement()
     }
 }
 
-StorageEngine::Statement::Statement(Statement&&) noexcept            = default;
+StorageEngine::Statement::Statement(Statement&&) noexcept = default;
 StorageEngine::Statement& StorageEngine::Statement::operator=(Statement&&) noexcept = default;
 
 StorageEngine::Statement& StorageEngine::Statement::bind(int idx, std::int64_t value)
@@ -239,8 +234,8 @@ StorageEngine::Statement& StorageEngine::Statement::bind(int idx, std::int64_t v
 
 StorageEngine::Statement& StorageEngine::Statement::bind(int idx, std::string_view value)
 {
-    sqlite3_bind_text(
-        m_impl->stmt, idx, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_text(m_impl->stmt, idx, value.data(), static_cast<int>(value.size()),
+                      SQLITE_TRANSIENT);
     return *this;
 }
 
@@ -289,29 +284,29 @@ Result<std::vector<StorageEngine::Row>> StorageEngine::Statement::query()
         for (int i = 0; i < col_count; ++i) {
             const int type = sqlite3_column_type(m_impl->stmt, i);
             switch (type) {
-                case SQLITE_INTEGER:
-                    row.m_columns.emplace_back(sqlite3_column_int64(m_impl->stmt, i));
-                    break;
-                case SQLITE_FLOAT:
-                    row.m_columns.emplace_back(sqlite3_column_double(m_impl->stmt, i));
-                    break;
-                case SQLITE_TEXT: {
-                    // SQLite returns UTF-8 text as `unsigned char*` to keep its
-                    // C ABI portable; we read it back as `char*` to feed
-                    // std::string. The byte representation is identical, so
-                    // this is the canonical SQLite-binding cast.
-                    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-                    const auto* text = reinterpret_cast<const char*>(
-                        sqlite3_column_text(m_impl->stmt, i));
-                    const int len = sqlite3_column_bytes(m_impl->stmt, i);
-                    row.m_columns.emplace_back(std::string(text, static_cast<std::size_t>(len)));
-                    break;
-                }
-                case SQLITE_BLOB:
-                case SQLITE_NULL:
-                default:
-                    row.m_columns.emplace_back(std::monostate{});
-                    break;
+            case SQLITE_INTEGER:
+                row.m_columns.emplace_back(sqlite3_column_int64(m_impl->stmt, i));
+                break;
+            case SQLITE_FLOAT:
+                row.m_columns.emplace_back(sqlite3_column_double(m_impl->stmt, i));
+                break;
+            case SQLITE_TEXT: {
+                // SQLite returns UTF-8 text as `unsigned char*` to keep its
+                // C ABI portable; we read it back as `char*` to feed
+                // std::string. The byte representation is identical, so
+                // this is the canonical SQLite-binding cast.
+                const unsigned char* raw = sqlite3_column_text(m_impl->stmt, i);
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                const auto* text = reinterpret_cast<const char*>(raw);
+                const int len = sqlite3_column_bytes(m_impl->stmt, i);
+                row.m_columns.emplace_back(std::string(text, static_cast<std::size_t>(len)));
+                break;
+            }
+            case SQLITE_BLOB:
+            case SQLITE_NULL:
+            default:
+                row.m_columns.emplace_back(std::monostate{});
+                break;
             }
         }
         rows.push_back(std::move(row));
@@ -387,17 +382,17 @@ Result<StorageEngine::Statement> StorageEngine::prepare(std::string_view sql)
     }
 
     sqlite3_stmt* raw = nullptr;
-    const int rc = sqlite3_prepare_v2(
-        m_impl->db, sql.data(), static_cast<int>(sql.size()), &raw, nullptr);
+    const int rc =
+        sqlite3_prepare_v2(m_impl->db, sql.data(), static_cast<int>(sql.size()), &raw, nullptr);
 
     if (rc != SQLITE_OK || raw == nullptr) {
         std::string msg = sqlite3_errmsg(m_impl->db);
         return make_error(ErrorKind::StorageError, std::move(msg), std::string(sql).substr(0, 120));
     }
 
-    auto impl   = std::make_unique<Statement::Impl>();
-    impl->stmt  = raw;
-    impl->db    = m_impl->db;
+    auto impl = std::make_unique<Statement::Impl>();
+    impl->stmt = raw;
+    impl->db = m_impl->db;
     return Statement(std::move(impl));
 }
 
@@ -438,13 +433,13 @@ Result<void> StorageEngine::rollback()
 // Transaction RAII guard
 // ============================================================================
 
-StorageEngine::Transaction::Transaction(StorageEngine& engine)
-    : m_engine(&engine)
+StorageEngine::Transaction::Transaction(StorageEngine& engine) : m_engine(&engine)
 {
     auto r = m_engine->begin_transaction();
     if (r) {
         m_active = true;
-    } else {
+    }
+    else {
         VECTIS_LOG_ERROR("Transaction: begin failed: {}", r.error().message);
     }
 }
@@ -472,8 +467,8 @@ StorageEngine::Transaction& StorageEngine::Transaction::operator=(Transaction&& 
             (void)m_engine->rollback(); // best-effort
             m_active = false;
         }
-        m_engine       = other.m_engine;
-        m_active       = other.m_active;
+        m_engine = other.m_engine;
+        m_active = other.m_active;
         other.m_active = false;
     }
     return *this;

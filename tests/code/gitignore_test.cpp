@@ -18,7 +18,8 @@ void write_gitignore(const fs::path& dir, std::string_view content)
     out << content;
 }
 
-class GitignoreTest : public ::testing::Test {
+class GitignoreTest : public ::testing::Test
+{
 protected:
     void SetUp() override
     {

@@ -1,5 +1,3 @@
-#include "platform/file_io.h"
-
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -7,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "core/result.h"
+#include "platform/file_io.h"
 
 namespace {
 
@@ -39,7 +38,7 @@ TEST(FileIoTest, ExecutableDir_ContainsBinary)
 
 TEST(FileIoTest, DefaultDataDir_NextToExe)
 {
-    const auto dir      = executable_dir();
+    const auto dir = executable_dir();
     const auto data_dir = default_data_dir();
     ASSERT_TRUE(dir.has_value());
     ASSERT_TRUE(data_dir.has_value());

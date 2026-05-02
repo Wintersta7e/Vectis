@@ -16,10 +16,11 @@
 
 namespace vectis::core {
 
-struct ConfigManager::Impl {
-    toml::table           table;
+struct ConfigManager::Impl
+{
+    toml::table table;
     std::filesystem::path source;
-    bool                  loaded_from_file = false;
+    bool loaded_from_file = false;
 };
 
 namespace {
@@ -30,7 +31,7 @@ namespace {
 [[nodiscard]] const toml::node* walk(const toml::table& root, std::string_view dotted_key)
 {
     const toml::table* current = &root;
-    std::size_t        start   = 0;
+    std::size_t start = 0;
 
     while (start < dotted_key.size()) {
         const std::size_t dot = dotted_key.find('.', start);
@@ -60,7 +61,7 @@ namespace {
 ConfigManager::ConfigManager() : m_impl(std::make_unique<Impl>()) {}
 ConfigManager::~ConfigManager() = default;
 
-ConfigManager::ConfigManager(ConfigManager&&) noexcept            = default;
+ConfigManager::ConfigManager(ConfigManager&&) noexcept = default;
 ConfigManager& ConfigManager::operator=(ConfigManager&&) noexcept = default;
 
 Result<void> ConfigManager::load(const std::filesystem::path& toml_path)
@@ -68,30 +69,28 @@ Result<void> ConfigManager::load(const std::filesystem::path& toml_path)
     m_impl->source = toml_path;
 
     std::error_code ec;
-    const bool      exists = std::filesystem::exists(toml_path, ec);
+    const bool exists = std::filesystem::exists(toml_path, ec);
     if (ec) {
-        return make_error(
-            ErrorKind::IoError,
-            "failed to stat config file: " + ec.message(),
-            toml_path.string());
+        return make_error(ErrorKind::IoError, "failed to stat config file: " + ec.message(),
+                          toml_path.string());
     }
     if (!exists) {
-        VECTIS_LOG_INFO(
-            "No vectis.toml at '{}' — using built-in defaults", toml_path.string());
-        m_impl->table            = toml::table{};
+        VECTIS_LOG_INFO("No vectis.toml at '{}' — using built-in defaults", toml_path.string());
+        m_impl->table = toml::table{};
         m_impl->loaded_from_file = false;
         return {};
     }
 
     try {
-        m_impl->table            = toml::parse_file(toml_path.string());
+        m_impl->table = toml::parse_file(toml_path.string());
         m_impl->loaded_from_file = true;
         VECTIS_LOG_INFO("Loaded config from '{}'", toml_path.string());
         return {};
-    } catch (const toml::parse_error& e) {
-        const auto&       src  = e.source();
-        const std::string where = std::to_string(src.begin.line) + ":" +
-                                  std::to_string(src.begin.column);
+    }
+    catch (const toml::parse_error& e) {
+        const auto& src = e.source();
+        const std::string where =
+            std::to_string(src.begin.line) + ":" + std::to_string(src.begin.column);
         // toml::parse_error::description() returns std::string_view —
         // convert before concatenating to avoid the string_view + string
         // ambiguity with std::operator+.
@@ -99,19 +98,18 @@ Result<void> ConfigManager::load(const std::filesystem::path& toml_path)
         message.append(where);
         message.append(": ");
         message.append(e.description());
-        return make_error(
-            ErrorKind::ConfigError, std::move(message), toml_path.string());
-    } catch (const std::exception& e) {
-        return make_error(
-            ErrorKind::ConfigError,
-            std::string{"unexpected error loading config: "} + e.what(),
-            toml_path.string());
+        return make_error(ErrorKind::ConfigError, std::move(message), toml_path.string());
+    }
+    catch (const std::exception& e) {
+        return make_error(ErrorKind::ConfigError,
+                          std::string{"unexpected error loading config: "} + e.what(),
+                          toml_path.string());
     }
 }
 
 void ConfigManager::reset_to_defaults() noexcept
 {
-    m_impl->table            = toml::table{};
+    m_impl->table = toml::table{};
     m_impl->source.clear();
     m_impl->loaded_from_file = false;
 }
@@ -167,8 +165,8 @@ bool ConfigManager::get_bool(std::string_view key, bool fallback) const
     return fallback;
 }
 
-std::vector<std::string> ConfigManager::get_string_array(
-    std::string_view key, std::vector<std::string> fallback) const
+std::vector<std::string> ConfigManager::get_string_array(std::string_view key,
+                                                         std::vector<std::string> fallback) const
 {
     const toml::node* node = walk(m_impl->table, key);
     if (node == nullptr) {
@@ -184,7 +182,8 @@ std::vector<std::string> ConfigManager::get_string_array(
     for (const auto& element : *array) {
         if (const auto* str = element.as_string()) {
             result.push_back(str->get());
-        } else {
+        }
+        else {
             // Mixed-type array — fall back entirely rather than
             // silently dropping elements.
             return fallback;

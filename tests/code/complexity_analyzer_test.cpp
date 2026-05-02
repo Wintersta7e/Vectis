@@ -1,9 +1,8 @@
-#include "code/complexity_analyzer.h"
-
 #include <string_view>
 
 #include <gtest/gtest.h>
 
+#include "code/complexity_analyzer.h"
 #include "code/language.h"
 #include "code/parser.h"
 #include "code/symbol.h"
@@ -18,16 +17,13 @@ using vectis::code::TreeSitterParser;
 /// Helper: parse a one-function snippet and return the single
 /// function's complexity from its Symbol record. Fails the test if
 /// exactly one Function symbol isn't found.
-int complexity_of_single_function(TreeSitterParser& parser,
-                                  Language language,
-                                  std::string_view source,
-                                  std::string_view expected_name)
+int complexity_of_single_function(TreeSitterParser& parser, Language language,
+                                  std::string_view source, std::string_view expected_name)
 {
     const auto result = parser.parse_file(language, source);
     for (const Symbol& sym : result.symbols) {
         if ((sym.kind == SymbolKind::Function || sym.kind == SymbolKind::Method) &&
-            sym.name == expected_name)
-        {
+            sym.name == expected_name) {
             return sym.complexity;
         }
     }
@@ -131,8 +127,7 @@ enum Color { Red, Green, Blue };
     const auto result = parser.parse_file(Language::Cpp, src);
     for (const Symbol& sym : result.symbols) {
         if (sym.kind != SymbolKind::Function && sym.kind != SymbolKind::Method) {
-            EXPECT_EQ(sym.complexity, 0)
-                << sym.name << " (" << static_cast<int>(sym.kind) << ")";
+            EXPECT_EQ(sym.complexity, 0) << sym.name << " (" << static_cast<int>(sym.kind) << ")";
         }
     }
 }

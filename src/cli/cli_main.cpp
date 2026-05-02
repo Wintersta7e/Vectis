@@ -12,14 +12,14 @@
 #include <system_error>
 #include <unordered_set>
 
-#include "core/log.h"
-#include "core/task_queue.h"
 #include "code/code_index.h"
 #include "code/code_index_store.h"
 #include "code/digest_exporter.h"
 #include "code/gitignore.h"
 #include "code/parser.h"
 #include "code/scanner.h"
+#include "core/log.h"
+#include "core/task_queue.h"
 #include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 
@@ -68,25 +68,35 @@ void print_usage()
 bool parse_format(std::string_view v, vectis::code::DigestFormat& out)
 {
     using vectis::code::DigestFormat;
-    if (v == "json")                      { out = DigestFormat::Json;     return true; }
-    if (v == "slim" || v == "slim-json")  { out = DigestFormat::SlimJson; return true; }
-    if (v == "md"   || v == "markdown")   { out = DigestFormat::Markdown; return true; }
+    if (v == "json") {
+        out = DigestFormat::Json;
+        return true;
+    }
+    if (v == "slim" || v == "slim-json") {
+        out = DigestFormat::SlimJson;
+        return true;
+    }
+    if (v == "md" || v == "markdown") {
+        out = DigestFormat::Markdown;
+        return true;
+    }
     return false;
 }
 
-struct DigestArgs {
-    std::filesystem::path              project_root;
-    vectis::code::DigestFormat  format = vectis::code::DigestFormat::Json;
+struct DigestArgs
+{
+    std::filesystem::path project_root;
+    vectis::code::DigestFormat format = vectis::code::DigestFormat::Json;
     /// Empty = stdout. Otherwise a filesystem path.
-    std::string                        output_path;
+    std::string output_path;
     /// Enable SQLite cache reuse. Implied by a non-empty `cache_dir`.
-    bool                               use_cache = false;
+    bool use_cache = false;
     /// Override cache location. Empty = `<project_root>/vectis-data`.
-    std::filesystem::path              cache_dir;
+    std::filesystem::path cache_dir;
     /// Suppress warnings on stderr. Errors still print.
-    bool                               quiet = false;
+    bool quiet = false;
     /// Emit per-scan stats to stderr on success.
-    bool                               verbose = false;
+    bool verbose = false;
 };
 
 /// Parse `digest <path> [--format …] [--output …]`. Returns false on
@@ -107,20 +117,26 @@ bool parse_digest_args(int argc, char** argv, DigestArgs& out)
                 return false;
             }
             ++i;
-        } else if ((arg == "--output" || arg == "-o") && i + 1 < argc) {
+        }
+        else if ((arg == "--output" || arg == "-o") && i + 1 < argc) {
             out.output_path = argv[i + 1];
             ++i;
-        } else if (arg == "--cache") {
+        }
+        else if (arg == "--cache") {
             out.use_cache = true;
-        } else if (arg == "--cache-dir" && i + 1 < argc) {
+        }
+        else if (arg == "--cache-dir" && i + 1 < argc) {
             out.use_cache = true;
             out.cache_dir = argv[i + 1];
             ++i;
-        } else if (arg == "--quiet" || arg == "-q") {
+        }
+        else if (arg == "--quiet" || arg == "-q") {
             out.quiet = true;
-        } else if (arg == "--verbose" || arg == "-v") {
+        }
+        else if (arg == "--verbose" || arg == "-v") {
             out.verbose = true;
-        } else {
+        }
+        else {
             std::fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
             return false;
         }
@@ -147,32 +163,50 @@ bool parse_digest_args(int argc, char** argv, DigestArgs& out)
 /// Python project mistakenly scanned with its virtualenv ballooned
 /// to 2200+ files, with hotspots dominated by upstream packaging
 /// tools rather than the project itself.
-vectis::code::ScanConfig
-make_scan_config(const std::filesystem::path& abs_root)
+vectis::code::ScanConfig make_scan_config(const std::filesystem::path& abs_root)
 {
     vectis::code::ScanConfig config;
-    config.root  = abs_root;
+    config.root = abs_root;
     config.epoch = 1;
     config.exclude_dir_names = {
         // VCS metadata
-        ".git", ".hg", ".svn",
+        ".git",
+        ".hg",
+        ".svn",
         // Language / framework build outputs
         "node_modules",
-        "target", "build", "build-win", "out", "dist",
-        "bin", "obj",
-        "cmake-build-debug", "cmake-build-release",
+        "target",
+        "build",
+        "build-win",
+        "out",
+        "dist",
+        "bin",
+        "obj",
+        "cmake-build-debug",
+        "cmake-build-release",
         ".gradle",
-        ".next", ".nuxt", ".svelte-kit",
+        ".next",
+        ".nuxt",
+        ".svelte-kit",
         // Python virtualenvs + tool caches
-        ".venv", "venv", "env", "virtualenv", "build_venv",
-        "__pycache__", ".pytest_cache", ".mypy_cache",
-        ".ruff_cache", ".tox",
+        ".venv",
+        "venv",
+        "env",
+        "virtualenv",
+        "build_venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
         // Test / coverage artifacts
         "htmlcov",
         // Generic caches
         ".cache",
         // IDE metadata
-        ".idea", ".vscode", ".vs",
+        ".idea",
+        ".vscode",
+        ".vs",
         // Vectis's own cache dir so --cache doesn't re-scan its WAL.
         "vectis-data",
     };
@@ -187,21 +221,19 @@ make_scan_config(const std::filesystem::path& abs_root)
 
 /// Run a scan without touching disk. Every invocation starts with an
 /// empty in-memory CodeIndex and does a full tree walk.
-int run_uncached(const std::filesystem::path&          abs_root,
-                 vectis::code::TreeSitterParser& parser,
-                 vectis::code::CodeIndex&       index)
+int run_uncached(const std::filesystem::path& abs_root, vectis::code::TreeSitterParser& parser,
+                 vectis::code::CodeIndex& index)
 {
     const auto config = make_scan_config(abs_root);
-    std::atomic<std::int64_t>       epoch{1};
+    std::atomic<std::int64_t> epoch{1};
     vectis::core::CancellationToken token;
-    const auto noop_progress   = [](const auto&) {};
+    const auto noop_progress = [](const auto&) {};
     const auto noop_completion = [](const auto&) {};
 
-    const auto r = vectis::code::Scanner::run(
-        config, index, parser, noop_progress, noop_completion, token, epoch);
+    const auto r = vectis::code::Scanner::run(config, index, parser, noop_progress, noop_completion,
+                                              token, epoch);
     if (!r) {
-        std::fprintf(stderr, "error: scan failed: %s\n",
-                     r.error().message.c_str());
+        std::fprintf(stderr, "error: scan failed: %s\n", r.error().message.c_str());
         return 2;
     }
     return 0;
@@ -209,43 +241,38 @@ int run_uncached(const std::filesystem::path&          abs_root,
 
 /// Cached path: open the SQLite state, load any existing index, do a
 /// hash-based incremental scan, persist the updated state.
-int run_cached(const std::filesystem::path&          abs_root,
-               const std::filesystem::path&          cache_dir,
-               vectis::code::TreeSitterParser& parser,
-               vectis::code::CodeIndex&       index,
-               bool                                  quiet)
+int run_cached(const std::filesystem::path& abs_root, const std::filesystem::path& cache_dir,
+               vectis::code::TreeSitterParser& parser, vectis::code::CodeIndex& index, bool quiet)
 {
     namespace fs = std::filesystem;
 
     std::error_code ec;
     fs::create_directories(cache_dir, ec);
     if (ec) {
-        std::fprintf(stderr, "error: cannot create cache dir %s: %s\n",
-                     cache_dir.string().c_str(), ec.message().c_str());
+        std::fprintf(stderr, "error: cannot create cache dir %s: %s\n", cache_dir.string().c_str(),
+                     ec.message().c_str());
         return 2;
     }
 
     vectis::services::StorageEngine storage;
     const fs::path db_path = cache_dir / "vectis.db";
     if (auto r = storage.open(db_path); !r) {
-        std::fprintf(stderr, "error: cannot open cache DB %s: %s\n",
-                     db_path.string().c_str(), r.error().message.c_str());
+        std::fprintf(stderr, "error: cannot open cache DB %s: %s\n", db_path.string().c_str(),
+                     r.error().message.c_str());
         return 2;
     }
     if (auto r = storage.migrate(); !r) {
-        std::fprintf(stderr, "error: migration failed: %s\n",
-                     r.error().message.c_str());
+        std::fprintf(stderr, "error: migration failed: %s\n", r.error().message.c_str());
         return 2;
     }
 
     vectis::services::IndexEngine index_engine;
     index_engine.initialize(storage);
 
-    const bool have_existing_cache =
-        vectis::code::has_cache_for(storage, abs_root);
+    const bool have_existing_cache = vectis::code::has_cache_for(storage, abs_root);
 
     const auto config = make_scan_config(abs_root);
-    std::atomic<std::int64_t>       epoch{1};
+    std::atomic<std::int64_t> epoch{1};
     vectis::core::CancellationToken token;
     const auto noop_progress = [](const auto&) {};
 
@@ -254,7 +281,8 @@ int run_cached(const std::filesystem::path&          abs_root,
             if (!quiet) {
                 std::fprintf(stderr,
                              "warning: cache load failed (%s); falling back "
-                             "to full scan\n", r.error().message.c_str());
+                             "to full scan\n",
+                             r.error().message.c_str());
             }
             // clear() resets the in-memory index without move-assigning
             // (CodeIndex is move-disabled to keep shared_mutex safe).
@@ -265,34 +293,31 @@ int run_cached(const std::filesystem::path&          abs_root,
     if (index.file_count() == 0) {
         // Cold cache: full scan + save.
         const auto noop_completion = [](const auto&) {};
-        const auto r = vectis::code::Scanner::run(
-            config, index, parser,
-            noop_progress, noop_completion, token, epoch);
+        const auto r = vectis::code::Scanner::run(config, index, parser, noop_progress,
+                                                  noop_completion, token, epoch);
         if (!r) {
-            std::fprintf(stderr, "error: scan failed: %s\n",
-                         r.error().message.c_str());
+            std::fprintf(stderr, "error: scan failed: %s\n", r.error().message.c_str());
             return 2;
         }
-    } else {
+    }
+    else {
         // Warm cache: hash-based incremental.
-        const auto r = vectis::code::Scanner::run_incremental(
-            config, index, parser, noop_progress, token, epoch);
+        const auto r = vectis::code::Scanner::run_incremental(config, index, parser, noop_progress,
+                                                              token, epoch);
         if (!r) {
-            std::fprintf(stderr, "error: incremental scan failed: %s\n",
-                         r.error().message.c_str());
+            std::fprintf(stderr, "error: incremental scan failed: %s\n", r.error().message.c_str());
             return 2;
         }
     }
 
     vectis::code::CacheMetadata meta;
-    meta.project_root   = abs_root;
-    meta.scan_timestamp = std::to_string(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+    meta.project_root = abs_root;
+    meta.scan_timestamp = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+                                             std::chrono::system_clock::now().time_since_epoch())
+                                             .count());
     if (auto r = vectis::code::save_index(storage, index, meta); !r) {
         if (!quiet) {
-            std::fprintf(stderr, "warning: cache save failed: %s\n",
-                         r.error().message.c_str());
+            std::fprintf(stderr, "warning: cache save failed: %s\n", r.error().message.c_str());
         }
         // Not fatal — the digest is still correct for this run.
     }
@@ -304,17 +329,13 @@ int run_digest(const DigestArgs& args)
     namespace fs = std::filesystem;
 
     std::error_code ec;
-    if (!fs::exists(args.project_root, ec) ||
-        !fs::is_directory(args.project_root, ec))
-    {
-        std::fprintf(stderr, "error: not a directory: %s\n",
-                     args.project_root.string().c_str());
+    if (!fs::exists(args.project_root, ec) || !fs::is_directory(args.project_root, ec)) {
+        std::fprintf(stderr, "error: not a directory: %s\n", args.project_root.string().c_str());
         return 1;
     }
     const fs::path abs_root = fs::absolute(args.project_root, ec);
     if (ec) {
-        std::fprintf(stderr, "error: cannot resolve absolute path: %s\n",
-                     ec.message().c_str());
+        std::fprintf(stderr, "error: cannot resolve absolute path: %s\n", ec.message().c_str());
         return 1;
     }
 
@@ -326,11 +347,11 @@ int run_digest(const DigestArgs& args)
 
     int scan_rc = 0;
     if (args.use_cache) {
-        const fs::path cache_dir = args.cache_dir.empty()
-            ? abs_root / "vectis-data"
-            : fs::absolute(args.cache_dir, ec);
+        const fs::path cache_dir =
+            args.cache_dir.empty() ? abs_root / "vectis-data" : fs::absolute(args.cache_dir, ec);
         scan_rc = run_cached(abs_root, cache_dir, parser, index, args.quiet);
-    } else {
+    }
+    else {
         scan_rc = run_uncached(abs_root, parser, index);
     }
     if (scan_rc != 0) {
@@ -338,24 +359,20 @@ int run_digest(const DigestArgs& args)
     }
 
     if (args.verbose && !args.quiet) {
-        const auto elapsed_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - t_start).count();
-        std::fprintf(stderr,
-                     "vectis: scanned %zu files, %zu symbols, %zu deps in %lld ms\n",
-                     index.file_count(),
-                     index.symbol_count(),
-                     index.dependency_count(),
+        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - t_start)
+                                    .count();
+        std::fprintf(stderr, "vectis: scanned %zu files, %zu symbols, %zu deps in %lld ms\n",
+                     index.file_count(), index.symbol_count(), index.dependency_count(),
                      static_cast<long long>(elapsed_ms));
     }
 
     vectis::code::ExportOptions export_opts;
-    export_opts.format       = args.format;
+    export_opts.format = args.format;
     export_opts.project_root = abs_root;
     export_opts.project_name = abs_root.filename().string();
 
-    const std::string body =
-        vectis::code::build_digest_string(index, export_opts);
+    const std::string body = vectis::code::build_digest_string(index, export_opts);
 
     // Output: stdout if --output missing or '-', else the named file.
     if (args.output_path.empty() || args.output_path == "-") {
@@ -363,11 +380,11 @@ int run_digest(const DigestArgs& args)
         if (!body.empty() && body.back() != '\n') {
             std::fputc('\n', stdout);
         }
-    } else {
+    }
+    else {
         std::ofstream out(args.output_path, std::ios::binary | std::ios::trunc);
         if (!out) {
-            std::fprintf(stderr, "error: cannot write to %s\n",
-                         args.output_path.c_str());
+            std::fprintf(stderr, "error: cannot write to %s\n", args.output_path.c_str());
             return 2;
         }
         out.write(body.data(), static_cast<std::streamsize>(body.size()));

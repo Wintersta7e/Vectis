@@ -15,7 +15,8 @@ namespace vectis::code {
 /// navigable symbol browser. Finer distinctions (constructors,
 /// operators, templates, macros) can be added in later steps
 /// without a migration because callers always switch on this enum.
-enum class SymbolKind : std::uint8_t {
+enum class SymbolKind : std::uint8_t
+{
     Unknown = 0,
     Function,
     Method,
@@ -32,15 +33,24 @@ enum class SymbolKind : std::uint8_t {
 [[nodiscard]] constexpr std::string_view symbol_kind_name(SymbolKind kind) noexcept
 {
     switch (kind) {
-        case SymbolKind::Function:  return "function";
-        case SymbolKind::Method:    return "method";
-        case SymbolKind::Class:     return "class";
-        case SymbolKind::Struct:    return "struct";
-        case SymbolKind::Interface: return "interface";
-        case SymbolKind::Enum:      return "enum";
-        case SymbolKind::Type:      return "type";
-        case SymbolKind::Namespace: return "namespace";
-        case SymbolKind::Unknown:   return "unknown";
+    case SymbolKind::Function:
+        return "function";
+    case SymbolKind::Method:
+        return "method";
+    case SymbolKind::Class:
+        return "class";
+    case SymbolKind::Struct:
+        return "struct";
+    case SymbolKind::Interface:
+        return "interface";
+    case SymbolKind::Enum:
+        return "enum";
+    case SymbolKind::Type:
+        return "type";
+    case SymbolKind::Namespace:
+        return "namespace";
+    case SymbolKind::Unknown:
+        return "unknown";
     }
     return "unknown";
 }
@@ -51,36 +61,45 @@ enum class SymbolKind : std::uint8_t {
 /// given, so UIs and serializers can render it without leaking the
 /// user's local filesystem prefix. `id` is assigned by
 /// `CodeIndex::add_file` — external code must never set it.
-struct FileEntry {
-    std::int64_t                    id = 0;
-    std::filesystem::path           path_relative;
-    Language                        language = Language::Unknown;
-    std::uint64_t                   size = 0;
-    int                             line_count = 0;
+struct FileEntry
+{
+    std::int64_t id = 0;
+    std::filesystem::path path_relative;
+    Language language = Language::Unknown;
+    std::uint64_t size = 0;
+    int line_count = 0;
     std::filesystem::file_time_type last_modified;
-    std::string                     content_hash;
+    std::string content_hash;
 };
 
 /// Reverse of `symbol_kind_name`: parses a string back to a SymbolKind.
 /// Returns `SymbolKind::Unknown` if the name is not recognized.
 [[nodiscard]] constexpr SymbolKind symbol_kind_from_name(std::string_view name) noexcept
 {
-    if (name == "function") {  return SymbolKind::Function;
-}
-    if (name == "method") {    return SymbolKind::Method;
-}
-    if (name == "class") {     return SymbolKind::Class;
-}
-    if (name == "struct") {    return SymbolKind::Struct;
-}
-    if (name == "interface") { return SymbolKind::Interface;
-}
-    if (name == "enum") {      return SymbolKind::Enum;
-}
-    if (name == "type") {      return SymbolKind::Type;
-}
-    if (name == "namespace") { return SymbolKind::Namespace;
-}
+    if (name == "function") {
+        return SymbolKind::Function;
+    }
+    if (name == "method") {
+        return SymbolKind::Method;
+    }
+    if (name == "class") {
+        return SymbolKind::Class;
+    }
+    if (name == "struct") {
+        return SymbolKind::Struct;
+    }
+    if (name == "interface") {
+        return SymbolKind::Interface;
+    }
+    if (name == "enum") {
+        return SymbolKind::Enum;
+    }
+    if (name == "type") {
+        return SymbolKind::Type;
+    }
+    if (name == "namespace") {
+        return SymbolKind::Namespace;
+    }
     return SymbolKind::Unknown;
 }
 
@@ -104,17 +123,18 @@ struct FileEntry {
 /// Method kinds — 1 for a straight-line function, incrementing for
 /// each decision point (if/while/for/case/&&/||/?:). Zero for every
 /// non-function kind.
-struct Symbol {
-    std::int64_t             id = 0;
-    std::int64_t             file_id = 0;
-    std::string              name;
-    SymbolKind               kind = SymbolKind::Unknown;
-    int                      line_start = 0;
-    int                      line_end = 0;
-    std::int64_t             parent_id = 0;   // 0 if top-level
-    std::string              signature;
+struct Symbol
+{
+    std::int64_t id = 0;
+    std::int64_t file_id = 0;
+    std::string name;
+    SymbolKind kind = SymbolKind::Unknown;
+    int line_start = 0;
+    int line_end = 0;
+    std::int64_t parent_id = 0; // 0 if top-level
+    std::string signature;
     std::vector<std::string> members;
-    int                      complexity = 0;
+    int complexity = 0;
 };
 
 } // namespace vectis::code

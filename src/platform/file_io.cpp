@@ -9,14 +9,15 @@
 #include <vector>
 
 #if defined(_WIN32)
-    #define NOMINMAX
-    #define WIN32_LEAN_AND_MEAN
-    #include <windows.h>
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #elif defined(__linux__)
-    #include <climits>
-    #include <unistd.h>
+#include <climits>
+
+#include <unistd.h>
 #elif defined(__APPLE__)
-    #include <mach-o/dyld.h>
+#include <mach-o/dyld.h>
 #endif
 
 namespace vectis::platform {
@@ -34,13 +35,11 @@ Result<std::filesystem::path> executable_path_windows()
 {
     std::vector<wchar_t> buffer(MAX_PATH);
     for (;;) {
-        const DWORD size = ::GetModuleFileNameW(
-            nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        const DWORD size =
+            ::GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
         if (size == 0) {
-            return make_error(
-                ErrorKind::PlatformError,
-                "GetModuleFileNameW failed",
-                "executable_path()");
+            return make_error(ErrorKind::PlatformError, "GetModuleFileNameW failed",
+                              "executable_path()");
         }
         if (size < buffer.size()) {
             return std::filesystem::path{std::wstring{buffer.data(), size}};
@@ -57,10 +56,8 @@ Result<std::filesystem::path> executable_path_linux()
     std::error_code ec;
     auto path = std::filesystem::read_symlink("/proc/self/exe", ec);
     if (ec) {
-        return make_error(
-            ErrorKind::PlatformError,
-            "readlink(/proc/self/exe) failed: " + ec.message(),
-            "executable_path()");
+        return make_error(ErrorKind::PlatformError,
+                          "readlink(/proc/self/exe) failed: " + ec.message(), "executable_path()");
     }
     return path;
 }
@@ -73,18 +70,15 @@ Result<std::filesystem::path> executable_path_macos()
     _NSGetExecutablePath(nullptr, &size);
     std::vector<char> buffer(size);
     if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
-        return make_error(
-            ErrorKind::PlatformError,
-            "_NSGetExecutablePath failed",
-            "executable_path()");
+        return make_error(ErrorKind::PlatformError, "_NSGetExecutablePath failed",
+                          "executable_path()");
     }
     std::error_code ec;
     auto canonical = std::filesystem::canonical(std::filesystem::path{buffer.data()}, ec);
     if (ec) {
-        return make_error(
-            ErrorKind::PlatformError,
-            "canonical() failed on executable path: " + ec.message(),
-            "executable_path()");
+        return make_error(ErrorKind::PlatformError,
+                          "canonical() failed on executable path: " + ec.message(),
+                          "executable_path()");
     }
     return canonical;
 }
@@ -101,10 +95,8 @@ Result<std::filesystem::path> executable_path()
 #elif defined(__APPLE__)
     return executable_path_macos();
 #else
-    return make_error(
-        ErrorKind::PlatformError,
-        "executable_path() not implemented for this platform",
-        "executable_path()");
+    return make_error(ErrorKind::PlatformError,
+                      "executable_path() not implemented for this platform", "executable_path()");
 #endif
 }
 
@@ -131,10 +123,8 @@ Result<void> ensure_dir(const std::filesystem::path& path)
     std::error_code ec;
     std::filesystem::create_directories(path, ec);
     if (ec) {
-        return make_error(
-            ErrorKind::IoError,
-            "failed to create directory: " + ec.message(),
-            path.string());
+        return make_error(ErrorKind::IoError, "failed to create directory: " + ec.message(),
+                          path.string());
     }
     return {};
 }
@@ -143,19 +133,13 @@ Result<std::string> read_file(const std::filesystem::path& path)
 {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) {
-        return make_error(
-            ErrorKind::IoError,
-            "failed to open file for reading",
-            path.string());
+        return make_error(ErrorKind::IoError, "failed to open file for reading", path.string());
     }
 
     stream.seekg(0, std::ios::end);
     const auto end_pos = stream.tellg();
     if (end_pos < 0) {
-        return make_error(
-            ErrorKind::IoError,
-            "failed to determine file size",
-            path.string());
+        return make_error(ErrorKind::IoError, "failed to determine file size", path.string());
     }
     stream.seekg(0, std::ios::beg);
 
@@ -164,10 +148,7 @@ Result<std::string> read_file(const std::filesystem::path& path)
     if (!contents.empty()) {
         stream.read(contents.data(), static_cast<std::streamsize>(contents.size()));
         if (!stream) {
-            return make_error(
-                ErrorKind::IoError,
-                "failed to read file contents",
-                path.string());
+            return make_error(ErrorKind::IoError, "failed to read file contents", path.string());
         }
     }
     return contents;
@@ -177,17 +158,11 @@ Result<void> write_file(const std::filesystem::path& path, std::string_view cont
 {
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
     if (!stream) {
-        return make_error(
-            ErrorKind::IoError,
-            "failed to open file for writing",
-            path.string());
+        return make_error(ErrorKind::IoError, "failed to open file for writing", path.string());
     }
     stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
     if (!stream) {
-        return make_error(
-            ErrorKind::IoError,
-            "failed to write file contents",
-            path.string());
+        return make_error(ErrorKind::IoError, "failed to write file contents", path.string());
     }
     return {};
 }

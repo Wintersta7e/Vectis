@@ -15,11 +15,12 @@ namespace vectis::code {
 ///
 /// The raw `import_string` is preserved either way so consumers can
 /// display unresolved externals or debug resolution failures.
-struct Dependency {
+struct Dependency
+{
     std::int64_t source_file_id = 0;
-    std::int64_t target_file_id = 0;   ///< 0 if external / unresolved
-    std::string  import_string;        ///< e.g. "./foo", "core/log.h"
-    std::string  kind;                 ///< "include" | "import" | "use" | "require"
+    std::int64_t target_file_id = 0; ///< 0 if external / unresolved
+    std::string import_string;       ///< e.g. "./foo", "core/log.h"
+    std::string kind;                ///< "include" | "import" | "use" | "require"
 };
 
 /// True if this dependency resolved to a file inside the project.

@@ -12,7 +12,8 @@ namespace vectis::code {
 /// Python, JavaScript (incl. `.jsx`), TypeScript (incl. `.tsx`), C,
 /// C++, Rust, Java, C#, Go, Ruby, PHP, and SQL. All other languages
 /// fall into `Unknown` and are skipped by the scanner.
-enum class Language : std::uint8_t {
+enum class Language : std::uint8_t
+{
     Unknown = 0,
     Python,
     JavaScript,

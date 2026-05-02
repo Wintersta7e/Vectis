@@ -9,10 +9,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "core/result.h"
-#include "core/task_queue.h"
 #include "code/code_index.h"
 #include "code/parser.h"
+#include "core/result.h"
+#include "core/task_queue.h"
 
 namespace vectis::code {
 
@@ -20,32 +20,36 @@ namespace vectis::code {
 /// `codebase.scan.progress` ContextBus topic. Values reflect the
 /// moment the publish was throttled out of the scanner loop, not the
 /// current instant.
-struct ScanProgress {
-    std::size_t       files_scanned = 0;
-    std::uint64_t     files_skipped = 0;
-    std::string       current_path;   // relative, may be empty
+struct ScanProgress
+{
+    std::size_t files_scanned = 0;
+    std::uint64_t files_skipped = 0;
+    std::string current_path; // relative, may be empty
 };
 
 /// Final summary emitted on the `codebase.indexed` topic when a scan
 /// completes successfully.
-struct ScanSummary {
-    std::size_t file_count     = 0;
-    std::size_t symbol_count   = 0;
+struct ScanSummary
+{
+    std::size_t file_count = 0;
+    std::size_t symbol_count = 0;
     std::size_t language_count = 0;
 };
 
 /// Configuration for one scan run.
-struct ScanConfig {
-    std::filesystem::path    root;
+struct ScanConfig
+{
+    std::filesystem::path root;
     std::unordered_set<std::string> exclude_dir_names;
-    std::int64_t             epoch = 0;
+    std::int64_t epoch = 0;
 };
 
 /// Summary of an incremental scan (how many files were changed).
-struct IncrementalScanResult {
-    std::size_t files_added     = 0;
-    std::size_t files_updated   = 0;
-    std::size_t files_deleted   = 0;
+struct IncrementalScanResult
+{
+    std::size_t files_added = 0;
+    std::size_t files_updated = 0;
+    std::size_t files_deleted = 0;
     std::size_t files_unchanged = 0;
 };
 
@@ -58,7 +62,8 @@ struct IncrementalScanResult {
 /// not retain a pointer after the call returns. Progress is reported
 /// through a `progress_callback` so callers can marshal to the UI
 /// thread via a ContextBus publish (or any other transport).
-class Scanner {
+class Scanner
+{
 public:
     using ProgressCallback = std::function<void(const ScanProgress&)>;
     using CompletionCallback = std::function<void(const ScanSummary&)>;
@@ -88,25 +93,20 @@ public:
     ///                            every batch boundary; mismatch ends
     ///                            the scan immediately.
     [[nodiscard]] static vectis::core::Result<ScanSummary>
-    run(const ScanConfig&                           config,
-        CodeIndex&                                  index,
-        TreeSitterParser&                           parser,
-        const ProgressCallback&                     on_progress,
-        const CompletionCallback&                   on_complete,
-        const vectis::core::CancellationToken&      cancel_token,
-        const std::atomic<std::int64_t>&            current_epoch);
+    run(const ScanConfig& config, CodeIndex& index, TreeSitterParser& parser,
+        const ProgressCallback& on_progress, const CompletionCallback& on_complete,
+        const vectis::core::CancellationToken& cancel_token,
+        const std::atomic<std::int64_t>& current_epoch);
 
     /// Incremental scan: walks the directory, compares content hashes
     /// against the existing index, and re-parses only changed/new files.
     /// Deleted files are removed from the index. Dependencies are
     /// re-resolved after all changes are applied.
     [[nodiscard]] static vectis::core::Result<IncrementalScanResult>
-    run_incremental(const ScanConfig&                      config,
-                    CodeIndex&                             index,
-                    TreeSitterParser&                      parser,
-                    const ProgressCallback&                on_progress,
+    run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterParser& parser,
+                    const ProgressCallback& on_progress,
                     const vectis::core::CancellationToken& cancel_token,
-                    const std::atomic<std::int64_t>&       current_epoch);
+                    const std::atomic<std::int64_t>& current_epoch);
 };
 
 } // namespace vectis::code

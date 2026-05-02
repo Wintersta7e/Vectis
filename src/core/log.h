@@ -55,6 +55,6 @@ void shutdown() noexcept;
 
 #define VECTIS_LOG_TRACE(...) VECTIS_LOG_IMPL(::spdlog::level::trace, __VA_ARGS__)
 #define VECTIS_LOG_DEBUG(...) VECTIS_LOG_IMPL(::spdlog::level::debug, __VA_ARGS__)
-#define VECTIS_LOG_INFO(...)  VECTIS_LOG_IMPL(::spdlog::level::info, __VA_ARGS__)
-#define VECTIS_LOG_WARN(...)  VECTIS_LOG_IMPL(::spdlog::level::warn, __VA_ARGS__)
+#define VECTIS_LOG_INFO(...) VECTIS_LOG_IMPL(::spdlog::level::info, __VA_ARGS__)
+#define VECTIS_LOG_WARN(...) VECTIS_LOG_IMPL(::spdlog::level::warn, __VA_ARGS__)
 #define VECTIS_LOG_ERROR(...) VECTIS_LOG_IMPL(::spdlog::level::err, __VA_ARGS__)

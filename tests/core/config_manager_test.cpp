@@ -1,5 +1,3 @@
-#include "core/config_manager.h"
-
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include "core/config_manager.h"
 #include "core/result.h"
 
 namespace {
@@ -19,7 +18,8 @@ using vectis::core::ErrorKind;
 /// Fixture that gives each test a unique temp file path it owns
 /// and cleans up after itself, exercising the real `toml::parse_file`
 /// path rather than in-memory parsing.
-class ConfigManagerTest : public ::testing::Test {
+class ConfigManagerTest : public ::testing::Test
+{
 protected:
     void SetUp() override
     {
@@ -29,10 +29,7 @@ protected:
         std::filesystem::remove(m_path);
     }
 
-    void TearDown() override
-    {
-        std::filesystem::remove(m_path);
-    }
+    void TearDown() override { std::filesystem::remove(m_path); }
 
     void write(std::string_view contents) const
     {
@@ -61,7 +58,7 @@ TEST_F(ConfigManagerTest, ParseError_WhenMalformed)
     write("[general\ntheme = \"dark\"\n");
 
     ConfigManager cfg;
-    const auto    result = cfg.load(m_path);
+    const auto result = cfg.load(m_path);
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().kind, ErrorKind::ConfigError);
     EXPECT_FALSE(cfg.loaded_from_file());
@@ -95,8 +92,7 @@ confidence = 0.875
     EXPECT_FALSE(cfg.get_bool("code.digest.include_signatures", true));
     EXPECT_DOUBLE_EQ(cfg.get_double("code.digest.confidence", 0.0), 0.875);
 
-    const std::vector<std::string> exclude = cfg.get_string_array(
-        "code.exclude", {"fallback"});
+    const std::vector<std::string> exclude = cfg.get_string_array("code.exclude", {"fallback"});
     ASSERT_EQ(exclude.size(), 3U);
     EXPECT_EQ(exclude[0], "node_modules");
     EXPECT_EQ(exclude[1], "dist");
@@ -105,7 +101,7 @@ confidence = 0.875
 
 TEST_F(ConfigManagerTest, EnvOverride_PassThrough)
 {
-    constexpr const char* k_env_name  = "VECTIS_TEST_ENV_VAR_42";
+    constexpr const char* k_env_name = "VECTIS_TEST_ENV_VAR_42";
     constexpr const char* k_env_value = "hello-from-env";
 
 #if defined(_WIN32)

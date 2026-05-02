@@ -19,12 +19,13 @@ namespace vectis::services {
 /// UPDATE / DELETE) and DDL (CREATE / ALTER / DROP) are serialized by an
 /// internal write mutex. Read-only SELECTs via Statement::query() do
 /// **not** take the write mutex — SQLite WAL handles that natively.
-class StorageEngine {
+class StorageEngine
+{
 public:
     StorageEngine();
     ~StorageEngine();
 
-    StorageEngine(const StorageEngine&)            = delete;
+    StorageEngine(const StorageEngine&) = delete;
     StorageEngine& operator=(const StorageEngine&) = delete;
     StorageEngine(StorageEngine&&) noexcept;
     StorageEngine& operator=(StorageEngine&&) noexcept;
@@ -59,12 +60,13 @@ public:
 
     /// A single row from a SELECT result. Columns are accessed by
     /// zero-based index matching the SELECT column order.
-    class Row {
+    class Row
+    {
     public:
-        [[nodiscard]] std::int64_t  get_int(int col) const;
-        [[nodiscard]] std::string   get_text(int col) const;
-        [[nodiscard]] double        get_real(int col) const;
-        [[nodiscard]] bool          is_null(int col) const;
+        [[nodiscard]] std::int64_t get_int(int col) const;
+        [[nodiscard]] std::string get_text(int col) const;
+        [[nodiscard]] double get_real(int col) const;
+        [[nodiscard]] bool is_null(int col) const;
 
     private:
         friend class StorageEngine;
@@ -74,11 +76,12 @@ public:
 
     /// A compiled SQL statement with typed parameter binding.
     /// Move-only; finalizes the underlying sqlite3_stmt on destruction.
-    class Statement {
+    class Statement
+    {
     public:
         ~Statement();
 
-        Statement(const Statement&)            = delete;
+        Statement(const Statement&) = delete;
         Statement& operator=(const Statement&) = delete;
         Statement(Statement&&) noexcept;
         Statement& operator=(Statement&&) noexcept;
@@ -123,12 +126,13 @@ public:
 
     /// RAII transaction guard. Rolls back on destruction unless
     /// `commit()` was called.
-    class Transaction {
+    class Transaction
+    {
     public:
         explicit Transaction(StorageEngine& engine);
         ~Transaction();
 
-        Transaction(const Transaction&)            = delete;
+        Transaction(const Transaction&) = delete;
         Transaction& operator=(const Transaction&) = delete;
         Transaction(Transaction&& other) noexcept;
         Transaction& operator=(Transaction&& other) noexcept;
@@ -140,8 +144,8 @@ public:
         [[nodiscard]] bool is_active() const { return m_active; }
 
     private:
-        StorageEngine* m_engine  = nullptr;
-        bool           m_active  = false;
+        StorageEngine* m_engine = nullptr;
+        bool m_active = false;
     };
 
 private:

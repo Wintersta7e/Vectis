@@ -13,12 +13,12 @@
 #include <utility>
 #include <vector>
 
-#include "core/log.h"
 #include "code/code_index.h"
 #include "code/dependency.h"
 #include "code/language.h"
 #include "code/parser.h"
 #include "code/symbol.h"
+#include "core/log.h"
 
 namespace vectis::code {
 
@@ -26,27 +26,35 @@ namespace {
 
 /// Extension candidates to try, in priority order, when resolving an
 /// import that has no extension (e.g. TypeScript `./foo`).
-[[nodiscard]] std::vector<std::string_view>
-candidate_extensions(Language language) noexcept
+[[nodiscard]] std::vector<std::string_view> candidate_extensions(Language language) noexcept
 {
     switch (language) {
-        case Language::TypeScript: return {".ts", ".tsx", ".d.ts", ".js"};
-        case Language::JavaScript: return {".js", ".mjs", ".cjs", ".jsx"};
-        case Language::Python:     return {".py", ".pyi"};
-        case Language::Cpp:        return {".hpp", ".h", ".hh", ".hxx", ".cpp", ".cxx", ".cc"};
-        case Language::C:          return {".h", ".c"};
-        case Language::Rust:       return {".rs"};
-        case Language::Java:       return {".java"};
-        case Language::Ruby:       return {".rb"};
-        case Language::Php:        return {".php"};
-        default:                   return {};
+    case Language::TypeScript:
+        return {".ts", ".tsx", ".d.ts", ".js"};
+    case Language::JavaScript:
+        return {".js", ".mjs", ".cjs", ".jsx"};
+    case Language::Python:
+        return {".py", ".pyi"};
+    case Language::Cpp:
+        return {".hpp", ".h", ".hh", ".hxx", ".cpp", ".cxx", ".cc"};
+    case Language::C:
+        return {".h", ".c"};
+    case Language::Rust:
+        return {".rs"};
+    case Language::Java:
+        return {".java"};
+    case Language::Ruby:
+        return {".rb"};
+    case Language::Php:
+        return {".php"};
+    default:
+        return {};
     }
 }
 
 /// Lexical normalization without touching the filesystem: collapse
 /// `./` and `../` segments in a relative path.
-[[nodiscard]] std::filesystem::path
-normalize_relative(const std::filesystem::path& in)
+[[nodiscard]] std::filesystem::path normalize_relative(const std::filesystem::path& in)
 {
     std::filesystem::path out;
     for (const auto& segment : in) {
@@ -66,10 +74,12 @@ normalize_relative(const std::filesystem::path& in)
                         out = str;
                     }
                 }
-            } else {
+            }
+            else {
                 out /= "..";
             }
-        } else {
+        }
+        else {
             out /= s;
         }
     }
@@ -78,9 +88,8 @@ normalize_relative(const std::filesystem::path& in)
 
 /// True if `path_relative` equals `candidate_rel` (or `candidate_rel`
 /// with a trailing `/index.<ext>` variant). Simple string match.
-[[nodiscard]] bool path_equals(
-    const std::filesystem::path& path_relative,
-    const std::filesystem::path& candidate_rel) noexcept
+[[nodiscard]] bool path_equals(const std::filesystem::path& path_relative,
+                               const std::filesystem::path& candidate_rel) noexcept
 {
     return path_relative.generic_string() == candidate_rel.generic_string();
 }
@@ -88,9 +97,8 @@ normalize_relative(const std::filesystem::path& in)
 /// True if a file's relative path ends with the given suffix. Used
 /// for the "find any file whose path ends with the raw include"
 /// fallback (step 3 of the resolution strategy).
-[[nodiscard]] bool path_ends_with(
-    const std::filesystem::path& path_relative,
-    std::string_view             suffix) noexcept
+[[nodiscard]] bool path_ends_with(const std::filesystem::path& path_relative,
+                                  std::string_view suffix) noexcept
 {
     const std::string full = path_relative.generic_string();
     if (suffix.size() > full.size()) {
@@ -108,10 +116,9 @@ normalize_relative(const std::filesystem::path& in)
 /// Try to match `candidate_stem` (a stem like "foo/bar" with no
 /// extension) against every file in the index using each extension
 /// from `extensions`. Returns the matching file_id or 0.
-[[nodiscard]] std::int64_t match_by_extension(
-    const std::vector<FileEntry>& files,
-    const std::filesystem::path&  candidate_stem,
-    const std::vector<std::string_view>& extensions)
+[[nodiscard]] std::int64_t match_by_extension(const std::vector<FileEntry>& files,
+                                              const std::filesystem::path& candidate_stem,
+                                              const std::vector<std::string_view>& extensions)
 {
     for (const std::string_view ext : extensions) {
         std::filesystem::path candidate = candidate_stem;
@@ -135,8 +142,7 @@ normalize_relative(const std::filesystem::path& in)
 
 /// Split a dotted name like `foo.bar.Baz` into path segments `foo/bar/Baz`.
 /// Empty segments (leading dot, consecutive dots) are skipped.
-[[nodiscard]] std::filesystem::path
-split_dotted(std::string_view dotted, char separator)
+[[nodiscard]] std::filesystem::path split_dotted(std::string_view dotted, char separator)
 {
     std::filesystem::path stem;
     std::size_t start = 0;
@@ -157,18 +163,15 @@ split_dotted(std::string_view dotted, char separator)
 
 /// Look up a Python module rooted at `<stem>` — first as a `.py` /
 /// `.pyi` file, then as a `<stem>/__init__.py(i)` package marker.
-[[nodiscard]] std::int64_t match_python_module(
-    const std::vector<FileEntry>& files,
-    const std::filesystem::path&  stem)
+[[nodiscard]] std::int64_t match_python_module(const std::vector<FileEntry>& files,
+                                               const std::filesystem::path& stem)
 {
     static const std::vector<std::string_view> k_py_ext = {".py", ".pyi"};
-    if (const std::int64_t direct = match_by_extension(files, stem, k_py_ext);
-        direct != 0) {
+    if (const std::int64_t direct = match_by_extension(files, stem, k_py_ext); direct != 0) {
         return direct;
     }
     for (const std::string_view ext : k_py_ext) {
-        const std::filesystem::path init_path =
-            stem / (std::string{"__init__"} + std::string{ext});
+        const std::filesystem::path init_path = stem / (std::string{"__init__"} + std::string{ext});
         for (const FileEntry& file : files) {
             if (path_equals(file.path_relative, init_path)) {
                 return file.id;
@@ -180,9 +183,8 @@ split_dotted(std::string_view dotted, char separator)
 
 /// Python-specific: convert `foo.bar` to `foo/bar` and try `.py`/.pyi,
 /// or `foo/bar/__init__.py`.
-[[nodiscard]] std::int64_t match_python_dotted(
-    const std::vector<FileEntry>& files,
-    std::string_view              dotted)
+[[nodiscard]] std::int64_t match_python_dotted(const std::vector<FileEntry>& files,
+                                               std::string_view dotted)
 {
     return match_python_module(files, split_dotted(dotted, '.'));
 }
@@ -202,10 +204,9 @@ split_dotted(std::string_view dotted, char separator)
 /// imports for package-internal references — end up with
 /// `internal_edges: 0` despite having hundreds of intra-project
 /// imports.
-[[nodiscard]] std::int64_t match_python_relative(
-    const std::vector<FileEntry>& files,
-    const std::filesystem::path&  source_relative_path,
-    std::string_view              with_dots)
+[[nodiscard]] std::int64_t match_python_relative(const std::vector<FileEntry>& files,
+                                                 const std::filesystem::path& source_relative_path,
+                                                 std::string_view with_dots)
 {
     std::size_t n_dots = 0;
     while (n_dots < with_dots.size() && with_dots[n_dots] == '.') {
@@ -234,9 +235,8 @@ split_dotted(std::string_view dotted, char separator)
 /// Java-specific: `foo.bar.Baz` → try `foo/bar/Baz.java` directly, then
 /// fall back to an endswith match so projects rooted under `src/main/java`
 /// still resolve without us parsing build descriptors.
-[[nodiscard]] std::int64_t match_java_dotted(
-    const std::vector<FileEntry>& files,
-    std::string_view              dotted)
+[[nodiscard]] std::int64_t match_java_dotted(const std::vector<FileEntry>& files,
+                                             std::string_view dotted)
 {
     const std::filesystem::path stem = split_dotted(dotted, '.');
     static const std::vector<std::string_view> k_java_ext = {".java"};
@@ -253,14 +253,12 @@ split_dotted(std::string_view dotted, char separator)
     return 0;
 }
 
-
 /// PHP-specific: `Slim\Factory\Foo` → try `Slim/Factory/Foo.php`
 /// directly, then fall back to a suffix match so projects rooted
 /// under `src/` (the PSR-4 default) still resolve without us reading
 /// `composer.json`.
-[[nodiscard]] std::int64_t match_php_namespaced(
-    const std::vector<FileEntry>& files,
-    std::string_view              namespaced)
+[[nodiscard]] std::int64_t match_php_namespaced(const std::vector<FileEntry>& files,
+                                                std::string_view namespaced)
 {
     const std::filesystem::path stem = split_dotted(namespaced, '\\');
     static const std::vector<std::string_view> k_php_ext = {".php"};
@@ -287,20 +285,20 @@ split_dotted(std::string_view dotted, char separator)
 // the right shape; the cppcoreguidelines warning targets long-lived
 // types where ref members poison copy/move semantics, which doesn't
 // apply here.
-struct ResolveCtx {
+struct ResolveCtx
+{
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-    const std::vector<FileEntry>&                                   files;
+    const std::vector<FileEntry>& files;
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
     const std::unordered_map<std::string, std::vector<std::int64_t>>& namespace_to_files;
-    std::string                                                     go_module_prefix; ///< empty if no go.mod
+    std::string go_module_prefix; ///< empty if no go.mod
 };
 
 /// Read the first `module <path>` line out of a Go `go.mod` file. Only
 /// looks at the project root — monorepos with per-subdir go.mods aren't
 /// handled here, which is consistent with how we treat other config
 /// files (Cargo.toml, tsconfig.json) today.
-[[nodiscard]] std::string
-read_go_module_prefix(const std::filesystem::path& project_root)
+[[nodiscard]] std::string read_go_module_prefix(const std::filesystem::path& project_root)
 {
     const std::filesystem::path mod_path = project_root / "go.mod";
     std::error_code ec;
@@ -316,19 +314,15 @@ read_go_module_prefix(const std::filesystem::path& project_root)
         // Strip leading whitespace — Go's formatter keeps things tidy
         // but handwritten go.mod files sometimes indent.
         std::size_t start = 0;
-        while (start < line.size() &&
-               std::isspace(static_cast<unsigned char>(line[start])) != 0)
-        {
+        while (start < line.size() && std::isspace(static_cast<unsigned char>(line[start])) != 0) {
             ++start;
         }
         constexpr std::string_view k_prefix = "module ";
         if (line.compare(start, k_prefix.size(), k_prefix) == 0) {
             std::string path = line.substr(start + k_prefix.size());
             // Trim trailing comment / whitespace / quotes.
-            while (!path.empty() &&
-                   (std::isspace(static_cast<unsigned char>(path.back())) != 0 ||
-                    path.back() == '"' || path.back() == '\''))
-            {
+            while (!path.empty() && (std::isspace(static_cast<unsigned char>(path.back())) != 0 ||
+                                     path.back() == '"' || path.back() == '\'')) {
                 path.pop_back();
             }
             // Drop leading quote if the module path was quoted.
@@ -363,23 +357,19 @@ build_namespace_index(const std::vector<FileImports>& per_file)
 /// result can be a vector of several ids. An empty vector means the
 /// import is external / unresolved, and a single external edge is
 /// recorded with `target_file_id = 0`.
-[[nodiscard]] std::vector<std::int64_t> resolve_one(
-    const FileImports&  source,
-    const RawImport&    raw,
-    const ResolveCtx&   ctx)
+[[nodiscard]] std::vector<std::int64_t> resolve_one(const FileImports& source, const RawImport& raw,
+                                                    const ResolveCtx& ctx)
 {
     const std::vector<FileEntry>& files = ctx.files;
     const std::vector<std::string_view> exts = candidate_extensions(source.language);
 
     // --- 1. Relative path (./ or ../) ------------------------------
     const bool is_relative_prefix =
-        raw.import_string.starts_with("./") ||
-        raw.import_string.starts_with("../");
+        raw.import_string.starts_with("./") || raw.import_string.starts_with("../");
 
     if (is_relative_prefix && !exts.empty()) {
         const std::filesystem::path source_dir = source.relative_path.parent_path();
-        const std::filesystem::path joined     = normalize_relative(
-            source_dir / raw.import_string);
+        const std::filesystem::path joined = normalize_relative(source_dir / raw.import_string);
 
         if (!std::filesystem::path{raw.import_string}.extension().empty()) {
             for (const FileEntry& file : files) {
@@ -396,16 +386,15 @@ build_namespace_index(const std::vector<FileImports>& per_file)
 
     // --- 2. C/C++ include path with an extension already in place --
     if ((source.language == Language::Cpp || source.language == Language::C) &&
-        !std::filesystem::path{raw.import_string}.extension().empty())
-    {
+        !std::filesystem::path{raw.import_string}.extension().empty()) {
         const std::filesystem::path as_project_root{raw.import_string};
         for (const FileEntry& file : files) {
             if (path_equals(file.path_relative, as_project_root)) {
                 return {file.id};
             }
         }
-        const std::filesystem::path joined = normalize_relative(
-            source.relative_path.parent_path() / raw.import_string);
+        const std::filesystem::path joined =
+            normalize_relative(source.relative_path.parent_path() / raw.import_string);
         for (const FileEntry& file : files) {
             if (path_equals(file.path_relative, joined)) {
                 return {file.id};
@@ -426,10 +415,9 @@ build_namespace_index(const std::vector<FileImports>& per_file)
     // `models.py`), so relative imports go through their own path.
     if (source.language == Language::Python) {
         if (!raw.import_string.empty() && raw.import_string.front() == '.') {
-            const std::int64_t hit = match_python_relative(
-                files, source.relative_path, raw.import_string);
-            return hit != 0 ? std::vector<std::int64_t>{hit}
-                            : std::vector<std::int64_t>{};
+            const std::int64_t hit =
+                match_python_relative(files, source.relative_path, raw.import_string);
+            return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
         }
         const std::int64_t hit = match_python_dotted(files, raw.import_string);
         return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
@@ -474,8 +462,7 @@ build_namespace_index(const std::vector<FileImports>& per_file)
     // still resolve `require 'lib/x'` to `<root>/lib/x.rb`.
     if (source.language == Language::Ruby) {
         const std::filesystem::path source_dir = source.relative_path.parent_path();
-        const std::filesystem::path stem = normalize_relative(
-            source_dir / raw.import_string);
+        const std::filesystem::path stem = normalize_relative(source_dir / raw.import_string);
         const std::int64_t hit = match_by_extension(files, stem, {".rb"});
         if (hit != 0) {
             return {hit};
@@ -499,8 +486,7 @@ build_namespace_index(const std::vector<FileImports>& per_file)
                 path_str.erase(0, 1);
             }
             const std::filesystem::path source_dir = source.relative_path.parent_path();
-            const std::filesystem::path joined     = normalize_relative(
-                source_dir / path_str);
+            const std::filesystem::path joined = normalize_relative(source_dir / path_str);
 
             if (!std::filesystem::path{raw.import_string}.extension().empty()) {
                 for (const FileEntry& file : files) {
@@ -561,26 +547,20 @@ build_namespace_index(const std::vector<FileImports>& per_file)
     // `.go` file under the remaining directory (Go's import unit is
     // the package = directory). Standard-library and 3rd-party
     // imports fall through as external.
-    if (source.language == Language::Go &&
-        !ctx.go_module_prefix.empty())
-    {
+    if (source.language == Language::Go && !ctx.go_module_prefix.empty()) {
         const std::string& prefix = ctx.go_module_prefix;
-        const std::string& imp    = raw.import_string;
+        const std::string& imp = raw.import_string;
         if (imp == prefix ||
-            (imp.size() > prefix.size() + 1 &&
-             imp.compare(0, prefix.size(), prefix) == 0 &&
-             imp[prefix.size()] == '/'))
-        {
-            const std::string rel_dir = (imp.size() > prefix.size())
-                ? imp.substr(prefix.size() + 1)
-                : std::string{};
+            (imp.size() > prefix.size() + 1 && imp.compare(0, prefix.size(), prefix) == 0 &&
+             imp[prefix.size()] == '/')) {
+            const std::string rel_dir =
+                (imp.size() > prefix.size()) ? imp.substr(prefix.size() + 1) : std::string{};
             std::vector<std::int64_t> hits;
             for (const FileEntry& file : files) {
                 if (file.language != Language::Go) {
                     continue;
                 }
-                const std::string parent =
-                    file.path_relative.parent_path().generic_string();
+                const std::string parent = file.path_relative.parent_path().generic_string();
                 if (parent == rel_dir) {
                     hits.push_back(file.id);
                 }
@@ -594,9 +574,8 @@ build_namespace_index(const std::vector<FileImports>& per_file)
 
 } // namespace
 
-void resolve_all(CodeIndex&                       index,
-                 const std::filesystem::path&     project_root,
-                 const std::vector<FileImports>&  per_file)
+void resolve_all(CodeIndex& index, const std::filesystem::path& project_root,
+                 const std::vector<FileImports>& per_file)
 {
     const ResolveCtx ctx{
         /* files               = */ index.snapshot_files(),
@@ -614,8 +593,8 @@ void resolve_all(CodeIndex&                       index,
                 Dependency dep;
                 dep.source_file_id = source.file_id;
                 dep.target_file_id = 0;
-                dep.import_string  = raw.import_string;
-                dep.kind           = raw.kind;
+                dep.import_string = raw.import_string;
+                dep.kind = raw.kind;
                 index.add_dependency(std::move(dep));
                 ++external_count;
                 continue;
@@ -627,19 +606,18 @@ void resolve_all(CodeIndex&                       index,
                 Dependency dep;
                 dep.source_file_id = source.file_id;
                 dep.target_file_id = target;
-                dep.import_string  = raw.import_string;
-                dep.kind           = raw.kind;
+                dep.import_string = raw.import_string;
+                dep.kind = raw.kind;
                 index.add_dependency(std::move(dep));
                 ++resolved_count;
             }
         }
     }
 
-    VECTIS_LOG_INFO(
-        "Dependency resolution complete: {} resolved, {} external "
-        "(go_module='{}', namespaces={})",
-        resolved_count, external_count,
-        ctx.go_module_prefix, ctx.namespace_to_files.size());
+    VECTIS_LOG_INFO("Dependency resolution complete: {} resolved, {} external "
+                    "(go_module='{}', namespaces={})",
+                    resolved_count, external_count, ctx.go_module_prefix,
+                    ctx.namespace_to_files.size());
 }
 
 } // namespace vectis::code
