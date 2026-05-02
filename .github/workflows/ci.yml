@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A push that arrives while a previous run for the same ref is still
+# going cancels the in-flight one — saves runner minutes on rapid
+# pushes without losing the latest result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake ninja-build \
+            git pkg-config \
+            libsqlite3-dev \
+            libspdlog-dev \
+            libfmt-dev \
+            nlohmann-json3-dev \
+            libtomlplusplus-dev \
+            libgtest-dev
+
+      - name: Configure
+        run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel
+
+      - name: Smoke-test the binary on the project's own tree
+        # Catches crashes in the actual CLI dispatcher that gtest can't —
+        # ctest exercises gtest, not the binary's main() path.
+        run: |
+          ./build/vectis digest . --format slim --quiet > /tmp/self.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/self.json'))
+          assert d['project']['file_count'] > 50, 'self-scan returned too few files'
+          assert d['project']['symbol_count'] > 500, 'self-scan returned too few symbols'
+          assert 'architecture' in d, 'slim digest missing architecture block'
+          print(f\"self-scan: {d['project']['file_count']} files, {d['project']['symbol_count']} symbols, arch={d['architecture']['label']}\")
+          "
+
+  format-check:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Check formatting
+        # Vectis-owned source only — _deps/ and build/ are never staged.
+        run: |
+          find src tests \( -name '*.cpp' -o -name '*.h' \) -print0 \
+            | xargs -0 clang-format --dry-run --Werror
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake ninja-build \
+            git pkg-config \
+            libsqlite3-dev \
+            libspdlog-dev \
+            libfmt-dev \
+            nlohmann-json3-dev \
+            libtomlplusplus-dev \
+            libgtest-dev \
+            clang-tidy
+
+      - name: Configure with compile_commands.json
+        run: cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        # Necessary so that grammar-generated headers exist on disk before
+        # tidy parses each .cpp — otherwise tidy fails with #include errors
+        # before it can run a single check.
+        run: cmake --build build --parallel
+
+      - name: Run clang-tidy on Vectis sources
+        # `.clang-tidy` already has WarningsAsErrors: '*'; passing the flag
+        # explicitly is belt-and-suspenders against future config drift.
+        run: |
+          find src -name '*.cpp' -not -path '*/queries/*' -print0 \
+            | xargs -0 -P "$(nproc)" -I {} clang-tidy -p build --quiet --warnings-as-errors='*' {}
