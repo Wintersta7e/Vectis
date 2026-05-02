@@ -40,12 +40,9 @@ const std::unordered_set<std::string> k_non_source_subtree_names = {
     if (dir.has_filename()) {
         dir.remove_filename();
     }
-    for (const auto& segment : dir) {
-        if (k_non_source_subtree_names.contains(segment.string())) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(dir, [](const auto& segment) {
+        return k_non_source_subtree_names.contains(segment.string());
+    });
 }
 
 /// Collect distinct directory segments from scanned files.
@@ -122,12 +119,10 @@ count_dotted_project_dirs(const CodeIndex& index)
 [[nodiscard]] bool any_file_named(
     const CodeIndex& index, std::string_view name)
 {
-    for (const FileEntry& file : index.snapshot_files()) {
-        if (file.path_relative.filename().string() == name) {
-            return true;
-        }
-    }
-    return false;
+    const auto files = index.snapshot_files();
+    return std::ranges::any_of(files, [&](const FileEntry& file) {
+        return file.path_relative.filename().string() == name;
+    });
 }
 
 /// Count files whose filename starts with `main.` (e.g. main.cpp,
@@ -145,7 +140,7 @@ count_dotted_project_dirs(const CodeIndex& index)
             continue;
         }
         const std::string name = file.path_relative.filename().string();
-        if (name.rfind("main.", 0) == 0 || name == "main") {
+        if (name.starts_with("main.") || name == "main") {
             ++count;
         }
     }
@@ -166,7 +161,7 @@ read_text_capped(const std::filesystem::path& path)
     if (!in) {
         return {};
     }
-    constexpr std::streamsize k_max = 64 * 1024;
+    constexpr std::streamsize k_max = static_cast<std::streamsize>(64) * 1024;
     std::string               out;
     out.resize(k_max);
     in.read(out.data(), k_max);
@@ -193,7 +188,7 @@ detect_rust_workspace(const std::filesystem::path& project_root)
     while (std::getline(in, line)) {
         std::size_t i = 0;
         while (i < line.size() &&
-               std::isspace(static_cast<unsigned char>(line[i])))
+               std::isspace(static_cast<unsigned char>(line[i])) != 0)
         {
             ++i;
         }
@@ -356,9 +351,12 @@ detect_architecture(const CodeIndex& index,
         // string claiming "`packages/` or `apps/`" when only `libs/`
         // fired is exactly the template hallucination consumers
         // reported, and erodes trust in the whole classifier.
-        const char* which = has_packages ? "packages"
-                          : has_apps     ? "apps"
-                          :                 "libs";
+        const char* which = "libs";
+        if (has_packages) {
+            which = "packages";
+        } else if (has_apps) {
+            which = "apps";
+        }
         out.label      = ArchitectureLabel::Monorepo;
         out.reasoning  = std::string{"top-level `"} + which + "/` plus " +
                          std::to_string(main_count) +
@@ -402,10 +400,9 @@ detect_architecture(const CodeIndex& index,
     // Presentation (case-insensitive is unnecessary — filesystems on
     // Windows are case-insensitive but the convention is PascalCase).
     const auto has_any = [&](std::initializer_list<std::string_view> names) {
-        for (const std::string_view n : names) {
-            if (segments.contains(std::string{n})) return true;
-        }
-        return false;
+        return std::ranges::any_of(names, [&](std::string_view n) {
+            return segments.contains(std::string{n});
+        });
     };
     const int clean_hits = (segments.contains("Domain")         ? 1 : 0)
                          + (segments.contains("Application")    ? 1 : 0)

@@ -193,7 +193,7 @@ std::vector<std::string> ConfigManager::get_string_array(
     return result;
 }
 
-std::optional<std::string> ConfigManager::get_env(std::string_view var_name) const
+std::optional<std::string> ConfigManager::get_env(std::string_view var_name)
 {
     return vectis::platform::get_env(var_name);
 }

@@ -130,8 +130,8 @@ public:
 
         Transaction(const Transaction&)            = delete;
         Transaction& operator=(const Transaction&) = delete;
-        Transaction(Transaction&&) noexcept;
-        Transaction& operator=(Transaction&&) noexcept;
+        Transaction(Transaction&& other) noexcept;
+        Transaction& operator=(Transaction&& other) noexcept;
 
         [[nodiscard]] vectis::core::Result<void> commit();
 

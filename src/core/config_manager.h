@@ -55,7 +55,7 @@ public:
     /// Look up an environment variable. This is a thin pass-through to
     /// `vectis::platform::get_env` and is exposed here so modes have a
     /// single dependency for "configuration values".
-    [[nodiscard]] std::optional<std::string> get_env(std::string_view var_name) const;
+    [[nodiscard]] static std::optional<std::string> get_env(std::string_view var_name);
 
     /// `true` if `load()` successfully read a file (not defaults).
     [[nodiscard]] bool loaded_from_file() const noexcept;

@@ -45,7 +45,8 @@ void IndexEngine::index_file(std::int64_t file_id,
                              std::string_view path,
                              std::string_view content)
 {
-    if (m_impl->storage == nullptr) return;
+    if (m_impl->storage == nullptr) { return;
+}
 
     auto stmt = m_impl->storage->prepare(
         "INSERT INTO fts_content (source, source_id, title, body) "
@@ -64,11 +65,13 @@ void IndexEngine::index_file(std::int64_t file_id,
 
 void IndexEngine::remove_file(std::int64_t file_id)
 {
-    if (m_impl->storage == nullptr) return;
+    if (m_impl->storage == nullptr) { return;
+}
 
     auto stmt = m_impl->storage->prepare(
         "DELETE FROM fts_content WHERE source = 'file' AND source_id = ?");
-    if (!stmt) return;
+    if (!stmt) { return;
+}
     stmt->bind(1, file_id);
     (void)stmt->execute();
 
@@ -76,7 +79,8 @@ void IndexEngine::remove_file(std::int64_t file_id)
     auto stmt2 = m_impl->storage->prepare(
         "DELETE FROM fts_content WHERE source = 'symbol' AND source_id IN "
         "(SELECT id FROM symbols WHERE file_id = ?)");
-    if (!stmt2) return;
+    if (!stmt2) { return;
+}
     stmt2->bind(1, file_id);
     (void)stmt2->execute();
 }
@@ -85,7 +89,8 @@ void IndexEngine::index_symbols(
     std::int64_t file_id,
     const std::vector<vectis::code::Symbol>& symbols)
 {
-    if (m_impl->storage == nullptr) return;
+    if (m_impl->storage == nullptr) { return;
+}
     (void)file_id; // symbols carry their own IDs
 
     auto stmt = m_impl->storage->prepare(
@@ -124,7 +129,8 @@ namespace {
     // Simple strategy: wrap the entire query in double quotes to
     // treat it as a phrase match. If user typed special syntax
     // characters this prevents them from being interpreted.
-    if (query.empty()) return {};
+    if (query.empty()) { return {};
+}
     std::string escaped;
     escaped.reserve(query.size() + 2);
     escaped.push_back('"');
@@ -146,7 +152,8 @@ std::vector<SearchResult> run_search(StorageEngine* storage,
                                      int max_results)
 {
     std::vector<SearchResult> results;
-    if (storage == nullptr || query.empty()) return results;
+    if (storage == nullptr || query.empty()) { return results;
+}
 
     const auto escaped = escape_fts_query(query);
 
@@ -166,13 +173,15 @@ std::vector<SearchResult> run_search(StorageEngine* storage,
     sql += " ORDER BY rank LIMIT ?";
 
     auto stmt = storage->prepare(sql);
-    if (!stmt) return results;
+    if (!stmt) { return results;
+}
 
     stmt->bind(1, std::string_view{escaped});
     stmt->bind(2, static_cast<std::int64_t>(max_results));
 
     auto rows = stmt->query();
-    if (!rows) return results;
+    if (!rows) { return results;
+}
 
     results.reserve(rows->size());
     for (const auto& row : *rows) {
@@ -205,13 +214,16 @@ std::vector<SearchResult> IndexEngine::search_files(std::string_view query, int 
 
 int IndexEngine::indexed_file_count() const
 {
-    if (m_impl->storage == nullptr) return 0;
+    if (m_impl->storage == nullptr) { return 0;
+}
 
     auto stmt = m_impl->storage->prepare(
         "SELECT COUNT(*) FROM fts_content WHERE source = 'file'");
-    if (!stmt) return 0;
+    if (!stmt) { return 0;
+}
     auto rows = stmt->query();
-    if (!rows || rows->empty()) return 0;
+    if (!rows || rows->empty()) { return 0;
+}
     return static_cast<int>((*rows)[0].get_int(0));
 }
 

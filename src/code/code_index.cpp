@@ -242,7 +242,8 @@ std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_
             // blank while the user clears the filter.
             matches.reserve(std::min(limit, m_symbols.size()));
             for (std::size_t i = 0; i < m_symbols.size() && matches.size() < limit; ++i) {
-                if (m_symbols[i].file_id == 0) continue; // skip removed
+                if (m_symbols[i].file_id == 0) { continue; // skip removed
+}
                 matches.push_back(m_symbols[i]);
             }
         } else {
@@ -250,7 +251,8 @@ std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_
                 if (matches.size() >= limit) {
                     break;
                 }
-                if (sym.file_id == 0) continue; // skip removed
+                if (sym.file_id == 0) { continue; // skip removed
+}
                 const std::string lower_name = to_lower_ascii(sym.name);
                 if (lower_name.find(needle) != std::string::npos) {
                     matches.push_back(sym);

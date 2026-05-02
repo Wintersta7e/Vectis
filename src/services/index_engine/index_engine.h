@@ -14,11 +14,11 @@ class StorageEngine;
 
 /// One search result from the FTS5 index.
 struct SearchResult {
-    std::string  source;       ///< "file" or "symbol"
-    std::int64_t source_id;    ///< ID in the source table
-    std::string  title;        ///< filename or symbol name
-    std::string  snippet;      ///< matching text excerpt
-    double       score;        ///< relevance (lower = better in FTS5 rank)
+    std::string  source;          ///< "file" or "symbol"
+    std::int64_t source_id = 0;   ///< ID in the source table
+    std::string  title;           ///< filename or symbol name
+    std::string  snippet;         ///< matching text excerpt
+    double       score     = 0.0; ///< relevance (lower = better in FTS5 rank)
 };
 
 /// Full-text search engine backed by SQLite FTS5.

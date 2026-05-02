@@ -390,9 +390,11 @@ Scanner::run_incremental(const ScanConfig&                      config,
     std::vector<FileImports> per_file_imports;
 
     const auto preemption_reason = [&]() -> std::string_view {
-        if (cancel_token.stop_requested()) return "cancelled by token";
-        if (current_epoch.load(std::memory_order_acquire) != config.epoch)
+        if (cancel_token.stop_requested()) { return "cancelled by token";
+}
+        if (current_epoch.load(std::memory_order_acquire) != config.epoch) {
             return "pre-empted by epoch bump";
+}
         return {};
     };
 
@@ -497,14 +499,16 @@ Scanner::run_incremental(const ScanConfig&                      config,
                 file_entry.line_count    = count_lines(content);
                 file_entry.content_hash  = new_hash;
                 const auto last_write = entry.last_write_time(ec);
-                if (!ec) file_entry.last_modified = last_write;
+                if (!ec) { file_entry.last_modified = last_write;
+}
                 ec.clear();
 
                 const std::int64_t file_id = index.add_file(std::move(file_entry));
 
                 auto parse_result = parser.parse_file(language, content);
                 if (!parse_result.symbols.empty()) {
-                    for (Symbol& sym : parse_result.symbols) sym.file_id = file_id;
+                    for (Symbol& sym : parse_result.symbols) { sym.file_id = file_id;
+}
                     index.add_symbols(parse_result.symbols);
                 }
 
@@ -531,14 +535,16 @@ Scanner::run_incremental(const ScanConfig&                      config,
             file_entry.line_count    = count_lines(content);
             file_entry.content_hash  = new_hash;
             const auto last_write = entry.last_write_time(ec);
-            if (!ec) file_entry.last_modified = last_write;
+            if (!ec) { file_entry.last_modified = last_write;
+}
             ec.clear();
 
             const std::int64_t file_id = index.add_file(std::move(file_entry));
 
             auto parse_result = parser.parse_file(language, content);
             if (!parse_result.symbols.empty()) {
-                for (Symbol& sym : parse_result.symbols) sym.file_id = file_id;
+                for (Symbol& sym : parse_result.symbols) { sym.file_id = file_id;
+}
                 index.add_symbols(parse_result.symbols);
             }
 
@@ -566,7 +572,8 @@ Scanner::run_incremental(const ScanConfig&                      config,
             ScanProgress progress;
             progress.files_scanned = files_seen;
             progress.current_path  = rel_str;
-            if (on_progress) on_progress(progress);
+            if (on_progress) { on_progress(progress);
+}
             last_publish = now;
         }
 

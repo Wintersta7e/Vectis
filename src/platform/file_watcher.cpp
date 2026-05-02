@@ -1,5 +1,6 @@
 #include "platform/file_watcher.h"
 
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -60,7 +61,8 @@ struct FileWatcher::Impl {
 
         std::error_code ec;
         for (const auto& entry : fs::directory_iterator(dir, ec)) {
-            if (ec) break;
+            if (ec) { break;
+}
             if (entry.is_directory(ec) && !ec) {
                 const auto child_rel = relative / entry.path().filename();
                 add_watch_recursive(entry.path(), child_rel);
@@ -112,18 +114,23 @@ void FileWatcher::stop()
 
 void FileWatcher::poll()
 {
-    if (!m_impl->watching) return;
+    if (!m_impl->watching) { return;
+}
 
     // Read as many events as are available (non-blocking).
-    alignas(inotify_event) char buf[4096];
+    alignas(inotify_event) std::array<char, 4096> buf{};
     while (true) {
-        const auto len = ::read(m_impl->inotify_fd, buf, sizeof(buf));
-        if (len <= 0) break;
+        const auto len = ::read(m_impl->inotify_fd, buf.data(), buf.size());
+        if (len <= 0) { break;
+}
 
-        const char* ptr = buf;
-        const char* end = buf + len;
+        const char* ptr = buf.data();
+        const char* end = buf.data() + len;
         while (ptr < end) {
-            const auto* event = reinterpret_cast<const inotify_event*>(ptr);
+            // inotify delivers a packed stream of variable-length
+            // `inotify_event` records; the kernel ABI requires byte-pointer
+            // reinterpretation to walk them.
+            const auto* event = reinterpret_cast<const inotify_event*>(ptr); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
 
             if (event->len > 0 && m_impl->callback) {
                 const auto wd_it = m_impl->wd_to_path.find(event->wd);

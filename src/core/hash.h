@@ -26,7 +26,7 @@ namespace vectis::core {
     std::array<char, 17> buf{};
     std::snprintf(buf.data(), buf.size(), "%016llx",
                   static_cast<unsigned long long>(hash));
-    return std::string(buf.data(), 16);
+    return {buf.data(), 16};
 }
 
 } // namespace vectis::core

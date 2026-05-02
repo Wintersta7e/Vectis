@@ -179,8 +179,8 @@ make_scan_config(const std::filesystem::path& abs_root)
     // Layer in .gitignore-derived names. insert() is idempotent — duplicates
     // against the built-ins are silently absorbed.
     auto gi = vectis::code::read_gitignore_dir_patterns(abs_root);
-    for (auto& name : gi) {
-        config.exclude_dir_names.insert(std::move(name));
+    for (const auto& name : gi) {
+        config.exclude_dir_names.insert(name);
     }
     return config;
 }

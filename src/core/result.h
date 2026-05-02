@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <source_location>
 #include <string>
 #include <utility>
@@ -11,7 +12,7 @@ namespace vectis::core {
 /// Categories of errors that can flow through the Result<T> pipeline.
 /// Each value corresponds to a failure domain; the `Error::message` field
 /// carries the human-readable detail.
-enum class ErrorKind {
+enum class ErrorKind : std::uint8_t {
     IoError,
     ParseError,
     NetworkError,
@@ -33,7 +34,7 @@ struct Error {
     ErrorKind            kind{};
     std::string          message;
     std::string          context;
-    std::source_location location{};
+    std::source_location location;
 };
 
 /// Vectis project-wide Result type.

@@ -1,5 +1,6 @@
 #include "code/gitignore.h"
 
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -10,12 +11,9 @@ namespace {
 
 [[nodiscard]] bool has_glob_meta(std::string_view s) noexcept
 {
-    for (const char c : s) {
-        if (c == '*' || c == '?' || c == '[') {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(s, [](char c) {
+        return c == '*' || c == '?' || c == '[';
+    });
 }
 
 /// Reduce one gitignore line to a bare directory name, or return an

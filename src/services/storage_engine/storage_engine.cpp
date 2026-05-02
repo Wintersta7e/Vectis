@@ -296,6 +296,11 @@ Result<std::vector<StorageEngine::Row>> StorageEngine::Statement::query()
                     row.m_columns.emplace_back(sqlite3_column_double(m_impl->stmt, i));
                     break;
                 case SQLITE_TEXT: {
+                    // SQLite returns UTF-8 text as `unsigned char*` to keep its
+                    // C ABI portable; we read it back as `char*` to feed
+                    // std::string. The byte representation is identical, so
+                    // this is the canonical SQLite-binding cast.
+                    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
                     const auto* text = reinterpret_cast<const char*>(
                         sqlite3_column_text(m_impl->stmt, i));
                     const int len = sqlite3_column_bytes(m_impl->stmt, i);

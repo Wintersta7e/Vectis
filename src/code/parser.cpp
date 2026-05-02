@@ -276,6 +276,12 @@ struct TreeSitterParser::Impl {
 
     std::unordered_map<Language, LanguageEntry> languages;
 
+    Impl()                       = default;
+    Impl(const Impl&)            = delete;
+    Impl& operator=(const Impl&) = delete;
+    Impl(Impl&&)                 = delete;
+    Impl& operator=(Impl&&)      = delete;
+
     ~Impl()
     {
         for (auto& [_lang, entry] : languages) {
@@ -674,7 +680,7 @@ TreeSitterParser::extract_namespaces(Language language, std::string_view content
             std::string ns{content.substr(start, end - start)};
             // Strip stray whitespace from the captured span.
             while (!ns.empty() &&
-                   std::isspace(static_cast<unsigned char>(ns.back())))
+                   std::isspace(static_cast<unsigned char>(ns.back())) != 0)
             {
                 ns.pop_back();
             }

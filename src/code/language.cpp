@@ -79,9 +79,11 @@ Language detect_language(const std::filesystem::path& path) noexcept
                 return entry.language;
             }
         }
-    } catch (...) {
-        // Defensive: any filesystem / allocation hiccup falls through
-        // to Unknown. noexcept boundary protects call sites.
+    } catch (...) { // NOLINT(bugprone-empty-catch)
+        // Intentional swallow: detect_language is a noexcept query used
+        // on every scanned file. Any filesystem / allocation hiccup
+        // falls through to Unknown so the scan can keep going; the
+        // caller will simply skip that file as unsupported.
     }
     return Language::Unknown;
 }
@@ -108,18 +110,30 @@ std::string_view language_name(Language language) noexcept
 
 Language language_from_name(std::string_view name) noexcept
 {
-    if (name == "Python")     return Language::Python;
-    if (name == "JavaScript") return Language::JavaScript;
-    if (name == "TypeScript") return Language::TypeScript;
-    if (name == "C")          return Language::C;
-    if (name == "C++")        return Language::Cpp;
-    if (name == "Rust")       return Language::Rust;
-    if (name == "Java")       return Language::Java;
-    if (name == "C#")         return Language::CSharp;
-    if (name == "Go")         return Language::Go;
-    if (name == "Ruby")       return Language::Ruby;
-    if (name == "PHP")        return Language::Php;
-    if (name == "SQL")        return Language::Sql;
+    if (name == "Python") {     return Language::Python;
+}
+    if (name == "JavaScript") { return Language::JavaScript;
+}
+    if (name == "TypeScript") { return Language::TypeScript;
+}
+    if (name == "C") {          return Language::C;
+}
+    if (name == "C++") {        return Language::Cpp;
+}
+    if (name == "Rust") {       return Language::Rust;
+}
+    if (name == "Java") {       return Language::Java;
+}
+    if (name == "C#") {         return Language::CSharp;
+}
+    if (name == "Go") {         return Language::Go;
+}
+    if (name == "Ruby") {       return Language::Ruby;
+}
+    if (name == "PHP") {        return Language::Php;
+}
+    if (name == "SQL") {        return Language::Sql;
+}
     return Language::Unknown;
 }
 

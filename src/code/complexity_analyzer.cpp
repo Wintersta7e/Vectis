@@ -1,5 +1,6 @@
 #include "code/complexity_analyzer.h"
 
+#include <array>
 #include <cstdint>
 #include <string_view>
 
@@ -121,7 +122,8 @@ namespace {
     int count = 0;
 
     // Manual stack of nodes to visit.
-    TSNode stack[256];
+    constexpr std::size_t k_stack_capacity = 256;
+    std::array<TSNode, k_stack_capacity> stack{};
     std::size_t top = 0;
     stack[top++] = root;
 
@@ -137,7 +139,7 @@ namespace {
         }
 
         const std::uint32_t child_count = ts_node_named_child_count(node);
-        for (std::uint32_t i = 0; i < child_count && top < 255; ++i) {
+        for (std::uint32_t i = 0; i < child_count && top < k_stack_capacity - 1; ++i) {
             stack[top++] = ts_node_named_child(node, i);
         }
         // If we overflowed the fixed stack (very deep tree), we

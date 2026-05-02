@@ -332,9 +332,9 @@ std::string_view import_query_for(Language language) noexcept
 {
     switch (language) {
         case Language::Python:     return k_imports_python;
-        case Language::JavaScript: return k_imports_ts_js;
+        case Language::JavaScript:
         case Language::TypeScript: return k_imports_ts_js;
-        case Language::C:          return k_imports_c_cpp;
+        case Language::C:
         case Language::Cpp:        return k_imports_c_cpp;
         case Language::Rust:       return k_imports_rust;
         case Language::Java:       return k_imports_java;
@@ -344,7 +344,7 @@ std::string_view import_query_for(Language language) noexcept
         case Language::Php:        return k_imports_php;
         // SQL import semantics (FK / table references / sqlplus @includes)
         // haven't been spec'd yet; keep empty until we settle the design.
-        case Language::Sql:        return {};
+        case Language::Sql:
         case Language::Unknown:    return {};
     }
     return {};

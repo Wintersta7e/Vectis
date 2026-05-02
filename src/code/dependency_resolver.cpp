@@ -282,8 +282,15 @@ split_dotted(std::string_view dotted, char separator)
 /// prefix (if a `go.mod` was found at the project root). Packing these
 /// into one argument keeps `resolve_one`'s signature from drifting
 /// every time a new language-specific hint arrives.
+// ResolveCtx is a stack-only lookup struct, never copied or moved — it
+// just bundles refs through the resolver call chain. Const-refs are
+// the right shape; the cppcoreguidelines warning targets long-lived
+// types where ref members poison copy/move semantics, which doesn't
+// apply here.
 struct ResolveCtx {
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
     const std::vector<FileEntry>&                                   files;
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
     const std::unordered_map<std::string, std::vector<std::int64_t>>& namespace_to_files;
     std::string                                                     go_module_prefix; ///< empty if no go.mod
 };
@@ -310,7 +317,7 @@ read_go_module_prefix(const std::filesystem::path& project_root)
         // but handwritten go.mod files sometimes indent.
         std::size_t start = 0;
         while (start < line.size() &&
-               std::isspace(static_cast<unsigned char>(line[start])))
+               std::isspace(static_cast<unsigned char>(line[start])) != 0)
         {
             ++start;
         }
@@ -319,7 +326,7 @@ read_go_module_prefix(const std::filesystem::path& project_root)
             std::string path = line.substr(start + k_prefix.size());
             // Trim trailing comment / whitespace / quotes.
             while (!path.empty() &&
-                   (std::isspace(static_cast<unsigned char>(path.back())) ||
+                   (std::isspace(static_cast<unsigned char>(path.back())) != 0 ||
                     path.back() == '"' || path.back() == '\''))
             {
                 path.pop_back();
@@ -366,8 +373,8 @@ build_namespace_index(const std::vector<FileImports>& per_file)
 
     // --- 1. Relative path (./ or ../) ------------------------------
     const bool is_relative_prefix =
-        raw.import_string.rfind("./", 0) == 0 ||
-        raw.import_string.rfind("../", 0) == 0;
+        raw.import_string.starts_with("./") ||
+        raw.import_string.starts_with("../");
 
     if (is_relative_prefix && !exts.empty()) {
         const std::filesystem::path source_dir = source.relative_path.parent_path();

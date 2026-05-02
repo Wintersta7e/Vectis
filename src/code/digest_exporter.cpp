@@ -1,6 +1,7 @@
 #include "code/digest_exporter.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -51,11 +52,11 @@ constexpr const char* k_vectis_version = "0.1.0";
     gmtime_r(&time, &utc);
 #endif
 
-    char buffer[32];
+    std::array<char, 32> buffer{};
     // NOLINTNEXTLINE(concurrency-mt-unsafe) — we pass a thread-local tm
     const std::size_t written =
-        std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
-    return std::string{buffer, written};
+        std::strftime(buffer.data(), buffer.size(), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    return std::string{buffer.data(), written};
 }
 
 /// Sorted unique list of language display names for every file in
@@ -81,7 +82,7 @@ constexpr const char* k_vectis_version = "0.1.0";
     if (!options.project_name.empty()) {
         return options.project_name;
     }
-    const std::string derived = options.project_root.filename().string();
+    std::string derived = options.project_root.filename().string();
     if (!derived.empty()) {
         return derived;
     }
@@ -240,7 +241,7 @@ read_hotspot_excerpt(const std::filesystem::path& abs_path,
     std::size_t count = 0;
     // Cap bytes too so a minified single-line file can't dominate the
     // digest (~4 KiB per hotspot is plenty for orientation).
-    constexpr std::size_t k_max_bytes = 4 * 1024;
+    constexpr std::size_t k_max_bytes = static_cast<std::size_t>(4) * 1024;
     while (count < max_lines && std::getline(in, line)) {
         if (out.size() + line.size() + 1 > k_max_bytes) {
             break;
@@ -283,7 +284,8 @@ build_hotspot_excerpt(const CodeIndex&             index,
                 std::string out;
                 // Cap body excerpt at 60 lines / 4 KiB so a pathological
                 // mega-function doesn't bloat the digest.
-                constexpr std::size_t k_max_bytes = 4 * 1024;
+                constexpr std::size_t k_max_bytes =
+                    static_cast<std::size_t>(4) * 1024;
                 const int             end_line   =
                     std::min(s.line_end, s.line_start + 60);
                 while (std::getline(in, line)) {
@@ -597,11 +599,11 @@ std::string build_digest_string(const CodeIndex& index, const ExportOptions& opt
 {
     switch (options.format) {
         case DigestFormat::Json: {
-            const nlohmann::json root = build_json(index, options, /*details=*/true);
+            const nlohmann::json root = build_json(index, options, /*include_file_details=*/true);
             return root.dump(2);
         }
         case DigestFormat::SlimJson: {
-            const nlohmann::json root = build_json(index, options, /*details=*/false);
+            const nlohmann::json root = build_json(index, options, /*include_file_details=*/false);
             return root.dump(2);
         }
         case DigestFormat::Markdown: {
@@ -621,7 +623,7 @@ export_digest(const CodeIndex& index, const ExportOptions& options)
             "digest_exporter");
     }
 
-    const std::filesystem::path out_path =
+    std::filesystem::path out_path =
         default_output_path(options.project_root, options.format);
 
     std::error_code ec;

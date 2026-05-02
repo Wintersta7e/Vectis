@@ -24,9 +24,17 @@ constexpr std::size_t  k_max_rotated_files  = 3;
 constexpr const char*  k_log_level_env      = "VECTIS_LOG_LEVEL";
 constexpr const char*  k_log_pattern        = "[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v";
 
-/// The single shared logger. Held as a raw pointer into spdlog's registry
-/// so we can null it out during shutdown without racing with spdlog internals.
-std::shared_ptr<spdlog::logger> g_logger;
+/// The single shared logger, accessed through a Meyers-singleton accessor.
+/// Held as a `shared_ptr` into spdlog's registry so we can null it out
+/// during shutdown without racing with spdlog internals. Wrapping it in
+/// a function-local static instead of a translation-unit global keeps
+/// the storage non-global at the language level (cppcoreguidelines) and
+/// gives well-defined initialization order.
+[[nodiscard]] std::shared_ptr<spdlog::logger>& logger_slot() noexcept
+{
+    static std::shared_ptr<spdlog::logger> slot;
+    return slot;
+}
 
 [[nodiscard]] spdlog::level::level_enum level_from_env() noexcept
 {
@@ -38,15 +46,24 @@ std::shared_ptr<spdlog::logger> g_logger;
     }
 
     const std::string_view value{raw};
-    if (value == "trace")    return spdlog::level::trace;
-    if (value == "debug")    return spdlog::level::debug;
-    if (value == "info")     return spdlog::level::info;
-    if (value == "warn")     return spdlog::level::warn;
-    if (value == "warning")  return spdlog::level::warn;
-    if (value == "error")    return spdlog::level::err;
-    if (value == "err")      return spdlog::level::err;
-    if (value == "critical") return spdlog::level::critical;
-    if (value == "off")      return spdlog::level::off;
+    if (value == "trace") {    return spdlog::level::trace;
+}
+    if (value == "debug") {    return spdlog::level::debug;
+}
+    if (value == "info") {     return spdlog::level::info;
+}
+    if (value == "warn") {     return spdlog::level::warn;
+}
+    if (value == "warning") {  return spdlog::level::warn;
+}
+    if (value == "error") {    return spdlog::level::err;
+}
+    if (value == "err") {      return spdlog::level::err;
+}
+    if (value == "critical") { return spdlog::level::critical;
+}
+    if (value == "off") {      return spdlog::level::off;
+}
     return spdlog::level::info;
 }
 
@@ -54,7 +71,8 @@ std::shared_ptr<spdlog::logger> g_logger;
 
 Result<void> init(const std::filesystem::path& data_dir)
 {
-    if (g_logger) {
+    auto& slot = logger_slot();
+    if (slot) {
         // Already initialized — treat as idempotent success.
         return {};
     }
@@ -86,7 +104,7 @@ Result<void> init(const std::filesystem::path& data_dir)
         logger->set_pattern(k_log_pattern);
 
         spdlog::register_logger(logger);
-        g_logger = std::move(logger);
+        slot = std::move(logger);
     } catch (const std::exception& e) {
         return make_error(
             ErrorKind::IoError,
@@ -99,21 +117,25 @@ Result<void> init(const std::filesystem::path& data_dir)
 
 void shutdown() noexcept
 {
-    if (!g_logger) {
+    auto& slot = logger_slot();
+    if (!slot) {
         return;
     }
     try {
-        g_logger->flush();
+        slot->flush();
         spdlog::drop(k_logger_name);
-    } catch (...) {
-        // Swallow — shutdown must never throw.
+    } catch (...) { // NOLINT(bugprone-empty-catch)
+        // Intentional swallow: shutdown is noexcept and must not propagate
+        // exceptions during program teardown. Any spdlog flush/drop failure
+        // here is unrecoverable; we still reset the slot below so subsequent
+        // log calls become no-ops via `get()` returning nullptr.
     }
-    g_logger.reset();
+    slot.reset();
 }
 
 spdlog::logger* get() noexcept
 {
-    return g_logger.get();
+    return logger_slot().get();
 }
 
 } // namespace vectis::core::log

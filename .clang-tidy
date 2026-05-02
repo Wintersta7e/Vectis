@@ -8,25 +8,59 @@ Checks: >
   -modernize-use-trailing-return-type,
   -readability-identifier-length,
   -cppcoreguidelines-avoid-magic-numbers,
-  -readability-magic-numbers
+  -readability-magic-numbers,
+  -bugprone-easily-swappable-parameters,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-avoid-do-while,
+  -readability-function-cognitive-complexity
 
 WarningsAsErrors: '*'
 
-HeaderFilterRegex: 'src/.*'
+# Anchor on a path-component boundary so `_deps/foo-src/include/...`
+# (a coincidental substring match) doesn't pull upstream warnings in.
+HeaderFilterRegex: '(^|/)src/'
 
 CheckOptions:
   - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
     value: CamelCase
   - key: readability-identifier-naming.FunctionCase
     value: lower_case
   - key: readability-identifier-naming.VariableCase
     value: lower_case
-  - key: readability-identifier-naming.MemberPrefix
+  # Private and protected class members carry an `m_` prefix; public
+  # struct/class fields are POD-shaped data and stay unprefixed.
+  - key: readability-identifier-naming.PrivateMemberPrefix
     value: 'm_'
-  - key: readability-identifier-naming.ConstantCase
+  - key: readability-identifier-naming.PrivateMemberCase
     value: lower_case
-  - key: readability-identifier-naming.ConstantPrefix
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: 'm_'
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.PublicMemberCase
+    value: lower_case
+  # `k_` prefix is for namespace/file-scope constants and class statics
+  # only — local function-scope `const auto x = ...` stays plain.
+  - key: readability-identifier-naming.GlobalConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.GlobalConstantPrefix
     value: 'k_'
+  - key: readability-identifier-naming.StaticConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.StaticConstantPrefix
+    value: 'k_'
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstexprVariablePrefix
+    value: 'k_'
+  - key: readability-identifier-naming.LocalConstantCase
+    value: lower_case
   - key: readability-identifier-naming.NamespaceCase
     value: lower_case
   - key: readability-identifier-naming.EnumConstantCase

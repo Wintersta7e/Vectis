@@ -42,6 +42,8 @@ public:
 
     TreeSitterParser(const TreeSitterParser&)            = delete;
     TreeSitterParser& operator=(const TreeSitterParser&) = delete;
+    TreeSitterParser(TreeSitterParser&&)                 = delete;
+    TreeSitterParser& operator=(TreeSitterParser&&)      = delete;
 
     /// Register the built-in set of grammars (Python, JavaScript,
     /// TypeScript, C, C++, Rust, Java). Idempotent — calling twice is

@@ -57,7 +57,7 @@ struct FileEntry {
     Language                        language = Language::Unknown;
     std::uint64_t                   size = 0;
     int                             line_count = 0;
-    std::filesystem::file_time_type last_modified{};
+    std::filesystem::file_time_type last_modified;
     std::string                     content_hash;
 };
 
@@ -65,14 +65,22 @@ struct FileEntry {
 /// Returns `SymbolKind::Unknown` if the name is not recognized.
 [[nodiscard]] constexpr SymbolKind symbol_kind_from_name(std::string_view name) noexcept
 {
-    if (name == "function")  return SymbolKind::Function;
-    if (name == "method")    return SymbolKind::Method;
-    if (name == "class")     return SymbolKind::Class;
-    if (name == "struct")    return SymbolKind::Struct;
-    if (name == "interface") return SymbolKind::Interface;
-    if (name == "enum")      return SymbolKind::Enum;
-    if (name == "type")      return SymbolKind::Type;
-    if (name == "namespace") return SymbolKind::Namespace;
+    if (name == "function") {  return SymbolKind::Function;
+}
+    if (name == "method") {    return SymbolKind::Method;
+}
+    if (name == "class") {     return SymbolKind::Class;
+}
+    if (name == "struct") {    return SymbolKind::Struct;
+}
+    if (name == "interface") { return SymbolKind::Interface;
+}
+    if (name == "enum") {      return SymbolKind::Enum;
+}
+    if (name == "type") {      return SymbolKind::Type;
+}
+    if (name == "namespace") { return SymbolKind::Namespace;
+}
     return SymbolKind::Unknown;
 }
 
