@@ -435,4 +435,34 @@ TEST(ArchitectureDetectorTest, LabelName_RoundTrip)
     EXPECT_EQ(architecture_label_name(ArchitectureLabel::Unknown), "Unknown");
 }
 
+TEST(ArchitectureDetectorTest, LibraryLayout_DetectsIncludeAndSrcWithoutMain)
+{
+    // Canonical C++ library shape: public headers in include/, impl in
+    // src/. A test driver under test/ must NOT defeat detection — pure
+    // libraries routinely ship their own tests.
+    CodeIndex idx;
+    add_file(idx, "include/foo.h",  Language::Cpp);
+    add_file(idx, "src/foo.cpp",    Language::Cpp);
+    add_file(idx, "src/helper.cpp", Language::Cpp);
+    add_file(idx, "test/main.cpp",  Language::Cpp);
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_EQ(result.label, ArchitectureLabel::Library);
+    EXPECT_GE(result.confidence, 70);
+}
+
+TEST(ArchitectureDetectorTest, LibraryLayout_DoesNotFireWhenSrcHasMain)
+{
+    // include/ + src/main.cpp is a binary that happens to expose a
+    // public header directory — not a pure library. Library label
+    // must yield to Monolith here.
+    CodeIndex idx;
+    add_file(idx, "include/foo.h", Language::Cpp);
+    add_file(idx, "src/main.cpp",  Language::Cpp);
+    add_file(idx, "src/foo.cpp",   Language::Cpp);
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_NE(result.label, ArchitectureLabel::Library);
+}
+
 } // namespace

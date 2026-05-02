@@ -31,6 +31,11 @@ enum class ArchitectureLabel : std::uint8_t {
     /// whose leaf name matches `<Solution>.<Tag>` (e.g. `FlowForge.UI`,
     /// `FlowForge.CLI`, `FlowForge.Core`).
     DotNetSolution,
+    /// Reusable library: a public `include/` (or `lib/`) interface
+    /// alongside `src/`, with no application entry point. Typical of
+    /// C++ libraries (fmt, spdlog, nlohmann/json with src split out)
+    /// and many language-agnostic SDKs.
+    Library,
 };
 
 /// Human-readable description returned by `detect_architecture`.

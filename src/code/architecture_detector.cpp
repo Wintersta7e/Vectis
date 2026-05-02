@@ -19,6 +19,35 @@ namespace vectis::code {
 
 namespace {
 
+/// Directory names that end an architecture-relevant descent. Anything
+/// under `tests/`, `docs/`, `vendor/`, etc. is data, documentation, or
+/// vendored code — its own internal layout (a fixture's `models/` and
+/// `dao/`, a test harness's `main.cc`) is not architecturally
+/// representative of the project.
+const std::unordered_set<std::string> k_non_source_subtree_names = {
+    "tests", "test",
+    "fixtures", "__fixtures__",
+    "docs", "doc",
+    "examples", "example",
+    "vendor", "third_party",
+};
+
+/// True if any segment of `path_relative` matches a stop-name above.
+[[nodiscard]] bool is_under_non_source_subtree(
+    const std::filesystem::path& path_relative)
+{
+    std::filesystem::path dir = path_relative;
+    if (dir.has_filename()) {
+        dir.remove_filename();
+    }
+    for (const auto& segment : dir) {
+        if (k_non_source_subtree_names.contains(segment.string())) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// Collect distinct directory segments from scanned files.
 ///
 /// Walks each file's directory components top-down, but **stops** at
@@ -38,17 +67,6 @@ namespace {
 [[nodiscard]] std::unordered_set<std::string>
 collect_directory_segments(const CodeIndex& index)
 {
-    // Names that end the descent. Keep conservative — anything
-    // added here stops being a legitimate architecture signal for
-    // everything under it.
-    static const std::unordered_set<std::string> k_stop_names = {
-        "tests", "test",
-        "fixtures", "__fixtures__",
-        "docs", "doc",
-        "examples", "example",
-        "vendor", "third_party",
-    };
-
     std::unordered_set<std::string> segments;
     for (const FileEntry& file : index.snapshot_files()) {
         std::filesystem::path dir = file.path_relative;
@@ -61,7 +79,7 @@ collect_directory_segments(const CodeIndex& index)
                 continue;
             }
             segments.insert(s);
-            if (k_stop_names.contains(s)) {
+            if (k_non_source_subtree_names.contains(s)) {
                 break;
             }
         }
@@ -119,6 +137,13 @@ count_dotted_project_dirs(const CodeIndex& index)
 {
     std::size_t count = 0;
     for (const FileEntry& file : index.snapshot_files()) {
+        // Test harnesses, examples, and vendored code routinely ship
+        // their own `main.cc`. Counting them as application entry
+        // points makes pure libraries (fmt, spdlog) look like
+        // multi-binary monorepos.
+        if (is_under_non_source_subtree(file.path_relative)) {
+            continue;
+        }
         const std::string name = file.path_relative.filename().string();
         if (name.rfind("main.", 0) == 0 || name == "main") {
             ++count;
@@ -270,6 +295,7 @@ std::string_view architecture_label_name(ArchitectureLabel label) noexcept
         case ArchitectureLabel::Mvvm:              return "MVVM";
         case ArchitectureLabel::CleanArchitecture: return "Clean Architecture";
         case ArchitectureLabel::DotNetSolution:    return ".NET Solution";
+        case ArchitectureLabel::Library:           return "Library";
         case ArchitectureLabel::Unknown:           return "Unknown";
     }
     return "Unknown";
@@ -470,6 +496,23 @@ detect_architecture(const CodeIndex& index,
             ? "found `handlers/` directory, no frontend config"
             : "found `routes/` directory, no frontend config";
         out.confidence = 60;
+        return out;
+    }
+
+    // --- Library indicators ----------------------------------------
+    // `include/` (or `lib/`) alongside `src/` with no application
+    // entry point is the canonical reusable-library shape — most C++
+    // libraries (fmt, spdlog, nlohmann/json) and many SDKs ship like
+    // this. Goes before Monolith so a header+impl split doesn't fall
+    // through to "single entry point, no distinctive layout".
+    const bool has_public_iface =
+        segments.contains("include") || segments.contains("lib");
+    if (has_public_iface && segments.contains("src") && main_count == 0) {
+        out.label      = ArchitectureLabel::Library;
+        out.reasoning  = segments.contains("include")
+            ? "found `include/` + `src/` with no entry point — library layout"
+            : "found `lib/` + `src/` with no entry point — library layout";
+        out.confidence = 75;
         return out;
     }
 
