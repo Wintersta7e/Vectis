@@ -143,10 +143,10 @@ bool parse_digest_args(int argc, char** argv, DigestArgs& out)
 ///
 /// False positives (excluding something the user wanted indexed) are
 /// rare and recoverable — the user can simply not list it in
-/// `.gitignore`. False negatives (indexing site-packages) make the
-/// digest worse than useless, as observed on a real external-python-project
-/// scan that returned 2252 files where the project had ~100 sources
-/// and hotspots dominated by pygments / PyInstaller / setuptools.
+/// `.gitignore`. False negatives are catastrophic: a 100-source
+/// Python project mistakenly scanned with its virtualenv ballooned
+/// to 2200+ files, with hotspots dominated by upstream packaging
+/// tools rather than the project itself.
 vectis::code::ScanConfig
 make_scan_config(const std::filesystem::path& abs_root)
 {
