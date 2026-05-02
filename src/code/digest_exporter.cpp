@@ -358,34 +358,6 @@ build_hotspot_excerpt(const CodeIndex&             index,
     return node;
 }
 
-/// Flat top-level symbol list for the full JSON format. Per-file
-/// symbols stay on their `files[i].symbols` entry; this additional
-/// array gives consumers a single-key lookup (`digest["symbols"]`)
-/// without forcing them to walk every file. Each entry carries just
-/// enough for agent-side filtering: `name`, `kind`, `path`, `line`.
-/// Signatures, members and complexity stay on the per-file entry for
-/// consumers that want them.
-[[nodiscard]] nlohmann::json build_symbols_flat_json(
-    const CodeIndex&             index,
-    const std::vector<FileEntry>& files,
-    const FileIdToPath&          lookup)
-{
-    nlohmann::json arr = nlohmann::json::array();
-    for (const FileEntry& file : files) {
-        const std::string path = path_for(lookup, file.id);
-        for (const Symbol& sym : index.symbols_in_file(file.id)) {
-            nlohmann::json node = {
-                {"name", sym.name},
-                {"kind", std::string{symbol_kind_name(sym.kind)}},
-                {"path", path},
-                {"line", sym.line_start},
-            };
-            arr.push_back(std::move(node));
-        }
-    }
-    return arr;
-}
-
 /// Build the shared top-level JSON object that full and slim formats
 /// both start from.
 [[nodiscard]] nlohmann::json build_json(
@@ -409,9 +381,26 @@ build_hotspot_excerpt(const CodeIndex&             index,
     project["languages"]        = distinct_language_names(files);
     root["project"]             = std::move(project);
 
-    nlohmann::json files_array = nlohmann::json::array();
+    // Walk every file once and reuse the per-file `symbols` array to
+    // build the flat top-level `symbols[]`. Re-querying the index per
+    // file would double the shared-mutex acquisitions and the symbol
+    // copies for no extra information.
+    nlohmann::json files_array  = nlohmann::json::array();
+    nlohmann::json symbols_flat = nlohmann::json::array();
     for (const FileEntry& file : files) {
-        files_array.push_back(file_to_json(file, index, include_file_details));
+        nlohmann::json file_node = file_to_json(file, index, include_file_details);
+        if (include_file_details) {
+            const std::string path = path_for(lookup, file.id);
+            for (const auto& sym : file_node["symbols"]) {
+                symbols_flat.push_back({
+                    {"name", sym["name"]},
+                    {"kind", sym["kind"]},
+                    {"path", path},
+                    {"line", sym["line"]},
+                });
+            }
+        }
+        files_array.push_back(std::move(file_node));
     }
     root["files"] = std::move(files_array);
 
@@ -421,18 +410,14 @@ build_hotspot_excerpt(const CodeIndex&             index,
         build_dependency_graph_json(index, lookup, include_file_details);
 
     // Architecture is cheap (~150 bytes) and the single highest-value
-    // signal for agents orienting in an unfamiliar repo — worth
-    // including in slim. Hotspots in slim are capped at the top 10
-    // and stripped of body excerpts so they cost ~1–2 KB. Full format
-    // emits the complete hotspot list with excerpts plus a flat
-    // top-level symbol array for single-key lookup.
+    // orientation signal — worth emitting in both slim and full.
     root["architecture"] = build_architecture_json(index, options.project_root);
     if (include_file_details) {
         root["hotspots"] = build_hotspots_json(
             index, lookup, options.project_root,
             /*include_excerpts=*/true,
             /*max_entries=*/0);
-        root["symbols"]  = build_symbols_flat_json(index, files, lookup);
+        root["symbols"] = std::move(symbols_flat);
     } else {
         constexpr std::size_t k_slim_hotspot_cap = 10;
         root["hotspots"] = build_hotspots_json(
