@@ -253,6 +253,30 @@ split_dotted(std::string_view dotted, char separator)
     return 0;
 }
 
+
+/// PHP-specific: `Slim\Factory\Foo` → try `Slim/Factory/Foo.php`
+/// directly, then fall back to a suffix match so projects rooted
+/// under `src/` (the PSR-4 default) still resolve without us reading
+/// `composer.json`.
+[[nodiscard]] std::int64_t match_php_namespaced(
+    const std::vector<FileEntry>& files,
+    std::string_view              namespaced)
+{
+    const std::filesystem::path stem = split_dotted(namespaced, '\\');
+    static const std::vector<std::string_view> k_php_ext = {".php"};
+    const std::int64_t direct = match_by_extension(files, stem, k_php_ext);
+    if (direct != 0) {
+        return direct;
+    }
+    const std::string suffix = stem.generic_string() + ".php";
+    for (const FileEntry& file : files) {
+        if (path_ends_with(file.path_relative, suffix)) {
+            return file.id;
+        }
+    }
+    return 0;
+}
+
 /// Shared resolver context built once per `resolve_all` call, carrying
 /// the namespace-to-files index for C#/PHP resolution and the Go module
 /// prefix (if a `go.mod` was found at the project root). Packing these
@@ -436,6 +460,11 @@ build_namespace_index(const std::vector<FileImports>& per_file)
     }
 
     // --- 7. Ruby require / require_relative ------------------------
+    // `require_relative './foo'` resolves against the source file's
+    // directory; `require 'sinatra/base'` is load-path style — neither
+    // necessarily lives under the source's parent directory. The
+    // suffix fallback uses the bare import string so a test file can
+    // still resolve `require 'lib/x'` to `<root>/lib/x.rb`.
     if (source.language == Language::Ruby) {
         const std::filesystem::path source_dir = source.relative_path.parent_path();
         const std::filesystem::path stem = normalize_relative(
@@ -444,7 +473,10 @@ build_namespace_index(const std::vector<FileImports>& per_file)
         if (hit != 0) {
             return {hit};
         }
-        const std::string suffix = stem.generic_string() + ".rb";
+        std::string suffix{raw.import_string};
+        if (!suffix.ends_with(".rb")) {
+            suffix += ".rb";
+        }
         for (const FileEntry& file : files) {
             if (path_ends_with(file.path_relative, suffix)) {
                 return {file.id};
@@ -479,9 +511,26 @@ build_namespace_index(const std::vector<FileImports>& per_file)
             return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
         }
         if (raw.kind == "use") {
-            // PHP namespaces use backslash separators. Look the name
-            // up verbatim in the namespace index; resolve to every
-            // file that declares that namespace.
+            // PSR-4 path-style match: `Slim\Factory\Foo` → `Slim/Factory/Foo.php`,
+            // either at the project root or nested under `src/`. This is the
+            // common case — a `use` clause names a class, not a namespace.
+            const std::int64_t hit = match_php_namespaced(files, raw.import_string);
+            if (hit != 0) {
+                return {hit};
+            }
+            // Fallback: strip the trailing class component and look up the
+            // declaring namespace. Catches projects that don't follow PSR-4
+            // strictly (one file per class, path = namespace).
+            const auto last_sep = raw.import_string.rfind('\\');
+            if (last_sep != std::string::npos) {
+                const std::string parent_ns = raw.import_string.substr(0, last_sep);
+                const auto parent_it = ctx.namespace_to_files.find(parent_ns);
+                if (parent_it != ctx.namespace_to_files.end()) {
+                    return parent_it->second;
+                }
+            }
+            // Last resort: full string as a namespace (rare but handles
+            // `use Slim;` aliasing the namespace itself).
             const auto it = ctx.namespace_to_files.find(raw.import_string);
             if (it != ctx.namespace_to_files.end()) {
                 return it->second;

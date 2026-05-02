@@ -476,4 +476,64 @@ TEST(DependencyResolverTest, Go_ModuleImportResolvesToPackageFiles)
     fs::remove_all(tmp, ec);
 }
 
+// -----------------------------------------------------------------------------
+// PHP — `use Slim\Factory\X;` resolves via PSR-4 path matching, with the
+// project's own namespace tree under any source root (`Slim/`, `src/Slim/`,
+// `lib/Slim/`).
+// -----------------------------------------------------------------------------
+TEST(DependencyResolverTest, Php_UseResolvesByPsr4PathSuffix)
+{
+    CodeIndex idx;
+    const auto app_php  = add(idx, "src/Slim/App.php",
+                              Language::Php);
+    const auto fact_php = add(idx, "src/Slim/Factory/RequestFactory.php",
+                              Language::Php);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        app_php, Language::Php, "src/Slim/App.php",
+        {RawImport{R"(Slim\Factory\RequestFactory)", "use", 1}},
+        {"Slim"}));
+    per_file.push_back(make_fi(
+        fact_php, Language::Php, "src/Slim/Factory/RequestFactory.php",
+        {},
+        {R"(Slim\Factory)"}));
+
+    resolve_all(idx, "/fake/php", per_file);
+
+    bool linked = false;
+    for (const Dependency& d : idx.dependencies_of(app_php)) {
+        if (d.target_file_id == fact_php) { linked = true; }
+    }
+    EXPECT_TRUE(linked);
+}
+
+// -----------------------------------------------------------------------------
+// Ruby — bare `require 'sinatra/base'` from outside `lib/` resolves to
+// `lib/sinatra/base.rb` via load-path-style suffix matching. The previous
+// implementation joined to source dir and silently classified every
+// gem-style require as external.
+// -----------------------------------------------------------------------------
+TEST(DependencyResolverTest, Ruby_RequireResolvesByLoadPathSuffix)
+{
+    CodeIndex idx;
+    const auto base_rb = add(idx, "lib/sinatra/base.rb",
+                             Language::Ruby);
+    const auto test_rb = add(idx, "test/integration/x_test.rb",
+                             Language::Ruby);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        test_rb, Language::Ruby, "test/integration/x_test.rb",
+        {RawImport{"sinatra/base", "require", 1}}));
+
+    resolve_all(idx, "/fake/ruby", per_file);
+
+    bool linked = false;
+    for (const Dependency& d : idx.dependencies_of(test_rb)) {
+        if (d.target_file_id == base_rb) { linked = true; }
+    }
+    EXPECT_TRUE(linked);
+}
+
 } // namespace
