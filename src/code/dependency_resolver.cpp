@@ -155,21 +155,20 @@ split_dotted(std::string_view dotted, char separator)
     return stem;
 }
 
-/// Python-specific: convert `foo.bar` to `foo/bar` and try `.py`/.pyi,
-/// or `foo/bar/__init__.py`.
-[[nodiscard]] std::int64_t match_python_dotted(
+/// Look up a Python module rooted at `<stem>` — first as a `.py` /
+/// `.pyi` file, then as a `<stem>/__init__.py(i)` package marker.
+[[nodiscard]] std::int64_t match_python_module(
     const std::vector<FileEntry>& files,
-    std::string_view              dotted)
+    const std::filesystem::path&  stem)
 {
-    const std::filesystem::path stem = split_dotted(dotted, '.');
     static const std::vector<std::string_view> k_py_ext = {".py", ".pyi"};
-    const std::int64_t direct = match_by_extension(files, stem, k_py_ext);
-    if (direct != 0) {
+    if (const std::int64_t direct = match_by_extension(files, stem, k_py_ext);
+        direct != 0) {
         return direct;
     }
-    // `foo/bar/__init__.py`
     for (const std::string_view ext : k_py_ext) {
-        const std::filesystem::path init_path = stem / (std::string{"__init__"} + std::string{ext});
+        const std::filesystem::path init_path =
+            stem / (std::string{"__init__"} + std::string{ext});
         for (const FileEntry& file : files) {
             if (path_equals(file.path_relative, init_path)) {
                 return file.id;
@@ -177,6 +176,15 @@ split_dotted(std::string_view dotted, char separator)
         }
     }
     return 0;
+}
+
+/// Python-specific: convert `foo.bar` to `foo/bar` and try `.py`/.pyi,
+/// or `foo/bar/__init__.py`.
+[[nodiscard]] std::int64_t match_python_dotted(
+    const std::vector<FileEntry>& files,
+    std::string_view              dotted)
+{
+    return match_python_module(files, split_dotted(dotted, '.'));
 }
 
 /// Python relative imports: `from .x import y`, `from ..pkg.mod import z`,
@@ -203,9 +211,6 @@ split_dotted(std::string_view dotted, char separator)
     while (n_dots < with_dots.size() && with_dots[n_dots] == '.') {
         ++n_dots;
     }
-    if (n_dots == 0) {
-        return 0;
-    }
     const std::string_view remainder = with_dots.substr(n_dots);
 
     // Walk up (n_dots - 1) levels from source's directory. Bail if we
@@ -223,25 +228,7 @@ split_dotted(std::string_view dotted, char separator)
     if (!remainder.empty()) {
         stem /= split_dotted(remainder, '.');
     }
-
-    static const std::vector<std::string_view> k_py_ext = {".py", ".pyi"};
-
-    // `from .x.y import z` → target is `<base>/x/y.py` (module) ...
-    const std::int64_t direct = match_by_extension(files, stem, k_py_ext);
-    if (direct != 0) {
-        return direct;
-    }
-    // ... or `<base>/x/y/__init__.py` (package).
-    for (const std::string_view ext : k_py_ext) {
-        const std::filesystem::path init_path =
-            stem / (std::string{"__init__"} + std::string{ext});
-        for (const FileEntry& file : files) {
-            if (path_equals(file.path_relative, init_path)) {
-                return file.id;
-            }
-        }
-    }
-    return 0;
+    return match_python_module(files, stem);
 }
 
 /// Java-specific: `foo.bar.Baz` → try `foo/bar/Baz.java` directly, then
