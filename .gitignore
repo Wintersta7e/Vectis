@@ -54,3 +54,6 @@ tests/fixtures/code/sample-multimodule/
 docs/design/
 docs/BUILD.md
 docs/plans/
+
+# Local validation harness (real-world OSS repos cloned for smoke runs)
+testing-ground/
