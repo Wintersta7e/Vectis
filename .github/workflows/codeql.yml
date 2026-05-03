@@ -41,6 +41,15 @@ jobs:
           # `security` suite — picks up dataflow + maintainability
           # checks alongside vuln patterns.
           queries: security-and-quality
+          # Skip CMake's FetchContent build tree: it pulls in 12
+          # tree-sitter grammar parsers (machine-generated C, multi-
+          # thousand-line switch tables) we vendor verbatim and don't
+          # maintain. Without this filter, ~95% of alerts are noise
+          # against parser code.
+          config: |
+            paths-ignore:
+              - build/**
+              - '**/_deps/**'
 
       # Mirrors `ci.yml`'s apt list — keep them in sync so CodeQL
       # builds with the same dependency surface as the regular CI.
