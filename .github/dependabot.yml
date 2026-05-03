@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # GitHub Actions (e.g. actions/checkout@v4 → @v5). The CMake
+  # FetchContent pins (tree-sitter grammars, tl-expected) and apt
+  # packages aren't covered — Dependabot doesn't parse either, and
+  # bumping a tree-sitter grammar shouldn't be automated anyway.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: sunday
+    # Bundle all action updates into one PR per week to cut PR noise.
+    groups:
+      gh-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
+      include: scope

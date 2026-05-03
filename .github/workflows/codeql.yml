@@ -1,0 +1,72 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Off-peak weekly run — catches advisories that landed in the
+    # query database between pushes.
+    - cron: "17 4 * * 0"
+
+# Cancel an in-flight CodeQL run if a newer commit lands on the same
+# ref — saves runner time without losing the latest result.
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: CodeQL Analysis
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [c-cpp]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # `security-and-quality` is broader than the default
+          # `security` suite — picks up dataflow + maintainability
+          # checks alongside vuln patterns.
+          queries: security-and-quality
+
+      # Mirrors `ci.yml`'s apt list — keep them in sync so CodeQL
+      # builds with the same dependency surface as the regular CI.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake ninja-build \
+            git pkg-config \
+            libsqlite3-dev \
+            libspdlog-dev \
+            libfmt-dev \
+            nlohmann-json3-dev \
+            libtomlplusplus-dev \
+            libgtest-dev
+
+      - name: Build
+        # Explicit build (rather than `autobuild`) so any CodeQL
+        # failure mode is "the same thing ci.yml does, plus one of
+        # CodeQL's checks tripped" — not a mystery autobuild bug.
+        run: |
+          cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
