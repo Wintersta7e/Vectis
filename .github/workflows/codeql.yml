@@ -41,15 +41,11 @@ jobs:
           # `security` suite — picks up dataflow + maintainability
           # checks alongside vuln patterns.
           queries: security-and-quality
-          # Skip CMake's FetchContent build tree: it pulls in 12
-          # tree-sitter grammar parsers (machine-generated C, multi-
-          # thousand-line switch tables) we vendor verbatim and don't
-          # maintain. Without this filter, ~95% of alerts are noise
-          # against parser code.
-          config: |
-            paths-ignore:
-              - build/**
-              - '**/_deps/**'
+          # Path filtering lives in a separate file: the inline
+          # `config:` form attempted in PR #2 silently failed to
+          # apply (90 grammar alerts re-fired on the merge commit).
+          # See .github/codeql/codeql-config.yml for the rationale.
+          config-file: ./.github/codeql/codeql-config.yml
 
       # Mirrors `ci.yml`'s apt list — keep them in sync so CodeQL
       # builds with the same dependency surface as the regular CI.

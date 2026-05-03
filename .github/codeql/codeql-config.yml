@@ -1,0 +1,26 @@
+# CodeQL config for Vectis.
+#
+# Restricts analysis to first-party source. Without this, ~95% of
+# alerts come from the 12 tree-sitter grammar parsers that
+# CMake's FetchContent unpacks into build/_deps/ — machine-generated
+# C (multi-thousand-line switch tables, parser state machines)
+# we vendor verbatim and don't maintain. The security-and-quality
+# query suite flags those for style / maintainability rules that
+# don't apply to generated code.
+#
+# Inline `config:` on `codeql-action/init@v4` was tried in PR #2
+# and silently failed to apply (90 grammar alerts re-fired on the
+# merge commit). The `config-file:` form is the documented and
+# reliable pattern.
+
+name: "Vectis CodeQL config"
+
+# Allow-list: only first-party trees. Belt-and-braces with paths-ignore
+# below — both are honoured, paths-ignore wins on overlap.
+paths:
+  - src
+  - tests
+
+paths-ignore:
+  - build
+  - "**/_deps/**"
