@@ -454,4 +454,49 @@ TEST(ArchitectureDetectorTest, LibraryLayout_DoesNotFireWhenSrcHasMain)
     EXPECT_NE(result.label, ArchitectureLabel::Library);
 }
 
+TEST(ArchitectureDetectorTest, LibraryLayout_DoesNotFireOnVendoredNestedInclude)
+{
+    // Regression guard for vendored-deps shapes: a server with `src/`
+    // at top level and a vendored C library exposing
+    // `deps/<lib>/include/...` underneath used to be mislabelled as
+    // Library because the segment walker saw `include` from the
+    // vendored subtree. The Library check now requires `include/`
+    // (or `lib/`) AND `src/` to live at the project root, and the
+    // detector falls through to Monolith for binaries-with-vendored-
+    // deps that don't expose their own public-headers directory.
+    CodeIndex idx;
+    add_file(idx, "src/server.c", Language::C);
+    add_file(idx, "src/networking.c", Language::C);
+    add_file(idx, "src/cli.c", Language::C);
+    add_file(idx, "deps/alloc_lib/include/alloc.h", Language::C);
+    add_file(idx, "deps/alloc_lib/src/alloc.c", Language::C);
+    add_file(idx, "deps/wire_lib/include/wire.h", Language::C);
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_NE(result.label, ArchitectureLabel::Library)
+        << "reasoning was: " << result.reasoning;
+}
+
+TEST(ArchitectureDetectorTest, FrontendSpa_DoesNotFireOnNestedConfig)
+{
+    // Regression guard for backend-with-embedded-SPA shapes: a
+    // backend project that ships a one-file embedded mini-app deep
+    // in its tree (e.g. for an exception-page renderer) used to be
+    // mislabelled as Frontend SPA on the strength of a single nested
+    // vite.config.js. The framework-config check now requires the
+    // file to live at the project root.
+    CodeIndex idx;
+    for (int i = 0; i < 20; ++i) {
+        const std::string name = "src/Backend/Pkg/file_" + std::to_string(i) + ".php";
+        add_file(idx, name, Language::Php);
+    }
+    add_file(idx,
+             "src/Backend/Foundation/resources/exceptions/renderer/vite.config.js",
+             Language::JavaScript);
+
+    const auto result = detect_architecture(idx, "/fake");
+    EXPECT_NE(result.label, ArchitectureLabel::FrontendSpa)
+        << "reasoning was: " << result.reasoning;
+}
+
 } // namespace
