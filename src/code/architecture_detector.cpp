@@ -42,7 +42,8 @@ const std::unordered_set<std::string> k_non_source_subtree_names = {
     });
 }
 
-struct PathSignals {
+struct PathSignals
+{
     /// All directory segments seen in the index. Walks stop at the
     /// first known test/fixture/doc/vendor root so a fixture path like
     /// `tests/fixtures/.../models/user.py` doesn't inject a bogus
@@ -118,8 +119,8 @@ struct PathSignals {
 /// implies a frontend single-page app. Nested matches don't count —
 /// backend frameworks ship one-off embedded mini-apps deep in their
 /// tree (e.g. for exception-page rendering).
-constexpr std::array<std::string_view, 4> k_spa_root_configs = {
-    "next.config.js", "vite.config.ts", "vite.config.js", "nuxt.config.ts"};
+constexpr std::array<std::string_view, 4> k_spa_root_configs = {"next.config.js", "vite.config.ts",
+                                                                "vite.config.js", "nuxt.config.ts"};
 
 /// Count files whose filename starts with `main.` (e.g. main.cpp,
 /// main.rs, main.py, main.go). Used as a rough "entry-point count"
@@ -455,11 +456,11 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     // mislabel them as SPA.
     const bool has_components = segments.contains("components");
     const bool has_pages = segments.contains("pages");
-    const bool has_spa_config = !project_root.empty() &&
-                                std::ranges::any_of(k_spa_root_configs, [&](std::string_view n) {
-                                    std::error_code ec;
-                                    return std::filesystem::exists(project_root / n, ec) && !ec;
-                                });
+    const bool has_spa_config =
+        !project_root.empty() && std::ranges::any_of(k_spa_root_configs, [&](std::string_view n) {
+            std::error_code ec;
+            return std::filesystem::exists(project_root / n, ec) && !ec;
+        });
     if ((has_components && has_pages) || has_spa_config) {
         out.label = ArchitectureLabel::FrontendSpa;
         out.reasoning = has_spa_config ? "framework config file detected (next/vite/nuxt)"

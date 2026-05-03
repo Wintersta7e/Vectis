@@ -478,8 +478,7 @@ TEST(ArchitectureDetectorTest, LibraryLayout_DoesNotFireOnVendoredNestedInclude)
     add_file(idx, "deps/alloc_lib/src/alloc.c", Language::C);
 
     const auto result = detect_architecture(idx, "/fake");
-    EXPECT_NE(result.label, ArchitectureLabel::Library)
-        << "reasoning was: " << result.reasoning;
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning was: " << result.reasoning;
 }
 
 TEST(ArchitectureDetectorTest, FrontendSpa_DoesNotFireOnNestedConfig)
@@ -491,9 +490,7 @@ TEST(ArchitectureDetectorTest, FrontendSpa_DoesNotFireOnNestedConfig)
     for (int i = 0; i < 20; ++i) {
         add_file(idx, "src/Backend/file_" + std::to_string(i) + ".php", Language::Php);
     }
-    add_file(idx,
-             "src/Backend/resources/exceptions/renderer/vite.config.js",
-             Language::JavaScript);
+    add_file(idx, "src/Backend/resources/exceptions/renderer/vite.config.js", Language::JavaScript);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_NE(result.label, ArchitectureLabel::FrontendSpa)
