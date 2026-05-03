@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "code/symbol.h"
 #include "services/index_engine/index_engine.h"
@@ -20,7 +21,7 @@ class IndexEngineTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        m_tmp_dir = fs::temp_directory_path() / "vectis_idx_test";
+        m_tmp_dir = fs::temp_directory_path() / ("vectis_idx_test_" + std::to_string(::getpid()));
         fs::create_directories(m_tmp_dir);
 
         ASSERT_TRUE(m_storage.open(m_tmp_dir / "idx_test.db"));

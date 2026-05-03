@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "code/code_index.h"
 #include "code/code_index_store.h"
@@ -23,7 +24,7 @@ class CodeIndexStoreTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        m_tmp_dir = fs::temp_directory_path() / "vectis_store_test";
+        m_tmp_dir = fs::temp_directory_path() / ("vectis_store_test_" + std::to_string(::getpid()));
         fs::create_directories(m_tmp_dir);
         m_db_path = m_tmp_dir / "store_test.db";
 

@@ -3,6 +3,7 @@
 #include <string>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "services/storage_engine/storage_engine.h"
 
@@ -17,7 +18,8 @@ class StorageEngineTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        m_tmp_dir = fs::temp_directory_path() / "vectis_storage_test";
+        m_tmp_dir =
+            fs::temp_directory_path() / ("vectis_storage_test_" + std::to_string(::getpid()));
         fs::create_directories(m_tmp_dir);
         m_db_path = m_tmp_dir / "test.db";
     }
