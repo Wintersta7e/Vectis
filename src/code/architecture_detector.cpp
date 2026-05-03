@@ -122,6 +122,70 @@ struct PathSignals
 constexpr std::array<std::string_view, 4> k_spa_root_configs = {"next.config.js", "vite.config.ts",
                                                                 "vite.config.js", "nuxt.config.ts"};
 
+/// Directory names skipped by the disk walk. Heavy build outputs,
+/// dependency caches, and version-control internals — would otherwise
+/// dwarf the project's actual layout in walk time and introduce noise.
+const std::unordered_set<std::string> k_disk_walk_skip = {"node_modules", "bower_components",
+                                                          "build",        "target",
+                                                          "out",          "dist",
+                                                          "bin",          "obj",
+                                                          "tmp",          "log",
+                                                          "logs",         "coverage",
+                                                          "__pycache__",  ".cache",
+                                                          ".next",        ".nuxt",
+                                                          ".tmp",         ".git",
+                                                          ".hg",          ".svn",
+                                                          ".vs",          ".idea",
+                                                          ".vscode"};
+
+/// Walk up to two levels of directories under `project_root` and add
+/// their names to the path signals. The index-based walk only sees
+/// directories that contain a file vectis indexes, so layouts where
+/// a defining directory holds non-source content (Rails `app/views/`
+/// is `.html.erb` templates) get missed. Two levels deep is enough
+/// for the canonical layouts (`app/views/`, `src/Project.UI/`,
+/// top-level `controllers/`) without paying for a deep recursive walk.
+void augment_signals_from_disk(PathSignals& signals, const std::filesystem::path& project_root)
+{
+    if (project_root.empty()) {
+        return;
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_directory(project_root, ec) || ec) {
+        return;
+    }
+    const auto skip = [](const std::string& name) {
+        return name.empty() || name[0] == '.' || k_disk_walk_skip.contains(name) ||
+               k_non_source_subtree_names.contains(name);
+    };
+    for (const auto& top_entry : std::filesystem::directory_iterator(project_root, ec)) {
+        if (ec) {
+            return;
+        }
+        if (!top_entry.is_directory(ec) || ec) {
+            continue;
+        }
+        const std::string top_name = top_entry.path().filename().string();
+        if (skip(top_name)) {
+            continue;
+        }
+        signals.top_level_dirs.insert(top_name);
+        signals.segments.insert(top_name);
+        for (const auto& sub_entry : std::filesystem::directory_iterator(top_entry.path(), ec)) {
+            if (ec) {
+                break;
+            }
+            if (!sub_entry.is_directory(ec) || ec) {
+                continue;
+            }
+            const std::string sub_name = sub_entry.path().filename().string();
+            if (!skip(sub_name)) {
+                signals.segments.insert(sub_name);
+            }
+        }
+    }
+}
+
 /// Count files whose filename starts with `main.` (e.g. main.cpp,
 /// main.rs, main.py, main.go). Used as a rough "entry-point count"
 /// heuristic for microservice/monorepo detection.
@@ -331,7 +395,8 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
         }
     }
 
-    const auto signals = collect_path_signals(index);
+    auto signals = collect_path_signals(index);
+    augment_signals_from_disk(signals, project_root);
     const auto& segments = signals.segments;
 
     // --- Monorepo indicators ---------------------------------------
@@ -478,14 +543,17 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     }
 
     // --- API backend indicators ------------------------------------
-    // A handlers/ or routes/ directory plus no src/pages or frontend
-    // config files implies an API backend.
-    if ((segments.contains("handlers") || segments.contains("routes")) && !has_pages &&
-        !has_spa_config) {
+    // A handlers/, routes/, or routers/ directory plus no src/pages
+    // and no frontend config implies an API backend. `routers/` is
+    // the Beego/Casdoor convention in the Go ecosystem.
+    const bool has_handlers = segments.contains("handlers");
+    const bool has_routes = segments.contains("routes");
+    const bool has_routers = segments.contains("routers");
+    if ((has_handlers || has_routes || has_routers) && !has_pages && !has_spa_config) {
         out.label = ArchitectureLabel::ApiBackend;
-        out.reasoning = segments.contains("handlers")
-                            ? "found `handlers/` directory, no frontend config"
-                            : "found `routes/` directory, no frontend config";
+        out.reasoning = has_handlers ? "found `handlers/` directory, no frontend config"
+                        : has_routes ? "found `routes/` directory, no frontend config"
+                                     : "found `routers/` directory, no frontend config";
         out.confidence = 60;
         return out;
     }

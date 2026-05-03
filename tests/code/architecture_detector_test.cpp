@@ -497,4 +497,68 @@ TEST(ArchitectureDetectorTest, FrontendSpa_DoesNotFireOnNestedConfig)
         << "reasoning was: " << result.reasoning;
 }
 
+TEST(ArchitectureDetectorTest, Mvc_DetectsTrioWhenViewsAreNonSourceTemplates)
+{
+    // Rails-shape: views are template files vectis doesn't index, so
+    // `views` never enters segments from the index walk. The disk-walk
+    // augmentation must still pick up the `app/views/` directory.
+    const fs::path root = fresh_tmp("mvc_disk_views");
+    fs::create_directories(root / "app" / "views");
+    write_file(root / "app" / "controllers" / "users_controller.rb",
+               "class UsersController; end\n");
+    write_file(root / "app" / "models" / "user.rb", "class User; end\n");
+
+    CodeIndex idx;
+    add_file(idx, "app/controllers/users_controller.rb", Language::Ruby);
+    add_file(idx, "app/models/user.rb", Language::Ruby);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Mvc);
+    EXPECT_GE(result.confidence, 80);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, ApiBackend_DetectsRoutersDirectory)
+{
+    // Beego/Go convention: a `routers/` directory at the project root
+    // plus no frontend config should label ApiBackend.
+    const fs::path root = fresh_tmp("api_routers");
+    write_file(root / "main.go", "package main\nfunc main() {}\n");
+    write_file(root / "routers" / "router.go", "package routers\n");
+    write_file(root / "controllers" / "user.go", "package controllers\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.go", Language::Go);
+    add_file(idx, "routers/router.go", Language::Go);
+    add_file(idx, "controllers/user.go", Language::Go);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::ApiBackend);
+    EXPECT_NE(result.reasoning.find("routers"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, DiskWalk_SkipsHeavyVendorDirs)
+{
+    // node_modules, build, .git etc. must not inject directory names
+    // into signals — otherwise a JS project's vendored package with
+    // its own MVC layout would falsely flip the label.
+    const fs::path root = fresh_tmp("disk_walk_skip");
+    fs::create_directories(root / "node_modules" / "fake-pkg" / "controllers");
+    fs::create_directories(root / "node_modules" / "fake-pkg" / "models");
+    fs::create_directories(root / "node_modules" / "fake-pkg" / "views");
+    fs::create_directories(root / "build" / "intermediate");
+    write_file(root / "main.js", "console.log('ok');\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Mvc);
+
+    fs::remove_all(root);
+}
+
 } // namespace
