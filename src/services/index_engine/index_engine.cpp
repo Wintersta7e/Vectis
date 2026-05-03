@@ -32,9 +32,9 @@ IndexEngine::~IndexEngine() = default;
 IndexEngine::IndexEngine(IndexEngine&&) noexcept = default;
 IndexEngine& IndexEngine::operator=(IndexEngine&&) noexcept = default;
 
-void IndexEngine::initialize(StorageEngine& storage)
+void IndexEngine::initialize(StorageEngine* storage)
 {
-    m_impl->storage = &storage;
+    m_impl->storage = storage;
     VECTIS_LOG_INFO("IndexEngine: initialized");
 }
 
