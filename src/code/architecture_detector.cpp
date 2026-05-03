@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "code/code_index.h"
+#include "code/language.h"
 #include "code/symbol.h"
 
 namespace vectis::code {
@@ -325,6 +326,61 @@ detect_python_packages(const std::filesystem::path& project_root, const CodeInde
     return std::nullopt;
 }
 
+/// True if `runtime` (as named by the manifest detector) is the same
+/// language family as `lang`. "Node.js" matches both JavaScript
+/// and TypeScript; "C/C++" matches either. Everything else 1:1.
+[[nodiscard]] bool manifest_matches_language(std::string_view runtime, Language lang) noexcept
+{
+    if (runtime == "Go") {
+        return lang == Language::Go;
+    }
+    if (runtime == "Python") {
+        return lang == Language::Python;
+    }
+    if (runtime == "PHP") {
+        return lang == Language::Php;
+    }
+    if (runtime == "Ruby") {
+        return lang == Language::Ruby;
+    }
+    if (runtime == "Node.js") {
+        return lang == Language::JavaScript || lang == Language::TypeScript;
+    }
+    if (runtime == "Java/Maven" || runtime == "Java/Gradle") {
+        return lang == Language::Java;
+    }
+    if (runtime == "C/C++") {
+        return lang == Language::C || lang == Language::Cpp;
+    }
+    if (runtime == "Rust") {
+        return lang == Language::Rust;
+    }
+    if (runtime == "C#" || runtime == ".NET Solution") {
+        return lang == Language::CSharp;
+    }
+    return false;
+}
+
+/// Share (0..100) of indexed files whose language matches `runtime`.
+/// "Node.js" combines JavaScript + TypeScript so a polyglot frontend
+/// project still reads as coherent. Files with `Language::Unknown`
+/// don't count toward the denominator.
+[[nodiscard]] int compute_runtime_dominance(const CodeIndex& index, std::string_view runtime)
+{
+    std::size_t matching = 0;
+    std::size_t total = 0;
+    for (const FileEntry& f : index.snapshot_files()) {
+        if (f.language == Language::Unknown) {
+            continue;
+        }
+        ++total;
+        if (manifest_matches_language(runtime, f.language)) {
+            ++matching;
+        }
+    }
+    return total == 0 ? 0 : static_cast<int>(100 * matching / total);
+}
+
 /// Build / runtime manifest at the project root, if any. Used to
 /// upgrade confidence and reasoning for branches that otherwise fall
 /// back to a generic "no distinctive layout" answer — knowing that a
@@ -459,6 +515,7 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     augment_signals_from_disk(signals, project_root);
     const auto& segments = signals.segments;
     const auto manifest = detect_root_manifest(project_root);
+    const int runtime_pct = manifest ? compute_runtime_dominance(index, manifest->runtime) : 0;
 
     // --- Monorepo indicators ---------------------------------------
     // Top-level `packages/`, `apps/`, `libs/` plus multiple main.*
@@ -618,9 +675,15 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     const bool has_routers = segments.contains("routers");
     if ((has_handlers || has_routes || has_routers) && !has_pages && !has_spa_config) {
         out.label = ArchitectureLabel::ApiBackend;
-        out.reasoning = has_handlers ? "found `handlers/` directory, no frontend config"
-                        : has_routes ? "found `routes/` directory, no frontend config"
-                                     : "found `routers/` directory, no frontend config";
+        if (has_handlers) {
+            out.reasoning = "found `handlers/` directory, no frontend config";
+        }
+        else if (has_routes) {
+            out.reasoning = "found `routes/` directory, no frontend config";
+        }
+        else {
+            out.reasoning = "found `routers/` directory, no frontend config";
+        }
         out.confidence = 60;
         if (manifest) {
             out.reasoning += " (" + std::string{manifest->runtime} + " project)";
@@ -659,18 +722,34 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     // pin a higher confidence than "we have no idea what this is".
     if (main_count <= 1 || layered_matches > 0) {
         out.label = ArchitectureLabel::Monolith;
+        // Coherent = manifest declares a runtime AND ≥75% of indexed
+        // files match that runtime family. Stronger signal than just
+        // "manifest exists" — confirms the codebase isn't a polyglot
+        // mishmash but a real <runtime> project.
+        const bool coherent = manifest && runtime_pct >= 75;
         const std::string manifest_suffix =
             manifest ? " — " + std::string{manifest->runtime} + " (" + manifest->filename + ")"
                      : std::string{};
+        const std::string coherence_suffix = coherent
+                                                 ? ", " + std::to_string(runtime_pct) + "% " +
+                                                       std::string{manifest->runtime} + "-dominant"
+                                                 : std::string{};
         if (layered_matches > 0) {
             out.reasoning = "single entry point with partial layering (" + layered_reason + ")" +
-                            manifest_suffix;
-            out.confidence = manifest ? 60 : 50;
+                            manifest_suffix + coherence_suffix;
+            int conf = 50;
+            if (coherent) {
+                conf = 70;
+            }
+            else if (manifest) {
+                conf = 60;
+            }
+            out.confidence = conf;
         }
         else if (manifest) {
             out.reasoning = std::string{manifest->runtime} + " project (" + manifest->filename +
-                            "), no distinctive layout";
-            out.confidence = 55;
+                            ")" + coherence_suffix + ", no distinctive layout";
+            out.confidence = coherent ? 65 : 55;
         }
         else {
             out.reasoning = "single entry point, no distinctive layout";
