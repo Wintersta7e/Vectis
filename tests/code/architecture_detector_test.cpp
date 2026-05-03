@@ -561,4 +561,26 @@ TEST(ArchitectureDetectorTest, DiskWalk_SkipsHeavyVendorDirs)
     fs::remove_all(root);
 }
 
+TEST(ArchitectureDetectorTest, Monolith_BumpsConfidenceWithRootManifest)
+{
+    // A root manifest (go.mod, composer.json, package.json, ...) is
+    // concrete evidence even when the directory shape is ambiguous —
+    // confidence and reasoning should reflect the runtime, not just
+    // "no distinctive layout".
+    const fs::path root = fresh_tmp("monolith_manifest");
+    write_file(root / "go.mod", "module example\n");
+    write_file(root / "main.go", "package main\nfunc main() {}\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.go", Language::Go);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Monolith);
+    EXPECT_GE(result.confidence, 55);
+    EXPECT_NE(result.reasoning.find("Go"), std::string::npos);
+    EXPECT_NE(result.reasoning.find("go.mod"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
 } // namespace

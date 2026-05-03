@@ -325,6 +325,66 @@ detect_python_packages(const std::filesystem::path& project_root, const CodeInde
     return std::nullopt;
 }
 
+/// Build / runtime manifest at the project root, if any. Used to
+/// upgrade confidence and reasoning for branches that otherwise fall
+/// back to a generic "no distinctive layout" answer — knowing that a
+/// project is e.g. a Go module or a PHP composer package is more
+/// useful than just "Monolith (40%)".
+struct ManifestInfo
+{
+    std::string_view runtime;
+    std::string filename;
+};
+
+[[nodiscard]] std::optional<ManifestInfo>
+detect_root_manifest(const std::filesystem::path& project_root)
+{
+    if (project_root.empty()) {
+        return std::nullopt;
+    }
+    std::error_code ec;
+
+    // Order matters: more specific (language-implying) before generic.
+    // Cargo.toml gets here only if the workspace check above didn't
+    // fire — meaning it's a single-crate Rust project.
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 11> k_manifests = {{
+        {"go.mod", "Go"},
+        {"composer.json", "PHP"},
+        {"Gemfile", "Ruby"},
+        {"pyproject.toml", "Python"},
+        {"Cargo.toml", "Rust"},
+        {"pom.xml", "Java/Maven"},
+        {"build.gradle.kts", "Java/Gradle"},
+        {"build.gradle", "Java/Gradle"},
+        {"package.json", "Node.js"},
+        {"CMakeLists.txt", "C/C++"},
+        {"setup.py", "Python"},
+    }};
+    for (const auto& [filename, runtime] : k_manifests) {
+        if (std::filesystem::exists(project_root / filename, ec) && !ec) {
+            return ManifestInfo{runtime, std::string{filename}};
+        }
+        ec.clear();
+    }
+
+    // C# discriminates between project and solution files; either at
+    // root is informative. Glob via directory_iterator since the names
+    // are user-defined.
+    for (const auto& entry : std::filesystem::directory_iterator(project_root, ec)) {
+        if (ec) {
+            break;
+        }
+        const auto ext = entry.path().extension().string();
+        if (ext == ".sln") {
+            return ManifestInfo{".NET Solution", entry.path().filename().string()};
+        }
+        if (ext == ".csproj") {
+            return ManifestInfo{"C#", entry.path().filename().string()};
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::string_view architecture_label_name(ArchitectureLabel label) noexcept
@@ -398,6 +458,7 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     auto signals = collect_path_signals(index);
     augment_signals_from_disk(signals, project_root);
     const auto& segments = signals.segments;
+    const auto manifest = detect_root_manifest(project_root);
 
     // --- Monorepo indicators ---------------------------------------
     // Top-level `packages/`, `apps/`, `libs/` plus multiple main.*
@@ -497,6 +558,12 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
         out.reasoning = "multiple sibling directories with dotted "
                         "names (typical .NET multi-project solution)";
         out.confidence = 75;
+        // A `.sln` at the project root corroborates the dotted-dir
+        // signal — heuristic + manifest agreement is high-confidence.
+        if (manifest && manifest->runtime == ".NET Solution") {
+            out.reasoning += " — confirmed by " + manifest->filename;
+            out.confidence = 90;
+        }
         return out;
     }
 
@@ -555,6 +622,10 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
                         : has_routes ? "found `routes/` directory, no frontend config"
                                      : "found `routers/` directory, no frontend config";
         out.confidence = 60;
+        if (manifest) {
+            out.reasoning += " (" + std::string{manifest->runtime} + " project)";
+            out.confidence = 75;
+        }
         return out;
     }
 
@@ -574,16 +645,32 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
                             ? "found `include/` + `src/` with no entry point — library layout"
                             : "found `lib/` + `src/` with no entry point — library layout";
         out.confidence = 75;
+        if (manifest) {
+            out.reasoning += " (" + std::string{manifest->runtime} + " project)";
+            out.confidence = 85;
+        }
         return out;
     }
 
     // --- Default: Monolith -----------------------------------------
     // Everything else for a single-entrypoint project ends up here.
+    // A root-level build manifest is concrete evidence of the project
+    // type even when the directory shape doesn't fit any pattern —
+    // pin a higher confidence than "we have no idea what this is".
     if (main_count <= 1 || layered_matches > 0) {
         out.label = ArchitectureLabel::Monolith;
+        const std::string manifest_suffix =
+            manifest ? " — " + std::string{manifest->runtime} + " (" + manifest->filename + ")"
+                     : std::string{};
         if (layered_matches > 0) {
-            out.reasoning = "single entry point with partial layering (" + layered_reason + ")";
-            out.confidence = 50;
+            out.reasoning = "single entry point with partial layering (" + layered_reason + ")" +
+                            manifest_suffix;
+            out.confidence = manifest ? 60 : 50;
+        }
+        else if (manifest) {
+            out.reasoning = std::string{manifest->runtime} + " project (" + manifest->filename +
+                            "), no distinctive layout";
+            out.confidence = 55;
         }
         else {
             out.reasoning = "single entry point, no distinctive layout";
