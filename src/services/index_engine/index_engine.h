@@ -41,7 +41,10 @@ public:
     IndexEngine& operator=(IndexEngine&&) noexcept;
 
     /// Bind to a StorageEngine. Must be called before any other method.
-    void initialize(StorageEngine& storage);
+    /// Pointer (not reference) to make "address is stored" explicit at
+    /// every call site — caller must ensure the StorageEngine outlives
+    /// this IndexEngine.
+    void initialize(StorageEngine* storage);
 
     // ----- Indexing ----------------------------------------------------------
 

@@ -27,7 +27,7 @@ protected:
         ASSERT_TRUE(m_storage.open(m_tmp_dir / "idx_test.db"));
         ASSERT_TRUE(m_storage.migrate());
 
-        m_engine.initialize(m_storage);
+        m_engine.initialize(&m_storage);
     }
 
     void TearDown() override

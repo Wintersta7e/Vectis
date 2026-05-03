@@ -267,7 +267,7 @@ int run_cached(const std::filesystem::path& abs_root, const std::filesystem::pat
     }
 
     vectis::services::IndexEngine index_engine;
-    index_engine.initialize(storage);
+    index_engine.initialize(&storage);
 
     const bool have_existing_cache = vectis::code::has_cache_for(storage, abs_root);
 
