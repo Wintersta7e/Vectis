@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -45,22 +46,29 @@ const std::unordered_set<std::string> k_non_source_subtree_names = {
 
 struct PathSignals
 {
-    /// All directory segments seen in the index. Walks stop at the
-    /// first known test/fixture/doc/vendor root so a fixture path like
-    /// `tests/fixtures/.../models/user.py` doesn't inject a bogus
-    /// `"models"` signal — otherwise Vectis-scanning-itself would
-    /// mis-classify as classical layered. Deep non-test subtrees
-    /// (`src/App.UI/ViewModels/...`, `packages/frontend/src/components/...`)
-    /// are still walked in full, so depth-3+ signals detect correctly.
+    /// All directory segments seen in the index. The walk stops at
+    /// the first test/fixture/doc/vendor root, so a fixture path like
+    /// `tests/fixtures/.../models/user.py` doesn't inject `models`
+    /// into the signal. Deep non-test subtrees walk in full, so
+    /// `src/App.UI/ViewModels/...` etc. still surface their inner
+    /// segments.
     std::unordered_set<std::string> segments;
 
     /// First-component directory names that have at least one nested
-    /// file. Distinct from `segments`, which collapses every depth: a
-    /// vendored `deps/<lib>/include/...` injects `include` into the
-    /// segment set but `deps` (not `include`) into top-level dirs.
-    /// Used by Library detection to require `include`/`lib`/`src` at
-    /// the project root.
+    /// file. Distinct from `segments` (which collapses every depth):
+    /// a vendored `deps/<lib>/include/...` injects `include` into
+    /// `segments` but only `deps` into `top_level_dirs`. Library
+    /// detection requires `include`/`lib`/`src` at the project root.
     std::unordered_set<std::string> top_level_dirs;
+
+    /// `main.*` files outside non-source subtrees (test harnesses
+    /// and vendored copies don't count as application entry points).
+    std::size_t main_count = 0;
+
+    /// Per-language file counts plus a denominator for share %.
+    /// Files with `Language::Unknown` aren't counted.
+    std::array<std::size_t, k_language_count + 1> language_counts{};
+    std::size_t classified_files = 0;
 };
 
 [[nodiscard]] PathSignals collect_path_signals(const CodeIndex& index)
@@ -71,6 +79,8 @@ struct PathSignals
         if (dir.has_filename()) {
             dir.remove_filename();
         }
+        const bool under_non_source = is_under_non_source_subtree(file.path_relative);
+
         bool is_first = true;
         for (const auto& segment : dir) {
             const std::string s = segment.string();
@@ -85,6 +95,18 @@ struct PathSignals
             if (k_non_source_subtree_names.contains(s)) {
                 break;
             }
+        }
+
+        if (!under_non_source) {
+            const std::string name = file.path_relative.filename().string();
+            if (name.starts_with("main.") || name == "main") {
+                ++out.main_count;
+            }
+        }
+
+        if (file.language != Language::Unknown) {
+            ++out.language_counts[static_cast<std::size_t>(file.language)];
+            ++out.classified_files;
         }
     }
     return out;
@@ -185,28 +207,6 @@ void augment_signals_from_disk(PathSignals& signals, const std::filesystem::path
             }
         }
     }
-}
-
-/// Count files whose filename starts with `main.` (e.g. main.cpp,
-/// main.rs, main.py, main.go). Used as a rough "entry-point count"
-/// heuristic for microservice/monorepo detection.
-[[nodiscard]] std::size_t count_main_files(const CodeIndex& index)
-{
-    std::size_t count = 0;
-    for (const FileEntry& file : index.snapshot_files()) {
-        // Test harnesses, examples, and vendored code routinely ship
-        // their own `main.cc`. Counting them as application entry
-        // points makes pure libraries (fmt, spdlog) look like
-        // multi-binary monorepos.
-        if (is_under_non_source_subtree(file.path_relative)) {
-            continue;
-        }
-        const std::string name = file.path_relative.filename().string();
-        if (name.starts_with("main.") || name == "main") {
-            ++count;
-        }
-    }
-    return count;
 }
 
 /// Read a text file (capped to 64 KiB so malformed huge files can't
@@ -326,59 +326,99 @@ detect_python_packages(const std::filesystem::path& project_root, const CodeInde
     return std::nullopt;
 }
 
-/// True if `runtime` (as named by the manifest detector) is the same
-/// language family as `lang`. "Node.js" matches both JavaScript
-/// and TypeScript; "C/C++" matches either. Everything else 1:1.
-[[nodiscard]] bool manifest_matches_language(std::string_view runtime, Language lang) noexcept
+/// Runtime identified by a root build manifest. Single source of
+/// truth: every runtime maps to a display label and the set of
+/// indexed languages it accepts. Adding a new manifest below means
+/// adding one enumerator + one switch arm in each table.
+enum class Runtime : std::uint8_t
 {
-    if (runtime == "Go") {
-        return lang == Language::Go;
+    Go,
+    Python,
+    Php,
+    Ruby,
+    NodeJs,
+    Java,
+    CCpp,
+    Rust,
+    CSharp,
+    DotNetSolution,
+};
+
+[[nodiscard]] constexpr std::string_view runtime_label(Runtime r) noexcept
+{
+    switch (r) {
+    case Runtime::Go:
+        return "Go";
+    case Runtime::Python:
+        return "Python";
+    case Runtime::Php:
+        return "PHP";
+    case Runtime::Ruby:
+        return "Ruby";
+    case Runtime::NodeJs:
+        return "Node.js";
+    case Runtime::Java:
+        return "Java";
+    case Runtime::CCpp:
+        return "C/C++";
+    case Runtime::Rust:
+        return "Rust";
+    case Runtime::CSharp:
+        return "C#";
+    case Runtime::DotNetSolution:
+        return ".NET Solution";
     }
-    if (runtime == "Python") {
-        return lang == Language::Python;
-    }
-    if (runtime == "PHP") {
-        return lang == Language::Php;
-    }
-    if (runtime == "Ruby") {
-        return lang == Language::Ruby;
-    }
-    if (runtime == "Node.js") {
-        return lang == Language::JavaScript || lang == Language::TypeScript;
-    }
-    if (runtime == "Java/Maven" || runtime == "Java/Gradle") {
-        return lang == Language::Java;
-    }
-    if (runtime == "C/C++") {
-        return lang == Language::C || lang == Language::Cpp;
-    }
-    if (runtime == "Rust") {
-        return lang == Language::Rust;
-    }
-    if (runtime == "C#" || runtime == ".NET Solution") {
-        return lang == Language::CSharp;
-    }
-    return false;
+    return "?";
 }
 
-/// Share (0..100) of indexed files whose language matches `runtime`.
-/// "Node.js" combines JavaScript + TypeScript so a polyglot frontend
-/// project still reads as coherent. Files with `Language::Unknown`
-/// don't count toward the denominator.
-[[nodiscard]] int compute_runtime_dominance(const CodeIndex& index, std::string_view runtime)
+[[nodiscard]] std::span<const Language> runtime_languages(Runtime r) noexcept
 {
-    std::size_t matching = 0;
-    std::size_t total = 0;
-    for (const FileEntry& f : index.snapshot_files()) {
-        if (f.language == Language::Unknown) {
-            continue;
-        }
-        ++total;
-        if (manifest_matches_language(runtime, f.language)) {
-            ++matching;
-        }
+    // Multi-language runtimes (Node.js → JS+TS, C/C++ → C+Cpp) are
+    // why this isn't just one Language per Runtime.
+    static constexpr std::array<Language, 1> k_go{Language::Go};
+    static constexpr std::array<Language, 1> k_python{Language::Python};
+    static constexpr std::array<Language, 1> k_php{Language::Php};
+    static constexpr std::array<Language, 1> k_ruby{Language::Ruby};
+    static constexpr std::array<Language, 2> k_node{Language::JavaScript, Language::TypeScript};
+    static constexpr std::array<Language, 1> k_java{Language::Java};
+    static constexpr std::array<Language, 2> k_ccpp{Language::C, Language::Cpp};
+    static constexpr std::array<Language, 1> k_rust{Language::Rust};
+    static constexpr std::array<Language, 1> k_csharp{Language::CSharp};
+    switch (r) {
+    case Runtime::Go:
+        return k_go;
+    case Runtime::Python:
+        return k_python;
+    case Runtime::Php:
+        return k_php;
+    case Runtime::Ruby:
+        return k_ruby;
+    case Runtime::NodeJs:
+        return k_node;
+    case Runtime::Java:
+        return k_java;
+    case Runtime::CCpp:
+        return k_ccpp;
+    case Runtime::Rust:
+        return k_rust;
+    case Runtime::CSharp:
+    case Runtime::DotNetSolution:
+        return k_csharp;
     }
-    return total == 0 ? 0 : static_cast<int>(100 * matching / total);
+    return {};
+}
+
+/// Share (0..100) of classified files matching `r`'s language family.
+[[nodiscard]] int runtime_share(const PathSignals& signals, Runtime r) noexcept
+{
+    if (signals.classified_files == 0) {
+        return 0;
+    }
+    std::size_t matching = 0;
+    for (Language lang : runtime_languages(r)) {
+        matching += signals.language_counts[static_cast<std::size_t>(lang)];
+    }
+    return static_cast<int>(100 * matching / signals.classified_files);
 }
 
 /// Build / runtime manifest at the project root, if any. Used to
@@ -388,7 +428,7 @@ detect_python_packages(const std::filesystem::path& project_root, const CodeInde
 /// useful than just "Monolith (40%)".
 struct ManifestInfo
 {
-    std::string_view runtime;
+    Runtime runtime;
     std::string filename;
 };
 
@@ -400,21 +440,20 @@ detect_root_manifest(const std::filesystem::path& project_root)
     }
     std::error_code ec;
 
-    // Order matters: more specific (language-implying) before generic.
-    // Cargo.toml gets here only if the workspace check above didn't
-    // fire — meaning it's a single-crate Rust project.
-    static constexpr std::array<std::pair<std::string_view, std::string_view>, 11> k_manifests = {{
-        {"go.mod", "Go"},
-        {"composer.json", "PHP"},
-        {"Gemfile", "Ruby"},
-        {"pyproject.toml", "Python"},
-        {"Cargo.toml", "Rust"},
-        {"pom.xml", "Java/Maven"},
-        {"build.gradle.kts", "Java/Gradle"},
-        {"build.gradle", "Java/Gradle"},
-        {"package.json", "Node.js"},
-        {"CMakeLists.txt", "C/C++"},
-        {"setup.py", "Python"},
+    // Cargo.toml gets here only if the earlier workspace check didn't
+    // fire — i.e. it's a single-crate Rust project.
+    static constexpr std::array<std::pair<std::string_view, Runtime>, 11> k_manifests = {{
+        {"go.mod", Runtime::Go},
+        {"composer.json", Runtime::Php},
+        {"Gemfile", Runtime::Ruby},
+        {"pyproject.toml", Runtime::Python},
+        {"Cargo.toml", Runtime::Rust},
+        {"pom.xml", Runtime::Java},
+        {"build.gradle.kts", Runtime::Java},
+        {"build.gradle", Runtime::Java},
+        {"package.json", Runtime::NodeJs},
+        {"CMakeLists.txt", Runtime::CCpp},
+        {"setup.py", Runtime::Python},
     }};
     for (const auto& [filename, runtime] : k_manifests) {
         if (std::filesystem::exists(project_root / filename, ec) && !ec) {
@@ -423,19 +462,17 @@ detect_root_manifest(const std::filesystem::path& project_root)
         ec.clear();
     }
 
-    // C# discriminates between project and solution files; either at
-    // root is informative. Glob via directory_iterator since the names
-    // are user-defined.
+    // C# names are user-defined; .sln takes precedence over .csproj.
     for (const auto& entry : std::filesystem::directory_iterator(project_root, ec)) {
         if (ec) {
             break;
         }
         const auto ext = entry.path().extension().string();
         if (ext == ".sln") {
-            return ManifestInfo{".NET Solution", entry.path().filename().string()};
+            return ManifestInfo{Runtime::DotNetSolution, entry.path().filename().string()};
         }
         if (ext == ".csproj") {
-            return ManifestInfo{"C#", entry.path().filename().string()};
+            return ManifestInfo{Runtime::CSharp, entry.path().filename().string()};
         }
     }
     return std::nullopt;
@@ -515,7 +552,8 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     augment_signals_from_disk(signals, project_root);
     const auto& segments = signals.segments;
     const auto manifest = detect_root_manifest(project_root);
-    const int runtime_pct = manifest ? compute_runtime_dominance(index, manifest->runtime) : 0;
+    const int runtime_pct = manifest ? runtime_share(signals, manifest->runtime) : 0;
+    const std::size_t main_count = signals.main_count;
 
     // --- Monorepo indicators ---------------------------------------
     // Top-level `packages/`, `apps/`, `libs/` plus multiple main.*
@@ -524,7 +562,6 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     const bool has_apps = segments.contains("apps");
     const bool has_libs = segments.contains("libs");
     const bool has_packages_top = has_packages || has_apps || has_libs;
-    const std::size_t main_count = count_main_files(index);
     if (has_packages_top && main_count >= 2) {
         // Cite the directory that actually matched — a reasoning
         // string claiming "`packages/` or `apps/`" when only `libs/`
@@ -617,7 +654,7 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
         out.confidence = 75;
         // A `.sln` at the project root corroborates the dotted-dir
         // signal — heuristic + manifest agreement is high-confidence.
-        if (manifest && manifest->runtime == ".NET Solution") {
+        if (manifest && manifest->runtime == Runtime::DotNetSolution) {
             out.reasoning += " — confirmed by " + manifest->filename;
             out.confidence = 90;
         }
@@ -686,20 +723,17 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
         }
         out.confidence = 60;
         if (manifest) {
-            out.reasoning += " (" + std::string{manifest->runtime} + " project)";
+            out.reasoning += " (" + std::string{runtime_label(manifest->runtime)} + " project)";
             out.confidence = 75;
         }
         return out;
     }
 
     // --- Library indicators ----------------------------------------
-    // Canonical reusable-library shape: `include/` (or `lib/`) and
-    // `src/` at the project root with no application entry point.
-    // Most C++ libraries (fmt, spdlog, nlohmann/json) ship this way.
-    // Top-level scope is load-bearing — a server vendoring a C
-    // library under `deps/<lib>/include/` would otherwise have the
-    // nested `include/` bubble up via segment-collapse and mislabel
-    // a binary as a pure library.
+    // Canonical reusable-library shape: top-level `include/` (or
+    // `lib/`) + `src/` and no entry point. Top-level scope is
+    // load-bearing — a server vendoring `deps/<lib>/include/` would
+    // otherwise bubble up that nested `include/` and mislabel.
     const auto& top = signals.top_level_dirs;
     const bool has_top_include = top.contains("include");
     if ((has_top_include || top.contains("lib")) && top.contains("src") && main_count == 0) {
@@ -709,31 +743,25 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
                             : "found `lib/` + `src/` with no entry point — library layout";
         out.confidence = 75;
         if (manifest) {
-            out.reasoning += " (" + std::string{manifest->runtime} + " project)";
+            out.reasoning += " (" + std::string{runtime_label(manifest->runtime)} + " project)";
             out.confidence = 85;
         }
         return out;
     }
 
     // --- Default: Monolith -----------------------------------------
-    // Everything else for a single-entrypoint project ends up here.
-    // A root-level build manifest is concrete evidence of the project
-    // type even when the directory shape doesn't fit any pattern —
-    // pin a higher confidence than "we have no idea what this is".
+    // A root build manifest pins higher confidence than "we have no
+    // idea". A coherent codebase (manifest + ≥75% language match)
+    // pins higher still.
     if (main_count <= 1 || layered_matches > 0) {
         out.label = ArchitectureLabel::Monolith;
-        // Coherent = manifest declares a runtime AND ≥75% of indexed
-        // files match that runtime family. Stronger signal than just
-        // "manifest exists" — confirms the codebase isn't a polyglot
-        // mishmash but a real <runtime> project.
         const bool coherent = manifest && runtime_pct >= 75;
+        const std::string lbl{manifest ? runtime_label(manifest->runtime) : ""};
         const std::string manifest_suffix =
-            manifest ? " — " + std::string{manifest->runtime} + " (" + manifest->filename + ")"
+            manifest ? " — " + lbl + " (" + manifest->filename + ")" : std::string{};
+        const std::string coherence_suffix =
+            coherent ? ", " + std::to_string(runtime_pct) + "% " + lbl + "-dominant"
                      : std::string{};
-        const std::string coherence_suffix = coherent
-                                                 ? ", " + std::to_string(runtime_pct) + "% " +
-                                                       std::string{manifest->runtime} + "-dominant"
-                                                 : std::string{};
         if (layered_matches > 0) {
             out.reasoning = "single entry point with partial layering (" + layered_reason + ")" +
                             manifest_suffix + coherence_suffix;
@@ -747,8 +775,8 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
             out.confidence = conf;
         }
         else if (manifest) {
-            out.reasoning = std::string{manifest->runtime} + " project (" + manifest->filename +
-                            ")" + coherence_suffix + ", no distinctive layout";
+            out.reasoning = lbl + " project (" + manifest->filename + ")" + coherence_suffix +
+                            ", no distinctive layout";
             out.confidence = coherent ? 65 : 55;
         }
         else {
