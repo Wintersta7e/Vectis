@@ -1,6 +1,7 @@
 #include "code/architecture_detector.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -41,42 +42,50 @@ const std::unordered_set<std::string> k_non_source_subtree_names = {
     });
 }
 
-/// Collect distinct directory segments from scanned files.
-///
-/// Walks each file's directory components top-down, but **stops** at
-/// the first segment whose name is a known test / fixture / doc /
-/// vendor root. The stop segment itself is included (so `tests` at
-/// top-level still counts as a signal), but deeper segments under it
-/// are not — otherwise a fixture path like
-/// `tests/fixtures/code/sample-python/models/user.py` would inject a
-/// bogus `"models"` signal into architecture detection, making Vectis
-/// scanning itself mis-classify as classical layered (models/dao/etc.
-/// coming from Java/Python test fixtures, not the real project).
-///
-/// Deep non-test subtrees are still walked in full — .NET
-/// `src/App.UI/ViewModels/...` and monorepo
-/// `packages/frontend/src/components/...` both need depth-3+ signals
-/// and wouldn't detect correctly with a naive depth cap.
-[[nodiscard]] std::unordered_set<std::string> collect_directory_segments(const CodeIndex& index)
-{
+struct PathSignals {
+    /// All directory segments seen in the index. Walks stop at the
+    /// first known test/fixture/doc/vendor root so a fixture path like
+    /// `tests/fixtures/.../models/user.py` doesn't inject a bogus
+    /// `"models"` signal — otherwise Vectis-scanning-itself would
+    /// mis-classify as classical layered. Deep non-test subtrees
+    /// (`src/App.UI/ViewModels/...`, `packages/frontend/src/components/...`)
+    /// are still walked in full, so depth-3+ signals detect correctly.
     std::unordered_set<std::string> segments;
+
+    /// First-component directory names that have at least one nested
+    /// file. Distinct from `segments`, which collapses every depth: a
+    /// vendored `deps/<lib>/include/...` injects `include` into the
+    /// segment set but `deps` (not `include`) into top-level dirs.
+    /// Used by Library detection to require `include`/`lib`/`src` at
+    /// the project root.
+    std::unordered_set<std::string> top_level_dirs;
+};
+
+[[nodiscard]] PathSignals collect_path_signals(const CodeIndex& index)
+{
+    PathSignals out;
     for (const FileEntry& file : index.snapshot_files()) {
         std::filesystem::path dir = file.path_relative;
         if (dir.has_filename()) {
             dir.remove_filename();
         }
+        bool is_first = true;
         for (const auto& segment : dir) {
             const std::string s = segment.string();
             if (s.empty() || s == "/" || s == ".") {
                 continue;
             }
-            segments.insert(s);
+            if (is_first) {
+                out.top_level_dirs.insert(s);
+                is_first = false;
+            }
+            out.segments.insert(s);
             if (k_non_source_subtree_names.contains(s)) {
                 break;
             }
         }
     }
-    return segments;
+    return out;
 }
 
 /// Count distinct top-level or second-level DIRECTORY leaves whose
@@ -105,43 +114,12 @@ const std::unordered_set<std::string> k_non_source_subtree_names = {
     return dotted.size();
 }
 
-/// True if any file lives at the project root with the given filename
-/// (no parent directory). Used for framework-config heuristics:
-/// backend frameworks routinely vendor a tiny embedded SPA (e.g. for
-/// an exception-page renderer) deep in their tree, and a whole-tree
-/// check would mislabel a backend-dominant project as Frontend SPA.
-/// Top-level scope is the right granularity for these signals.
-[[nodiscard]] bool any_file_at_root(const CodeIndex& index, std::string_view name)
-{
-    const auto files = index.snapshot_files();
-    return std::ranges::any_of(files, [&](const FileEntry& file) {
-        const auto& p = file.path_relative;
-        return !p.has_parent_path() && p.filename().string() == name;
-    });
-}
-
-/// True if at least one indexed file lives directly under a top-level
-/// directory whose name matches `name`. Distinct from `segments`
-/// containment, which collapses every depth — a vendored
-/// `deps/<lib>/include/...` would inject `include` into the segment
-/// set and trip the Library heuristic for projects that have no
-/// public-headers directory of their own (servers that vendor C
-/// libraries under `deps/` are the canonical false-positive shape).
-[[nodiscard]] bool has_top_level_dir(const CodeIndex& index, std::string_view name)
-{
-    const auto files = index.snapshot_files();
-    return std::ranges::any_of(files, [&](const FileEntry& file) {
-        const auto& p = file.path_relative;
-        auto it = p.begin();
-        if (it == p.end()) {
-            return false;
-        }
-        // The first path component must equal `name`, AND there must
-        // be at least one further component — otherwise we'd match a
-        // root-level file whose filename happens to be e.g. "include".
-        return it->string() == name && std::next(it) != p.end();
-    });
-}
+/// SPA framework config files: presence at the project root strongly
+/// implies a frontend single-page app. Nested matches don't count —
+/// backend frameworks ship one-off embedded mini-apps deep in their
+/// tree (e.g. for exception-page rendering).
+constexpr std::array<std::string_view, 4> k_spa_root_configs = {
+    "next.config.js", "vite.config.ts", "vite.config.js", "nuxt.config.ts"};
 
 /// Count files whose filename starts with `main.` (e.g. main.cpp,
 /// main.rs, main.py, main.go). Used as a rough "entry-point count"
@@ -352,7 +330,8 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
         }
     }
 
-    const auto segments = collect_directory_segments(index);
+    const auto signals = collect_path_signals(index);
+    const auto& segments = signals.segments;
 
     // --- Monorepo indicators ---------------------------------------
     // Top-level `packages/`, `apps/`, `libs/` plus multiple main.*
@@ -469,17 +448,18 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     (void)has_any; // reserved for future layered heuristics
 
     // --- Frontend SPA indicators -----------------------------------
-    // src/components/ + src/pages/, or a framework config file at the
-    // project root. Root scope on the config check is load-bearing:
-    // backend frameworks routinely vendor a tiny embedded SPA (e.g.
-    // for an exception-page renderer) deep in their tree, and the
-    // whole-tree variant would mislabel a backend-dominant project as
-    // Frontend SPA on the strength of one nested config file.
+    // src/components/ + src/pages/, or a framework config at the
+    // project root. Root scope on the config probe is load-bearing:
+    // backends ship one-off embedded mini-apps deep in their tree
+    // (exception-page renderers, etc.) and a whole-tree match would
+    // mislabel them as SPA.
     const bool has_components = segments.contains("components");
     const bool has_pages = segments.contains("pages");
-    const bool has_spa_config =
-        any_file_at_root(index, "next.config.js") || any_file_at_root(index, "vite.config.ts") ||
-        any_file_at_root(index, "vite.config.js") || any_file_at_root(index, "nuxt.config.ts");
+    const bool has_spa_config = !project_root.empty() &&
+                                std::ranges::any_of(k_spa_root_configs, [&](std::string_view n) {
+                                    std::error_code ec;
+                                    return std::filesystem::exists(project_root / n, ec) && !ec;
+                                });
     if ((has_components && has_pages) || has_spa_config) {
         out.label = ArchitectureLabel::FrontendSpa;
         out.reasoning = has_spa_config ? "framework config file detected (next/vite/nuxt)"
@@ -510,21 +490,16 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     }
 
     // --- Library indicators ----------------------------------------
-    // `include/` (or `lib/`) alongside `src/` with no application
-    // entry point is the canonical reusable-library shape — most C++
-    // libraries (fmt, spdlog, nlohmann/json) and many SDKs ship like
-    // this. Goes before Monolith so a header+impl split doesn't fall
-    // through to "single entry point, no distinctive layout".
-    //
-    // Top-level scope on `include/` / `lib/` / `src/` is load-bearing:
-    // a server that vendors a C library under `deps/<lib>/include/`
-    // would otherwise have that nested `include/` bubble up to the
-    // project label via the segment-only check, mislabelling a binary
-    // (with `int main()` in `src/server.c`) as a pure library.
-    const bool has_top_include = has_top_level_dir(index, "include");
-    const bool has_top_lib = has_top_level_dir(index, "lib");
-    const bool has_top_src = has_top_level_dir(index, "src");
-    if ((has_top_include || has_top_lib) && has_top_src && main_count == 0) {
+    // Canonical reusable-library shape: `include/` (or `lib/`) and
+    // `src/` at the project root with no application entry point.
+    // Most C++ libraries (fmt, spdlog, nlohmann/json) ship this way.
+    // Top-level scope is load-bearing — a server vendoring a C
+    // library under `deps/<lib>/include/` would otherwise have the
+    // nested `include/` bubble up via segment-collapse and mislabel
+    // a binary as a pure library.
+    const auto& top = signals.top_level_dirs;
+    const bool has_top_include = top.contains("include");
+    if ((has_top_include || top.contains("lib")) && top.contains("src") && main_count == 0) {
         out.label = ArchitectureLabel::Library;
         out.reasoning = has_top_include
                             ? "found `include/` + `src/` with no entry point — library layout"

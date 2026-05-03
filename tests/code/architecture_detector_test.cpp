@@ -79,13 +79,26 @@ TEST(ArchitectureDetectorTest, FrontendSpa_DetectsSpaByDirectoryStructure)
 
 TEST(ArchitectureDetectorTest, FrontendSpa_DetectsSpaByConfigFile)
 {
+    // SPA-config probe is filesystem-based (matches the manifest
+    // detectors), so the marker file has to actually exist on disk.
+    namespace fs = std::filesystem;
+    static std::uint64_t counter = 0;
+    ++counter;
+    const fs::path root =
+        fs::temp_directory_path() / ("vectis_arch_test_spa_cfg_" + std::to_string(counter));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+    std::ofstream(root / "vite.config.ts") << "export default {}\n";
+
     CodeIndex idx;
     add_file(idx, "src/App.tsx", Language::TypeScript);
-    add_file(idx, "vite.config.ts", Language::TypeScript);
 
-    const auto result = detect_architecture(idx, "/fake");
+    const auto result = detect_architecture(idx, root);
     EXPECT_EQ(result.label, ArchitectureLabel::FrontendSpa);
     EXPECT_NE(result.reasoning.find("vite"), std::string::npos);
+
+    fs::remove_all(root, ec);
 }
 
 TEST(ArchitectureDetectorTest, Monorepo_DetectsPackagesPlusMultipleMains)
@@ -456,21 +469,13 @@ TEST(ArchitectureDetectorTest, LibraryLayout_DoesNotFireWhenSrcHasMain)
 
 TEST(ArchitectureDetectorTest, LibraryLayout_DoesNotFireOnVendoredNestedInclude)
 {
-    // Regression guard for vendored-deps shapes: a server with `src/`
-    // at top level and a vendored C library exposing
-    // `deps/<lib>/include/...` underneath used to be mislabelled as
-    // Library because the segment walker saw `include` from the
-    // vendored subtree. The Library check now requires `include/`
-    // (or `lib/`) AND `src/` to live at the project root, and the
-    // detector falls through to Monolith for binaries-with-vendored-
-    // deps that don't expose their own public-headers directory.
+    // Vendored `deps/<lib>/include/...` should not flip Library —
+    // only top-level `include/` (or `lib/`) counts.
     CodeIndex idx;
     add_file(idx, "src/server.c", Language::C);
     add_file(idx, "src/networking.c", Language::C);
-    add_file(idx, "src/cli.c", Language::C);
     add_file(idx, "deps/alloc_lib/include/alloc.h", Language::C);
     add_file(idx, "deps/alloc_lib/src/alloc.c", Language::C);
-    add_file(idx, "deps/wire_lib/include/wire.h", Language::C);
 
     const auto result = detect_architecture(idx, "/fake");
     EXPECT_NE(result.label, ArchitectureLabel::Library)
@@ -479,19 +484,15 @@ TEST(ArchitectureDetectorTest, LibraryLayout_DoesNotFireOnVendoredNestedInclude)
 
 TEST(ArchitectureDetectorTest, FrontendSpa_DoesNotFireOnNestedConfig)
 {
-    // Regression guard for backend-with-embedded-SPA shapes: a
-    // backend project that ships a one-file embedded mini-app deep
-    // in its tree (e.g. for an exception-page renderer) used to be
-    // mislabelled as Frontend SPA on the strength of a single nested
-    // vite.config.js. The framework-config check now requires the
-    // file to live at the project root.
+    // A nested vite.config.js (e.g. backend's embedded error-page
+    // renderer) must not flip FrontendSpa — the probe is root-only
+    // and filesystem-based, so an index entry alone won't trigger.
     CodeIndex idx;
     for (int i = 0; i < 20; ++i) {
-        const std::string name = "src/Backend/Pkg/file_" + std::to_string(i) + ".php";
-        add_file(idx, name, Language::Php);
+        add_file(idx, "src/Backend/file_" + std::to_string(i) + ".php", Language::Php);
     }
     add_file(idx,
-             "src/Backend/Foundation/resources/exceptions/renderer/vite.config.js",
+             "src/Backend/resources/exceptions/renderer/vite.config.js",
              Language::JavaScript);
 
     const auto result = detect_architecture(idx, "/fake");
