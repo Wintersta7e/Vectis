@@ -170,6 +170,39 @@ TEST_F(StorageEngineTest, PreparedStatementBindAndQuery)
     EXPECT_NEAR((*rows)[1].get_real(2), 2.71, 0.001);
 }
 
+TEST_F(StorageEngineTest, QueryEach_StreamsSameRowsAsQuery)
+{
+    ASSERT_TRUE(m_engine.open(m_db_path));
+    ASSERT_TRUE(m_engine.execute("CREATE TABLE t (id INTEGER, name TEXT)"));
+    auto ins = m_engine.prepare("INSERT INTO t VALUES (?, ?)");
+    ASSERT_TRUE(ins);
+    for (const auto& [id, name] :
+         std::vector<std::pair<int, std::string>>{{1, "one"}, {2, "two"}, {3, "three"}}) {
+        ins->reset();
+        ins->bind(1, static_cast<std::int64_t>(id));
+        ins->bind(2, std::string_view{name});
+        ASSERT_TRUE(ins->execute());
+    }
+
+    auto sel_buffered = m_engine.prepare("SELECT id, name FROM t ORDER BY id");
+    ASSERT_TRUE(sel_buffered);
+    auto rows = sel_buffered->query();
+    ASSERT_TRUE(rows);
+    ASSERT_EQ(rows->size(), 3U);
+
+    auto sel_streaming = m_engine.prepare("SELECT id, name FROM t ORDER BY id");
+    ASSERT_TRUE(sel_streaming);
+    std::vector<std::pair<std::int64_t, std::string>> seen;
+    ASSERT_TRUE(sel_streaming->query_each(
+        [&](const auto& row) { seen.emplace_back(row.get_int(0), row.get_text(1)); }));
+
+    ASSERT_EQ(seen.size(), 3U);
+    for (std::size_t i = 0; i < seen.size(); ++i) {
+        EXPECT_EQ(seen[i].first, (*rows)[i].get_int(0));
+        EXPECT_EQ(seen[i].second, (*rows)[i].get_text(1));
+    }
+}
+
 TEST_F(StorageEngineTest, LastInsertId)
 {
     ASSERT_TRUE(m_engine.open(m_db_path));

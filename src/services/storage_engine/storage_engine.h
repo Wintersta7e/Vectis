@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -102,6 +103,15 @@ public:
         /// the sqlite3_stmt at step time so rows outlive the statement.
         [[nodiscard]] vectis::core::Result<std::vector<Row>> query();
 
+        /// Streaming variant: invoke `callback` for each result row
+        /// without buffering the whole result set. Preferred over
+        /// `query()` for large SELECTs (e.g. loading the symbol table)
+        /// since it avoids materialising a `vector<Row>` of every row's
+        /// columns. The Row passed to the callback is reused per
+        /// iteration; copy out anything the callback needs to keep.
+        [[nodiscard]] vectis::core::Result<void>
+        query_each(const std::function<void(const Row&)>& callback);
+
         /// The ROWID of the last INSERT performed by this statement.
         [[nodiscard]] std::int64_t last_insert_id() const;
 
@@ -113,6 +123,11 @@ public:
         struct Impl;
         std::unique_ptr<Impl> m_impl;
         explicit Statement(std::unique_ptr<Impl> impl);
+
+        /// Read all columns from the current sqlite3_stmt step into
+        /// `row` (clearing and refilling its column vector). Shared by
+        /// `query()` and `query_each()`.
+        static void fill_row_from_step(Row& row, int col_count, void* stmt);
     };
 
     /// Compile a SQL string into a prepared statement.

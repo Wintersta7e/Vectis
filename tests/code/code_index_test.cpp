@@ -268,4 +268,82 @@ TEST(CodeIndexTest, RemoveFile_ClearsSymbolsAndDeps)
     EXPECT_TRUE(idx.all_dependencies().empty());
 }
 
+TEST(CodeIndexTest, SnapshotAllSymbols_ReturnsLiveOnly)
+{
+    CodeIndex idx;
+    const auto fa = idx.add_file(make_file("a.cpp", Language::Cpp));
+    const auto fb = idx.add_file(make_file("b.cpp", Language::Cpp));
+
+    const std::array<Symbol, 2> a_syms = {
+        make_symbol(fa, "a1", SymbolKind::Function),
+        make_symbol(fa, "a2", SymbolKind::Function),
+    };
+    const std::array<Symbol, 1> b_syms = {
+        make_symbol(fb, "b1", SymbolKind::Function),
+    };
+    idx.add_symbols(a_syms);
+    idx.add_symbols(b_syms);
+
+    EXPECT_EQ(idx.snapshot_all_symbols().size(), 3U);
+
+    idx.remove_file(fa);
+
+    // After remove_file the soft-deleted entries must not show up.
+    const auto live = idx.snapshot_all_symbols();
+    ASSERT_EQ(live.size(), 1U);
+    EXPECT_EQ(live[0].name, "b1");
+}
+
+TEST(CodeIndexTest, Compact_RemovesSoftDeletedEntriesAndPreservesLiveLookups)
+{
+    CodeIndex idx;
+    const auto fa = idx.add_file(make_file("a.cpp", Language::Cpp));
+    const auto fb = idx.add_file(make_file("b.cpp", Language::Cpp));
+    const auto fc = idx.add_file(make_file("c.cpp", Language::Cpp));
+
+    const std::array<Symbol, 1> a_syms = {make_symbol(fa, "a1", SymbolKind::Function)};
+    const std::array<Symbol, 2> b_syms = {
+        make_symbol(fb, "b1", SymbolKind::Function),
+        make_symbol(fb, "b2", SymbolKind::Function),
+    };
+    const std::array<Symbol, 1> c_syms = {make_symbol(fc, "c1", SymbolKind::Function)};
+    idx.add_symbols(a_syms);
+    idx.add_symbols(b_syms);
+    idx.add_symbols(c_syms);
+
+    Dependency dep_ab;
+    dep_ab.source_file_id = fa;
+    dep_ab.target_file_id = fb;
+    dep_ab.kind = "import";
+    idx.add_dependency(std::move(dep_ab));
+
+    Dependency dep_bc;
+    dep_bc.source_file_id = fb;
+    dep_bc.target_file_id = fc;
+    dep_bc.kind = "import";
+    idx.add_dependency(std::move(dep_bc));
+
+    // Soft-delete the middle file (and its dep edges).
+    idx.remove_file(fb);
+    EXPECT_EQ(idx.file_count(), 2U);
+    EXPECT_EQ(idx.symbol_count(), 2U);
+    EXPECT_EQ(idx.dependency_count(), 0U);
+
+    idx.compact();
+
+    // Counters and queries unchanged after compaction.
+    EXPECT_EQ(idx.file_count(), 2U);
+    EXPECT_EQ(idx.symbol_count(), 2U);
+    EXPECT_EQ(idx.dependency_count(), 0U);
+    const auto files = idx.snapshot_files();
+    ASSERT_EQ(files.size(), 2U);
+    EXPECT_EQ(files[0].path_relative, "a.cpp");
+    EXPECT_EQ(files[1].path_relative, "c.cpp");
+    EXPECT_EQ(idx.snapshot_all_symbols().size(), 2U);
+    // Per-file lookups must still work — m_by_file was rebuilt.
+    EXPECT_EQ(idx.symbols_in_file(fa).size(), 1U);
+    EXPECT_EQ(idx.symbols_in_file(fc).size(), 1U);
+    EXPECT_TRUE(idx.symbols_in_file(fb).empty());
+}
+
 } // namespace

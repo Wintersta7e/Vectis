@@ -60,6 +60,14 @@ public:
     /// thread as long as no mutation is in flight.
     void clear();
 
+    /// Drop soft-deleted entries (zero-id files/symbols/dependencies)
+    /// and rebuild the lookup maps with fresh indices. Long-running
+    /// incremental sessions accumulate tombstones via `remove_file`;
+    /// `compact()` reclaims that space without invalidating live data.
+    /// Caller must ensure no concurrent reader holds a snapshot from
+    /// before the call returns.
+    void compact();
+
     // ----- Queries (reader thread) ------------------------------------
 
     /// Snapshot of every registered file, sorted by relative path.
@@ -69,6 +77,11 @@ public:
 
     /// All symbols belonging to a single file.
     [[nodiscard]] std::vector<Symbol> symbols_in_file(std::int64_t file_id) const;
+
+    /// Every live symbol in the index, in insertion order. One shared
+    /// lock window; preferred over a per-file loop when the caller
+    /// needs them all (digest export, cache save).
+    [[nodiscard]] std::vector<Symbol> snapshot_all_symbols() const;
 
     /// Case-insensitive substring search over symbol names. Results
     /// are sorted by name. Capped at `limit` matches to keep the UI

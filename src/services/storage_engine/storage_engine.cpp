@@ -263,6 +263,41 @@ Result<void> StorageEngine::Statement::execute()
     return {};
 }
 
+void StorageEngine::Statement::fill_row_from_step(Row& row, int col_count, void* stmt_ptr)
+{
+    auto* stmt = static_cast<sqlite3_stmt*>(stmt_ptr);
+    row.m_columns.clear();
+    row.m_columns.reserve(static_cast<std::size_t>(col_count));
+    for (int i = 0; i < col_count; ++i) {
+        const int type = sqlite3_column_type(stmt, i);
+        switch (type) {
+        case SQLITE_INTEGER:
+            row.m_columns.emplace_back(sqlite3_column_int64(stmt, i));
+            break;
+        case SQLITE_FLOAT:
+            row.m_columns.emplace_back(sqlite3_column_double(stmt, i));
+            break;
+        case SQLITE_TEXT: {
+            // SQLite returns UTF-8 text as `unsigned char*` to keep its
+            // C ABI portable; we read it back as `char*` to feed
+            // std::string. The byte representation is identical, so
+            // this is the canonical SQLite-binding cast.
+            const unsigned char* raw = sqlite3_column_text(stmt, i);
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+            const auto* text = reinterpret_cast<const char*>(raw);
+            const int len = sqlite3_column_bytes(stmt, i);
+            row.m_columns.emplace_back(std::string(text, static_cast<std::size_t>(len)));
+            break;
+        }
+        case SQLITE_BLOB:
+        case SQLITE_NULL:
+        default:
+            row.m_columns.emplace_back(std::monostate{});
+            break;
+        }
+    }
+}
+
 Result<std::vector<StorageEngine::Row>> StorageEngine::Statement::query()
 {
     std::vector<Row> rows;
@@ -278,42 +313,34 @@ Result<std::vector<StorageEngine::Row>> StorageEngine::Statement::query()
             sqlite3_reset(m_impl->stmt);
             return make_error(ErrorKind::StorageError, std::move(msg));
         }
-
         Row row;
-        row.m_columns.reserve(static_cast<std::size_t>(col_count));
-        for (int i = 0; i < col_count; ++i) {
-            const int type = sqlite3_column_type(m_impl->stmt, i);
-            switch (type) {
-            case SQLITE_INTEGER:
-                row.m_columns.emplace_back(sqlite3_column_int64(m_impl->stmt, i));
-                break;
-            case SQLITE_FLOAT:
-                row.m_columns.emplace_back(sqlite3_column_double(m_impl->stmt, i));
-                break;
-            case SQLITE_TEXT: {
-                // SQLite returns UTF-8 text as `unsigned char*` to keep its
-                // C ABI portable; we read it back as `char*` to feed
-                // std::string. The byte representation is identical, so
-                // this is the canonical SQLite-binding cast.
-                const unsigned char* raw = sqlite3_column_text(m_impl->stmt, i);
-                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-                const auto* text = reinterpret_cast<const char*>(raw);
-                const int len = sqlite3_column_bytes(m_impl->stmt, i);
-                row.m_columns.emplace_back(std::string(text, static_cast<std::size_t>(len)));
-                break;
-            }
-            case SQLITE_BLOB:
-            case SQLITE_NULL:
-            default:
-                row.m_columns.emplace_back(std::monostate{});
-                break;
-            }
-        }
+        fill_row_from_step(row, col_count, m_impl->stmt);
         rows.push_back(std::move(row));
     }
 
     sqlite3_reset(m_impl->stmt);
     return rows;
+}
+
+Result<void> StorageEngine::Statement::query_each(const std::function<void(const Row&)>& callback)
+{
+    const int col_count = sqlite3_column_count(m_impl->stmt);
+    Row row;
+    while (true) {
+        const int rc = sqlite3_step(m_impl->stmt);
+        if (rc == SQLITE_DONE) {
+            break;
+        }
+        if (rc != SQLITE_ROW) {
+            std::string msg = sqlite3_errmsg(m_impl->db);
+            sqlite3_reset(m_impl->stmt);
+            return make_error(ErrorKind::StorageError, std::move(msg));
+        }
+        fill_row_from_step(row, col_count, m_impl->stmt);
+        callback(row);
+    }
+    sqlite3_reset(m_impl->stmt);
+    return {};
 }
 
 std::int64_t StorageEngine::Statement::last_insert_id() const

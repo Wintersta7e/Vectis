@@ -645,6 +645,13 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         resolve_all(index, config.root, per_file_imports);
     }
 
+    // Reclaim soft-delete tombstones once per scan — long-running
+    // incremental sessions would otherwise let the underlying
+    // vectors grow without bound.
+    if (result.files_deleted > 0 || result.files_updated > 0) {
+        index.compact();
+    }
+
     VECTIS_LOG_INFO(
         "Scanner: incremental scan done — {} added, {} updated, {} deleted, {} unchanged",
         result.files_added, result.files_updated, result.files_deleted, result.files_unchanged);

@@ -142,25 +142,24 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
         return tl::unexpected(ins_sym.error());
     }
 
-    for (const auto& f : files) {
-        const auto syms = index.symbols_in_file(f.id);
-        for (const auto& s : syms) {
-            ins_sym->bind(1, s.id);
-            ins_sym->bind(2, s.file_id);
-            ins_sym->bind(3, std::string_view{s.name});
-            ins_sym->bind(4, symbol_kind_name(s.kind));
-            ins_sym->bind(5, std::string_view{s.signature});
-            ins_sym->bind(6, static_cast<std::int64_t>(s.line_start));
-            ins_sym->bind(7, static_cast<std::int64_t>(s.line_end));
-            ins_sym->bind(8, s.parent_id);
-            ins_sym->bind(9, static_cast<std::int64_t>(s.complexity));
-            const auto members_str = join_members(s.members);
-            ins_sym->bind(10, std::string_view{members_str});
-            if (auto r = ins_sym->execute(); !r) {
-                return r;
-            }
-            ins_sym->reset();
+    // One shared lock instead of N (was: per-file `symbols_in_file`).
+    const auto all_symbols = index.snapshot_all_symbols();
+    for (const auto& s : all_symbols) {
+        ins_sym->bind(1, s.id);
+        ins_sym->bind(2, s.file_id);
+        ins_sym->bind(3, std::string_view{s.name});
+        ins_sym->bind(4, symbol_kind_name(s.kind));
+        ins_sym->bind(5, std::string_view{s.signature});
+        ins_sym->bind(6, static_cast<std::int64_t>(s.line_start));
+        ins_sym->bind(7, static_cast<std::int64_t>(s.line_end));
+        ins_sym->bind(8, s.parent_id);
+        ins_sym->bind(9, static_cast<std::int64_t>(s.complexity));
+        const auto members_str = join_members(s.members);
+        ins_sym->bind(10, std::string_view{members_str});
+        if (auto r = ins_sym->execute(); !r) {
+            return r;
         }
+        ins_sym->reset();
     }
 
     // Insert dependencies.
@@ -277,40 +276,38 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
         return tl::unexpected(sel_syms.error());
     }
 
-    auto sym_rows = sel_syms->query();
-    if (!sym_rows) {
-        return tl::unexpected(sym_rows.error());
-    }
-
+    // Stream rows instead of materialising the full result vector —
+    // a large project's symbol table can be tens of thousands of rows
+    // and we'd otherwise allocate a Row + per-column ColumnValue copy
+    // for every single one before doing any actual work.
     std::int64_t current_file = -1;
     std::vector<Symbol> batch;
-
     const auto flush_batch = [&]() {
         if (!batch.empty()) {
             index.add_symbols(batch);
             batch.clear();
         }
     };
-
-    for (const auto& row : *sym_rows) {
-        const std::int64_t file_id = row.get_int(1);
-        if (file_id != current_file) {
-            flush_batch();
-            current_file = file_id;
-        }
-
-        Symbol s;
-        // s.id will be reassigned by add_symbols
-        s.file_id = file_id;
-        s.name = row.get_text(2);
-        s.kind = symbol_kind_from_name(row.get_text(3));
-        s.signature = row.get_text(4);
-        s.line_start = static_cast<int>(row.get_int(5));
-        s.line_end = static_cast<int>(row.get_int(6));
-        s.parent_id = row.get_int(7);
-        s.complexity = static_cast<int>(row.get_int(8));
-        s.members = split_members(row.get_text(9));
-        batch.push_back(std::move(s));
+    if (auto r = sel_syms->query_each([&](const auto& row) {
+            const std::int64_t file_id = row.get_int(1);
+            if (file_id != current_file) {
+                flush_batch();
+                current_file = file_id;
+            }
+            Symbol s;
+            s.file_id = file_id;
+            s.name = row.get_text(2);
+            s.kind = symbol_kind_from_name(row.get_text(3));
+            s.signature = row.get_text(4);
+            s.line_start = static_cast<int>(row.get_int(5));
+            s.line_end = static_cast<int>(row.get_int(6));
+            s.parent_id = row.get_int(7);
+            s.complexity = static_cast<int>(row.get_int(8));
+            s.members = split_members(row.get_text(9));
+            batch.push_back(std::move(s));
+        });
+        !r) {
+        return tl::unexpected(r.error());
     }
     flush_batch();
 

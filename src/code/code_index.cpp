@@ -207,6 +207,63 @@ void CodeIndex::clear()
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
+void CodeIndex::compact()
+{
+    const std::unique_lock lock(m_mutex);
+
+    // Files — keep entries with non-zero id; preserve order so file
+    // ids and the lookup maps below stay consistent.
+    std::vector<FileEntry> live_files;
+    live_files.reserve(m_files.size());
+    for (auto& f : m_files) {
+        if (f.id != 0) {
+            live_files.push_back(std::move(f));
+        }
+    }
+    m_files = std::move(live_files);
+
+    // Symbols — drop tombstones and rebuild m_by_file with fresh
+    // positional indices into the compacted vector.
+    std::vector<Symbol> live_symbols;
+    live_symbols.reserve(m_symbols.size());
+    std::unordered_map<std::int64_t, std::vector<std::size_t>> new_by_file;
+    for (auto& s : m_symbols) {
+        if (s.file_id == 0) {
+            continue;
+        }
+        new_by_file[s.file_id].push_back(live_symbols.size());
+        live_symbols.push_back(std::move(s));
+    }
+    m_symbols = std::move(live_symbols);
+    m_by_file = std::move(new_by_file);
+
+    // Dependencies — same pattern, plus the two outgoing/incoming
+    // adjacency maps need fresh positional indices into the
+    // compacted edge vector.
+    std::vector<Dependency> live_deps;
+    live_deps.reserve(m_dependencies.size());
+    std::unordered_map<std::int64_t, std::vector<std::size_t>> new_outgoing;
+    std::unordered_map<std::int64_t, std::vector<std::size_t>> new_incoming;
+    for (auto& d : m_dependencies) {
+        if (d.source_file_id == 0 && d.target_file_id == 0) {
+            continue;
+        }
+        const std::size_t new_idx = live_deps.size();
+        if (d.source_file_id != 0) {
+            new_outgoing[d.source_file_id].push_back(new_idx);
+        }
+        if (d.target_file_id != 0) {
+            new_incoming[d.target_file_id].push_back(new_idx);
+        }
+        live_deps.push_back(std::move(d));
+    }
+    m_dependencies = std::move(live_deps);
+    m_deps_outgoing = std::move(new_outgoing);
+    m_deps_incoming = std::move(new_incoming);
+
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
 std::vector<FileEntry> CodeIndex::snapshot_files() const
 {
     std::vector<FileEntry> copy;
@@ -236,6 +293,19 @@ std::vector<Symbol> CodeIndex::symbols_in_file(std::int64_t file_id) const
     out.reserve(it->second.size());
     for (const std::size_t idx : it->second) {
         out.push_back(m_symbols[idx]);
+    }
+    return out;
+}
+
+std::vector<Symbol> CodeIndex::snapshot_all_symbols() const
+{
+    std::vector<Symbol> out;
+    const std::shared_lock lock(m_mutex);
+    out.reserve(m_symbols.size());
+    for (const auto& s : m_symbols) {
+        if (s.file_id != 0) {
+            out.push_back(s);
+        }
     }
     return out;
 }
