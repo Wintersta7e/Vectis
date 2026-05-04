@@ -782,4 +782,85 @@ TEST(ArchitectureDetectorTest, PythonLibrary_DjangoAppEntryDoesNotMatch)
     fs::remove_all(root);
 }
 
+TEST(ArchitectureDetectorTest, GoLibrary_RootPackageWithoutMainOrCmd)
+{
+    // Gin-style: go.mod at root, top-level *.go declaring the public
+    // package, no `main.go` and no `cmd/`. Should label as Library.
+    const fs::path root = fresh_tmp("go_lib");
+    write_file(root / "go.mod", "module example.com/foo\n");
+    write_file(root / "foo.go", "// header\npackage foo\n\nfunc Hello() {}\n");
+    write_file(root / "internal" / "util.go", "package internal\n");
+
+    CodeIndex idx;
+    add_file(idx, "foo.go", Language::Go);
+    add_file(idx, "internal/util.go", Language::Go);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+    EXPECT_NE(result.reasoning.find("foo"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, GoLibrary_RootMainGoIsNotLibrary)
+{
+    // Top-level main.go with `package main` is the canonical Go binary
+    // shape. Must NOT label as Library.
+    const fs::path root = fresh_tmp("go_root_main");
+    write_file(root / "go.mod", "module example.com/foo\n");
+    write_file(root / "main.go", "package main\n\nfunc main() {}\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.go", Language::Go);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, GoLibrary_CmdSubtreeIsNotLibrary)
+{
+    // `cmd/<name>/main.go` is the canonical Go CLI layout. Even if the
+    // root has a non-main package, the cmd/ binary disqualifies it.
+    const fs::path root = fresh_tmp("go_cmd");
+    write_file(root / "go.mod", "module example.com/foo\n");
+    write_file(root / "foo.go", "package foo\n");
+    write_file(root / "cmd" / "foo" / "main.go", "package main\n\nfunc main() {}\n");
+
+    CodeIndex idx;
+    add_file(idx, "foo.go", Language::Go);
+    add_file(idx, "cmd/foo/main.go", Language::Go);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, GoLibrary_CommentsBeforePackageClause)
+{
+    // Real Go files commonly have a license header (line comments) and
+    // sometimes a `//go:build` directive before the package clause —
+    // the package extractor must skip both.
+    const fs::path root = fresh_tmp("go_lib_comments");
+    write_file(root / "go.mod", "module example.com/foo\n");
+    write_file(root / "foo.go", "// Copyright 2026 example.com\n"
+                                "// SPDX-License-Identifier: MIT\n"
+                                "\n"
+                                "//go:build linux\n"
+                                "\n"
+                                "/* extra block-comment\n"
+                                "   trailing prose */\n"
+                                "package foo\n");
+
+    CodeIndex idx;
+    add_file(idx, "foo.go", Language::Go);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
 } // namespace

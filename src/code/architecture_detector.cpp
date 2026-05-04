@@ -80,7 +80,7 @@ struct PathSignals
     std::string python_sample_pkg;
 };
 
-[[nodiscard]] [[nodiscard]] PathSignals collect_path_signals(const CodeIndex& index)
+[[nodiscard]] PathSignals collect_path_signals(const CodeIndex& index)
 {
     PathSignals out;
     for (const FileEntry& file : index.snapshot_files()) {
@@ -638,6 +638,149 @@ detect_python_library(const std::filesystem::path& project_root, const PathSigna
                       k_library_inferred_confidence};
 }
 
+/// Read the first `package <name>` clause from a Go file, skipping
+/// leading line comments, block comments, and whitespace. Returns
+/// `nullopt` on read failure or when the first non-comment token isn't
+/// `package`. Reads at most 4 KB — Go files declare their package
+/// within the first handful of lines or not at all.
+[[nodiscard]] std::optional<std::string> extract_go_package(const std::filesystem::path& path)
+{
+    std::ifstream in(path);
+    if (!in) {
+        return std::nullopt;
+    }
+    constexpr std::size_t k_peek_bytes = 4096;
+    std::string buf;
+    buf.resize(k_peek_bytes);
+    in.read(buf.data(), k_peek_bytes);
+    buf.resize(static_cast<std::size_t>(in.gcount()));
+
+    std::size_t i = 0;
+    while (i < buf.size()) {
+        const char c = buf[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            ++i;
+            continue;
+        }
+        if (i + 1 < buf.size() && buf[i] == '/' && buf[i + 1] == '/') {
+            while (i < buf.size() && buf[i] != '\n') {
+                ++i;
+            }
+            continue;
+        }
+        if (i + 1 < buf.size() && buf[i] == '/' && buf[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < buf.size() && (buf[i] != '*' || buf[i + 1] != '/')) {
+                ++i;
+            }
+            if (i + 1 < buf.size()) {
+                i += 2;
+            }
+            continue;
+        }
+        constexpr std::string_view k_pkg{"package"};
+        if (buf.compare(i, k_pkg.size(), k_pkg) != 0) {
+            return std::nullopt;
+        }
+        i += k_pkg.size();
+        if (i >= buf.size() || (buf[i] != ' ' && buf[i] != '\t')) {
+            return std::nullopt;
+        }
+        while (i < buf.size() && (buf[i] == ' ' || buf[i] == '\t')) {
+            ++i;
+        }
+        const std::size_t start = i;
+        while (i < buf.size() &&
+               (std::isalnum(static_cast<unsigned char>(buf[i])) != 0 || buf[i] == '_')) {
+            ++i;
+        }
+        if (i == start) {
+            return std::nullopt;
+        }
+        return buf.substr(start, i - start);
+    }
+    return std::nullopt;
+}
+
+/// True if `cmd/` contains any non-test `.go` file (the canonical Go
+/// CLI layout: one binary per `cmd/<name>/` subdir). Bounded recursive
+/// walk — exits as soon as the first hit is found.
+[[nodiscard]] bool has_cmd_binary(const std::filesystem::path& project_root)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path cmd_dir = project_root / "cmd";
+    if (!fs::is_directory(cmd_dir, ec) || ec) {
+        return false;
+    }
+    for (const auto& sub : fs::recursive_directory_iterator(
+             cmd_dir, fs::directory_options::skip_permission_denied, ec)) {
+        if (ec) {
+            return false;
+        }
+        if (sub.path().extension() != ".go") {
+            continue;
+        }
+        const std::string fname = sub.path().filename().string();
+        if (fname.ends_with("_test.go")) {
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+/// Go library: top-level `*.go` files declare a non-`main` package
+/// (the public package the module exports), and there's no root
+/// `package main` file or `cmd/<name>/` binary subtree. The check
+/// runs only after API-Backend / MVC / Layered have already had a
+/// chance to fire, so app-shaped Go projects with framework
+/// directories don't reach here.
+[[nodiscard]] std::optional<LibraryHit> detect_go_library(const std::filesystem::path& project_root)
+{
+    namespace fs = std::filesystem;
+    if (has_cmd_binary(project_root)) {
+        return std::nullopt;
+    }
+    bool saw_non_main_pkg = false;
+    std::string sample_pkg;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(project_root, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+        const auto& path = entry.path();
+        if (path.extension() != ".go") {
+            continue;
+        }
+        const std::string fname = path.filename().string();
+        if (fname.ends_with("_test.go")) {
+            continue;
+        }
+        const auto pkg = extract_go_package(path);
+        if (!pkg) {
+            continue;
+        }
+        if (*pkg == "main") {
+            return std::nullopt;
+        }
+        saw_non_main_pkg = true;
+        if (sample_pkg.empty()) {
+            sample_pkg = *pkg;
+        }
+    }
+    if (!saw_non_main_pkg) {
+        return std::nullopt;
+    }
+    return LibraryHit{"Go library (go.mod + root `package " + sample_pkg +
+                          "`, no `main` package or `cmd/` binary)",
+                      k_library_inferred_confidence};
+}
+
 /// Dispatch on manifest runtime to pick the right ecosystem detector.
 [[nodiscard]] std::optional<LibraryHit>
 detect_ecosystem_library(const std::filesystem::path& project_root, const ManifestInfo& manifest,
@@ -653,6 +796,7 @@ detect_ecosystem_library(const std::filesystem::path& project_root, const Manife
     case Runtime::Python:
         return detect_python_library(project_root, signals);
     case Runtime::Go:
+        return detect_go_library(project_root);
     case Runtime::Java:
     case Runtime::CCpp:
     case Runtime::Rust:
