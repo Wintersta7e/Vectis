@@ -71,6 +71,12 @@ struct ArchitectureDescription
 /// list so tests don't have to thread it explicitly. Production callers
 /// should pass `ScanConfig::exclude_dir_names` so .gitignore-derived
 /// names also apply.
+///
+/// An **empty** set is treated as "use the canonical default" so a
+/// default-constructed `ExportOptions{}` still produces a sensible
+/// disk walk. This is intentional — callers that genuinely want zero
+/// excludes (extremely rare) should pass a single placeholder name
+/// they know won't match anything in the project.
 [[nodiscard]] ArchitectureDescription detect_architecture(
     const CodeIndex& index, const std::filesystem::path& project_root,
     const std::unordered_set<std::string>& exclude_dir_names = default_scanner_exclude_dir_names());

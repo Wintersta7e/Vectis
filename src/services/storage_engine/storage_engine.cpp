@@ -324,6 +324,25 @@ Result<std::vector<StorageEngine::Row>> StorageEngine::Statement::query()
 
 Result<void> StorageEngine::Statement::query_each(const std::function<void(const Row&)>& callback)
 {
+    // Reset on every exit path — including a callback exception. Without
+    // this, a throwing callback leaves the statement stepped-but-not-reset
+    // and the next execute()/query() returns SQLITE_MISUSE (or replays
+    // stale bindings on older builds).
+    class ResetGuard
+    {
+    public:
+        explicit ResetGuard(sqlite3_stmt* stmt) noexcept : m_stmt(stmt) {}
+        ResetGuard(const ResetGuard&) = delete;
+        ResetGuard& operator=(const ResetGuard&) = delete;
+        ResetGuard(ResetGuard&&) = delete;
+        ResetGuard& operator=(ResetGuard&&) = delete;
+        ~ResetGuard() { sqlite3_reset(m_stmt); }
+
+    private:
+        sqlite3_stmt* m_stmt;
+    };
+    const ResetGuard guard(m_impl->stmt);
+
     const int col_count = sqlite3_column_count(m_impl->stmt);
     Row row;
     while (true) {
@@ -333,13 +352,11 @@ Result<void> StorageEngine::Statement::query_each(const std::function<void(const
         }
         if (rc != SQLITE_ROW) {
             std::string msg = sqlite3_errmsg(m_impl->db);
-            sqlite3_reset(m_impl->stmt);
             return make_error(ErrorKind::StorageError, std::move(msg));
         }
         fill_row_from_step(row, col_count, m_impl->stmt);
         callback(row);
     }
-    sqlite3_reset(m_impl->stmt);
     return {};
 }
 

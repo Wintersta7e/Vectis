@@ -112,14 +112,17 @@ struct PathSignals
                 ++out.main_count;
             }
             // Python library / app-entry detection — same single-pass
-            // walk as the rest of PathSignals.
+            // walk as the rest of PathSignals. Language gate so a shell
+            // wrapper named `wsgi.py` can't disqualify a Python library.
+            const bool is_python = file.language == Language::Python;
             const auto depth = std::distance(file.path_relative.begin(), file.path_relative.end());
-            if ((name == "manage.py" || name == "wsgi.py" || name == "asgi.py" ||
+            if (is_python &&
+                (name == "manage.py" || name == "wsgi.py" || name == "asgi.py" ||
                  name == "__main__.py") &&
                 depth <= 2) {
                 out.has_python_app_entry = true;
             }
-            if (name == "__init__.py") {
+            if (is_python && name == "__init__.py") {
                 auto it = file.path_relative.begin();
                 if (it != file.path_relative.end()) {
                     const std::string first = it->string();
@@ -546,9 +549,17 @@ detect_node_library(const std::filesystem::path& project_root)
                               ", not marked private)",
                           k_library_inferred_confidence};
     };
-    if (pkg.find(R"("main")") != std::string::npos ||
-        pkg.find(R"("exports")") != std::string::npos ||
-        pkg.find(R"("module")") != std::string::npos) {
+    // Match each entry field as a JSON key (followed by `:` with optional
+    // whitespace) so a `"keywords": ["main", "module"]` array — common in
+    // npm packages — doesn't trip the substring check and mislabel an
+    // application as a library.
+    const auto has_entry_key = [&pkg](std::string_view name) {
+        const std::string with_colon = std::string{"\""} + std::string{name} + "\":";
+        const std::string with_space = std::string{"\""} + std::string{name} + "\" :";
+        return pkg.find(with_colon) != std::string::npos ||
+               pkg.find(with_space) != std::string::npos;
+    };
+    if (has_entry_key("main") || has_entry_key("exports") || has_entry_key("module")) {
         return hit("`main`/`exports`/`module` entry");
     }
     static constexpr std::array<std::string_view, 8> k_index_paths = {
@@ -649,11 +660,14 @@ detect_python_library(const std::filesystem::path& project_root, const PathSigna
     if (!in) {
         return std::nullopt;
     }
+    // Stack buffer + string_view view = no zero-fill, no heap allocation
+    // for a 4 KB peek. Called once per top-level .go file in
+    // detect_go_library, so the saving compounds on libraries with many
+    // root source files.
     constexpr std::size_t k_peek_bytes = 4096;
-    std::string buf;
-    buf.resize(k_peek_bytes);
-    in.read(buf.data(), k_peek_bytes);
-    buf.resize(static_cast<std::size_t>(in.gcount()));
+    std::array<char, k_peek_bytes> stack_buf{};
+    in.read(stack_buf.data(), k_peek_bytes);
+    const std::string_view buf{stack_buf.data(), static_cast<std::size_t>(in.gcount())};
 
     std::size_t i = 0;
     while (i < buf.size()) {
@@ -697,7 +711,7 @@ detect_python_library(const std::filesystem::path& project_root, const PathSigna
         if (i == start) {
             return std::nullopt;
         }
-        return buf.substr(start, i - start);
+        return std::string{buf.substr(start, i - start)};
     }
     return std::nullopt;
 }
@@ -713,8 +727,15 @@ detect_python_library(const std::filesystem::path& project_root, const PathSigna
     if (!fs::is_directory(cmd_dir, ec) || ec) {
         return false;
     }
-    for (const auto& sub : fs::recursive_directory_iterator(
-             cmd_dir, fs::directory_options::skip_permission_denied, ec)) {
+    // Capture the iterator separately so a constructor failure (e.g.
+    // EACCES on the directory itself) is observable — the for-range
+    // form would silently treat it as empty and return false, causing
+    // detect_go_library to mislabel a CLI as a library.
+    fs::recursive_directory_iterator it(cmd_dir, fs::directory_options::skip_permission_denied, ec);
+    if (ec) {
+        return false;
+    }
+    for (const auto& sub : it) {
         if (ec) {
             return false;
         }
@@ -745,9 +766,16 @@ detect_python_library(const std::filesystem::path& project_root, const PathSigna
     bool saw_non_main_pkg = false;
     std::string sample_pkg;
     std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(project_root, ec)) {
+    fs::directory_iterator it(project_root, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    for (const auto& entry : it) {
         if (ec) {
-            break;
+            // Mid-walk error — a Library hit drawn from partial evidence
+            // would be unsafe (we may have missed a `main.go`). Refuse
+            // to classify rather than guess.
+            return std::nullopt;
         }
         if (!entry.is_regular_file(ec) || ec) {
             ec.clear();
