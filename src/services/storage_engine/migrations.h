@@ -74,6 +74,9 @@ inline constexpr std::array k_migrations = {
     Migration{2, "symbol_visibility", R"(
         ALTER TABLE symbols ADD COLUMN visibility TEXT DEFAULT '';
     )"},
+    Migration{3, "symbol_decorators", R"(
+        ALTER TABLE symbols ADD COLUMN decorators TEXT DEFAULT '';
+    )"},
 };
 // clang-format on
 

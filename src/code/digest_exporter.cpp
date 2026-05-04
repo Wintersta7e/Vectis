@@ -129,6 +129,9 @@ constexpr const char* k_vectis_version = "0.1.0";
         if (!sym.visibility.empty()) {
             symbol_node["visibility"] = sym.visibility;
         }
+        if (!sym.decorators.empty()) {
+            symbol_node["decorators"] = sym.decorators;
+        }
         symbols_array.push_back(std::move(symbol_node));
     }
     node["symbols"] = std::move(symbols_array);
@@ -386,6 +389,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                 };
                 if (sym.contains("visibility")) {
                     flat["visibility"] = sym["visibility"];
+                }
+                if (sym.contains("decorators")) {
+                    flat["decorators"] = sym["decorators"];
                 }
                 symbols_flat.push_back(std::move(flat));
             }

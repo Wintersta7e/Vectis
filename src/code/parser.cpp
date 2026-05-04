@@ -339,12 +339,10 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
     case Language::Java:
     case Language::CSharp:
     case Language::TypeScript: {
-        // Java/C#/TypeScript all use word-token modifiers attached to
-        // the declaration. Walk children once looking for a `modifier`
-        // (Java/C#) or `accessibility_modifier` (TypeScript) node.
-        // Map the keyword text to our string set; default depends on
-        // the language but is "public" for top-level declarations and
-        // for languages whose implicit visibility is permissive.
+        // Java/C#/TS all use word-token modifiers attached to declarations. Walk children once
+        // looking for a `modifier` (Java/C#) or `accessibility_modifier` (TypeScript) node. Map the
+        // keyword text to our string set; default depends on the language but is "public" for
+        // top-level declarations and for languages whose implicit visibility is permissive.
         const std::uint32_t child_count = ts_node_child_count(node);
         for (std::uint32_t i = 0; i < child_count; ++i) {
             const TSNode child = ts_node_child(node, i);
@@ -382,6 +380,58 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
     default:
         return {};
     }
+}
+
+/// Extract decorator/annotation text attached to a symbol. Currently
+/// supports Python `@decorator` syntax (the most common case in real
+/// codebases). Tree-sitter-python wraps a decorated function/class
+/// in a `decorated_definition` node; we walk up from the captured
+/// inner node to the parent and collect every `decorator` sibling.
+/// The leading `@` is stripped so the output is just the call/name
+/// (e.g. `app.route("/")` rather than `@app.route("/")`).
+[[nodiscard]] std::vector<std::string> extract_decorators(TSNode node, Language language,
+                                                          std::string_view content)
+{
+    if (language != Language::Python) {
+        return {};
+    }
+    const TSNode parent = ts_node_parent(node);
+    if (ts_node_is_null(parent)) {
+        return {};
+    }
+    if (std::string_view{ts_node_type(parent)} != "decorated_definition") {
+        return {};
+    }
+    std::vector<std::string> out;
+    const std::uint32_t child_count = ts_node_named_child_count(parent);
+    out.reserve(child_count);
+    for (std::uint32_t i = 0; i < child_count; ++i) {
+        const TSNode child = ts_node_named_child(parent, i);
+        if (std::string_view{ts_node_type(child)} != "decorator") {
+            continue;
+        }
+        const std::uint32_t start = ts_node_start_byte(child);
+        const std::uint32_t end = ts_node_end_byte(child);
+        if (start >= end || end > content.size()) {
+            continue;
+        }
+        std::string_view text(content.data() + start, end - start);
+        // Trim leading `@` and any leading whitespace; tree-sitter's
+        // decorator node spans `@expr` so the first byte is always `@`.
+        if (!text.empty() && text.front() == '@') {
+            text.remove_prefix(1);
+        }
+        // Trim trailing whitespace (decorators can run to end-of-line
+        // and the node sometimes includes the newline in its byte range).
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' ||
+                                 text.back() == '\t')) {
+            text.remove_suffix(1);
+        }
+        if (!text.empty()) {
+            out.emplace_back(text);
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -644,6 +694,7 @@ TreeSitterParser::ParseResult TreeSitterParser::parse_file(Language language,
                 }
                 if (capture_name_to_kind(capture_name) == symbol.kind) {
                     symbol.visibility = extract_visibility(capture.node, language, symbol.name);
+                    symbol.decorators = extract_decorators(capture.node, language, content);
                     break;
                 }
             }

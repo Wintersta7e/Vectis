@@ -135,10 +135,10 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
     }
 
     // Insert symbols.
-    auto ins_sym =
-        storage.prepare("INSERT INTO symbols (id, file_id, name, kind, signature, "
-                        "line_start, line_end, parent_id, complexity, members, visibility) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    auto ins_sym = storage.prepare(
+        "INSERT INTO symbols (id, file_id, name, kind, signature, "
+        "line_start, line_end, parent_id, complexity, members, visibility, decorators) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (!ins_sym) {
         return tl::unexpected(ins_sym.error());
     }
@@ -158,6 +158,10 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
         const auto members_str = join_members(s.members);
         ins_sym->bind(10, std::string_view{members_str});
         ins_sym->bind(11, std::string_view{s.visibility});
+        // Decorators share the members serialiser — newline-joined,
+        // since none of the decorator texts contain literal newlines.
+        const auto decorators_str = join_members(s.decorators);
+        ins_sym->bind(12, std::string_view{decorators_str});
         if (auto r = ins_sym->execute(); !r) {
             return r;
         }
@@ -271,9 +275,10 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
     }
 
     // Load symbols — batch by file_id for add_symbols.
-    auto sel_syms = storage.prepare(
-        "SELECT id, file_id, name, kind, signature, line_start, line_end, "
-        "parent_id, complexity, members, visibility FROM symbols ORDER BY file_id, id");
+    auto sel_syms =
+        storage.prepare("SELECT id, file_id, name, kind, signature, line_start, line_end, "
+                        "parent_id, complexity, members, visibility, decorators "
+                        "FROM symbols ORDER BY file_id, id");
     if (!sel_syms) {
         return tl::unexpected(sel_syms.error());
     }
@@ -307,6 +312,7 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
             s.complexity = static_cast<int>(row.get_int(8));
             s.members = split_members(row.get_text(9));
             s.visibility = row.get_text(10);
+            s.decorators = split_members(row.get_text(11));
             batch.push_back(std::move(s));
         });
         !r) {

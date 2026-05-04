@@ -227,6 +227,34 @@ std::string build_explanation(const CodeIndex& index, const ExplainOptions& opti
 
     render_hotspots(out, symbols, files);
 
+    // Decorators / annotations — surface the top-N so an agent can see
+    // "this project has 99 @app.route handlers, 17 @pytest.fixture
+    // markers, …" without re-reading the source.
+    {
+        std::unordered_map<std::string, std::size_t> dec_count;
+        std::size_t decorated_symbols = 0;
+        for (const auto& s : symbols) {
+            if (s.decorators.empty()) {
+                continue;
+            }
+            ++decorated_symbols;
+            for (const auto& d : s.decorators) {
+                ++dec_count[d];
+            }
+        }
+        if (!dec_count.empty()) {
+            const auto top = top_n(dec_count, 5);
+            out << "\nDecorators (top 5 over " << decorated_symbols << " decorated symbols): ";
+            for (std::size_t i = 0; i < top.size(); ++i) {
+                if (i > 0) {
+                    out << ", ";
+                }
+                out << "@" << top[i].first << " (" << top[i].second << ")";
+            }
+            out << ".\n";
+        }
+    }
+
     // Dependencies
     render_dependencies(out, index);
 

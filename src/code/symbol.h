@@ -138,19 +138,33 @@ struct FileEntry
 ///   ""          — unknown / language doesn't express visibility /
 ///                 not yet implemented for the language. Treat as
 ///                 public when filtering.
+// NOLINTBEGIN(readability-redundant-member-init)
+// Explicit defaults on string/vector members suppress the gcc
+// `-Wmissing-field-initializers` warning when callers use C++20
+// designated initialisers and leave fields off; clang-tidy disagrees
+// (the explicit init is technically redundant) so we silence it for
+// this struct definition.
 struct Symbol
 {
     std::int64_t id = 0;
     std::int64_t file_id = 0;
-    std::string name;
+    std::string name = {};
     SymbolKind kind = SymbolKind::Unknown;
     int line_start = 0;
     int line_end = 0;
     std::int64_t parent_id = 0; // 0 if top-level
-    std::string signature;
-    std::vector<std::string> members;
+    std::string signature = {};
+    std::vector<std::string> members = {};
     int complexity = 0;
-    std::string visibility; // see comment above
+    std::string visibility = {}; // see comment above
+    /// Decorator / annotation text attached to this symbol, in source
+    /// order, with the leading `@` stripped. Populated for languages
+    /// where decorators are a first-class language feature; empty for
+    /// the rest. Useful for filtering "all HTTP route handlers"
+    /// (`app.route(...)` in flask), "all tests" (`pytest.fixture`),
+    /// dependency-injection markers, etc.
+    std::vector<std::string> decorators = {};
 };
+// NOLINTEND(readability-redundant-member-init)
 
 } // namespace vectis::code

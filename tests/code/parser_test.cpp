@@ -1065,6 +1065,61 @@ class _InternalClass:
     EXPECT_EQ(dunder->visibility, "public");
 }
 
+TEST(ParserTest, ExtractsPythonDecorators)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+@app.route("/hello")
+def hello():
+    return "world"
+
+@pytest.fixture
+@some_other
+def fixture():
+    pass
+
+class Foo:
+    @staticmethod
+    def factory():
+        return Foo()
+
+    @property
+    def name(self):
+        return "foo"
+
+def plain():
+    pass
+)";
+    const auto result = parser->parse_file(Language::Python, source);
+
+    const auto* hello = find_named(result.symbols, "hello");
+    const auto* fixture = find_named(result.symbols, "fixture");
+    const auto* factory = find_named(result.symbols, "factory");
+    const auto* name = find_named(result.symbols, "name");
+    const auto* plain = find_named(result.symbols, "plain");
+    ASSERT_NE(hello, nullptr);
+    ASSERT_NE(fixture, nullptr);
+    ASSERT_NE(factory, nullptr);
+    ASSERT_NE(name, nullptr);
+    ASSERT_NE(plain, nullptr);
+
+    ASSERT_EQ(hello->decorators.size(), 1U);
+    EXPECT_EQ(hello->decorators[0], R"(app.route("/hello"))");
+
+    // Source order — pytest.fixture appears first, some_other second.
+    ASSERT_EQ(fixture->decorators.size(), 2U);
+    EXPECT_EQ(fixture->decorators[0], "pytest.fixture");
+    EXPECT_EQ(fixture->decorators[1], "some_other");
+
+    ASSERT_EQ(factory->decorators.size(), 1U);
+    EXPECT_EQ(factory->decorators[0], "staticmethod");
+
+    ASSERT_EQ(name->decorators.size(), 1U);
+    EXPECT_EQ(name->decorators[0], "property");
+
+    EXPECT_TRUE(plain->decorators.empty());
+}
+
 TEST(ParserTest, VisibilityRustPubKeyword)
 {
     auto parser = make_parser();
