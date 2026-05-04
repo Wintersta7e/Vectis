@@ -627,4 +627,159 @@ TEST(ArchitectureDetectorTest, DiskWalk_RespectsCallerSuppliedExcludeSet)
     fs::remove_all(root);
 }
 
+TEST(ArchitectureDetectorTest, NodeLibrary_PackageJsonWithMain)
+{
+    const fs::path root = fresh_tmp("node_lib_main");
+    write_file(root / "package.json", R"({"name":"foo","main":"lib/foo.js"})");
+    write_file(root / "lib" / "foo.js", "module.exports = {};\n");
+
+    CodeIndex idx;
+    add_file(idx, "lib/foo.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+    EXPECT_GE(result.confidence, 70);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, NodeLibrary_RootIndexJsWithoutMainField)
+{
+    // Express 5.x ships no `main` field — entry defaults to ./index.js.
+    // Without this fallback the framework would still read Monolith.
+    const fs::path root = fresh_tmp("node_lib_root_index");
+    write_file(root / "package.json", R"({"name":"foo","version":"1.0.0"})");
+    write_file(root / "index.js", "module.exports = require('./lib/foo');\n");
+    write_file(root / "lib" / "foo.js", "module.exports = {};\n");
+
+    CodeIndex idx;
+    add_file(idx, "index.js", Language::JavaScript);
+    add_file(idx, "lib/foo.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, NodeLibrary_PrivatePackageIsNotLibrary)
+{
+    // Internal apps mark `private: true` so npm refuses to publish.
+    // That signal alone keeps them out of the Library bucket.
+    const fs::path root = fresh_tmp("node_private");
+    write_file(root / "package.json", R"({"name":"foo","main":"index.js","private": true})");
+    write_file(root / "index.js", "console.log('hi');\n");
+
+    CodeIndex idx;
+    add_file(idx, "index.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PhpLibrary_TypeLibraryInComposer)
+{
+    const fs::path root = fresh_tmp("php_lib_type");
+    write_file(root / "composer.json", R"({"name":"vendor/foo","type": "library"})");
+    write_file(root / "src" / "Foo.php", "<?php\nclass Foo {}\n");
+
+    CodeIndex idx;
+    add_file(idx, "src/Foo.php", Language::Php);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+    EXPECT_GE(result.confidence, 75);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PhpLibrary_AutoloadWithoutIndexEntry)
+{
+    const fs::path root = fresh_tmp("php_lib_autoload");
+    write_file(root / "composer.json",
+               R"({"name":"vendor/foo","autoload":{"psr-4":{"Foo\\":"src/"}}})");
+    write_file(root / "src" / "Foo.php", "<?php\nclass Foo {}\n");
+
+    CodeIndex idx;
+    add_file(idx, "src/Foo.php", Language::Php);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, RubyLibrary_GemspecAtRoot)
+{
+    const fs::path root = fresh_tmp("ruby_gem");
+    write_file(root / "Gemfile", "source 'https://rubygems.org'\n");
+    write_file(root / "foo.gemspec", "Gem::Specification.new do |s| s.name='foo' end\n");
+    write_file(root / "lib" / "foo.rb", "module Foo end\n");
+
+    CodeIndex idx;
+    add_file(idx, "lib/foo.rb", Language::Ruby);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+    EXPECT_NE(result.reasoning.find("foo.gemspec"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PythonLibrary_PyprojectWithSrcLayout)
+{
+    const fs::path root = fresh_tmp("py_lib_src");
+    write_file(root / "pyproject.toml", "[project]\nname = \"foo\"\n");
+    write_file(root / "src" / "foo" / "__init__.py", "\n");
+    write_file(root / "src" / "foo" / "core.py", "def hello(): pass\n");
+
+    CodeIndex idx;
+    add_file(idx, "src/foo/__init__.py", Language::Python);
+    add_file(idx, "src/foo/core.py", Language::Python);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+    EXPECT_NE(result.reasoning.find("foo"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PythonLibrary_FlatPackageWithSetupPy)
+{
+    const fs::path root = fresh_tmp("py_lib_flat");
+    write_file(root / "setup.py", "from setuptools import setup\n");
+    write_file(root / "foo" / "__init__.py", "\n");
+    write_file(root / "foo" / "core.py", "def hello(): pass\n");
+
+    CodeIndex idx;
+    add_file(idx, "foo/__init__.py", Language::Python);
+    add_file(idx, "foo/core.py", Language::Python);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PythonLibrary_DjangoAppEntryDoesNotMatch)
+{
+    // pyproject.toml + manage.py at root means a Django app, not the
+    // framework itself — must NOT label as Library.
+    const fs::path root = fresh_tmp("py_django_app");
+    write_file(root / "pyproject.toml", "[project]\nname = \"myapp\"\n");
+    write_file(root / "manage.py", "import django\n");
+    write_file(root / "myapp" / "__init__.py", "\n");
+
+    CodeIndex idx;
+    add_file(idx, "manage.py", Language::Python);
+    add_file(idx, "myapp/__init__.py", Language::Python);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
 } // namespace

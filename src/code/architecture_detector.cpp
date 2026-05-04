@@ -466,6 +466,217 @@ detect_root_manifest(const std::filesystem::path& project_root)
     return std::nullopt;
 }
 
+/// Library-detection result — reasoning + confidence per ecosystem.
+struct LibraryHit
+{
+    std::string reasoning;
+    std::uint8_t confidence = 0;
+};
+
+/// Node.js library: `package.json` declares an entry field (`main`,
+/// `exports`, or `module`) — or, when those default to the conventional
+/// `index.*` (express 5.x ships no `main`), there's a root `index.js`
+/// or a `src/index.*` entry. Substring-match avoids dragging in a JSON
+/// parser; the 64 KB cap on package.json is plenty for these checks.
+[[nodiscard]] std::optional<std::string>
+detect_node_library(const std::filesystem::path& project_root)
+{
+    const std::string pkg = read_text_capped(project_root / "package.json");
+    if (pkg.empty()) {
+        return std::nullopt;
+    }
+    // Apps in monorepos are commonly marked private to block accidental
+    // publishes — a strong signal that this isn't a library.
+    if (pkg.find("\"private\": true") != std::string::npos ||
+        pkg.find("\"private\":true") != std::string::npos) {
+        return std::nullopt;
+    }
+    const bool has_entry_field = pkg.find("\"main\"") != std::string::npos ||
+                                 pkg.find("\"exports\"") != std::string::npos ||
+                                 pkg.find("\"module\"") != std::string::npos;
+    if (has_entry_field) {
+        return std::string{"Node.js library (package.json with `main`/`exports`/`module` entry, "
+                           "not marked private)"};
+    }
+    std::error_code ec;
+    const auto file_exists = [&](const char* name) {
+        ec.clear();
+        return std::filesystem::exists(project_root / name, ec) && !ec;
+    };
+    static constexpr std::array<const char*, 4> k_root_index_names = {"index.js", "index.mjs",
+                                                                      "index.cjs", "index.ts"};
+    for (const char* name : k_root_index_names) {
+        if (file_exists(name)) {
+            return std::string{"Node.js library (package.json + root `"} + name +
+                   "` entry, not marked private)";
+        }
+    }
+    static constexpr std::array<const char*, 4> k_src_index_names = {
+        "src/index.js", "src/index.mjs", "src/index.cjs", "src/index.ts"};
+    for (const char* name : k_src_index_names) {
+        if (file_exists(name)) {
+            return std::string{"Node.js library (package.json + `"} + name +
+                   "` entry, not marked private)";
+        }
+    }
+    return std::nullopt;
+}
+
+/// PHP library: explicit `"type": "library"` is unambiguous; otherwise
+/// composer.json with autoload declarations and no `index.php` entry
+/// at the project root is the typical PSR-4 package shape.
+[[nodiscard]] std::optional<std::string>
+detect_php_library(const std::filesystem::path& project_root)
+{
+    const std::string composer = read_text_capped(project_root / "composer.json");
+    if (composer.empty()) {
+        return std::nullopt;
+    }
+    if (composer.find(R"("type": "library")") != std::string::npos ||
+        composer.find(R"("type":"library")") != std::string::npos) {
+        return std::string{R"(PHP library (composer.json `"type": "library"`))"};
+    }
+    std::error_code ec;
+    const bool has_index_php = std::filesystem::exists(project_root / "index.php", ec) && !ec;
+    ec.clear();
+    const bool has_public_index =
+        std::filesystem::exists(project_root / "public" / "index.php", ec) && !ec;
+    if (!has_index_php && !has_public_index && composer.find("\"autoload\"") != std::string::npos) {
+        return std::string{"PHP library (composer.json with autoload, no `index.php` entry)"};
+    }
+    return std::nullopt;
+}
+
+/// Ruby gem: presence of any `*.gemspec` at the project root. The
+/// gemspec file itself is the canonical "this is a packagable gem"
+/// marker; nothing else looks like one.
+[[nodiscard]] std::optional<std::string>
+detect_ruby_library(const std::filesystem::path& project_root)
+{
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(project_root, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+        if (entry.path().extension().string() == ".gemspec") {
+            return std::string{"Ruby gem (" + entry.path().filename().string() + ")"};
+        }
+    }
+    return std::nullopt;
+}
+
+/// Python library: `pyproject.toml` or `setup.py` plus a discoverable
+/// package directory (`src/<pkg>/__init__.py` or `<pkg>/__init__.py`
+/// at depth 1). `main_count == 0` and the absence of `manage.py` /
+/// `wsgi.py` / `asgi.py` rule out application shapes (Django, FastAPI
+/// app skeletons) that would otherwise share the manifest.
+[[nodiscard]] std::optional<std::string>
+detect_python_library(const std::filesystem::path& project_root, const CodeIndex& index,
+                      std::size_t main_count)
+{
+    std::error_code ec;
+    const bool has_pyproject = std::filesystem::exists(project_root / "pyproject.toml", ec) && !ec;
+    ec.clear();
+    const bool has_setup = std::filesystem::exists(project_root / "setup.py", ec) && !ec;
+    ec.clear();
+    if (!has_pyproject && !has_setup) {
+        return std::nullopt;
+    }
+    if (main_count > 0) {
+        return std::nullopt;
+    }
+    bool has_app_entry = false;
+    bool has_pkg_init = false;
+    std::string sample_pkg;
+    for (const FileEntry& file : index.snapshot_files()) {
+        const auto& path = file.path_relative;
+        const std::string fname = path.filename().string();
+        if (fname == "manage.py" || fname == "wsgi.py" || fname == "asgi.py" ||
+            fname == "__main__.py") {
+            const auto depth = std::distance(path.begin(), path.end());
+            if (depth <= 2) {
+                has_app_entry = true;
+            }
+        }
+        if (fname != "__init__.py") {
+            continue;
+        }
+        auto it = path.begin();
+        if (it == path.end()) {
+            continue;
+        }
+        const std::string first = it->string();
+        ++it;
+        if (it == path.end()) {
+            continue;
+        }
+        if (first == "src") {
+            const std::string pkg = it->string();
+            ++it;
+            if (it != path.end() && it->string() == "__init__.py") {
+                has_pkg_init = true;
+                if (sample_pkg.empty()) {
+                    sample_pkg = pkg;
+                }
+            }
+        }
+        else if (it->string() == "__init__.py") {
+            // <first>/__init__.py at depth 1.
+            has_pkg_init = true;
+            if (sample_pkg.empty()) {
+                sample_pkg = first;
+            }
+        }
+    }
+    if (!has_pkg_init || has_app_entry) {
+        return std::nullopt;
+    }
+    const std::string manifest_name = has_pyproject ? "pyproject.toml" : "setup.py";
+    return std::string{"Python library (" + manifest_name + " + `" + sample_pkg +
+                       "/__init__.py`, no app entry)"};
+}
+
+/// Dispatch on manifest runtime to pick the right ecosystem detector.
+[[nodiscard]] std::optional<LibraryHit>
+detect_ecosystem_library(const std::filesystem::path& project_root, const ManifestInfo& manifest,
+                         const CodeIndex& index, std::size_t main_count)
+{
+    switch (manifest.runtime) {
+    case Runtime::NodeJs:
+        if (auto r = detect_node_library(project_root); r) {
+            return LibraryHit{std::move(*r), 75};
+        }
+        break;
+    case Runtime::Php:
+        if (auto r = detect_php_library(project_root); r) {
+            return LibraryHit{std::move(*r), 80};
+        }
+        break;
+    case Runtime::Ruby:
+        if (auto r = detect_ruby_library(project_root); r) {
+            return LibraryHit{std::move(*r), 80};
+        }
+        break;
+    case Runtime::Python:
+        if (auto r = detect_python_library(project_root, index, main_count); r) {
+            return LibraryHit{std::move(*r), 75};
+        }
+        break;
+    case Runtime::Go:
+    case Runtime::Java:
+    case Runtime::CCpp:
+    case Runtime::Rust:
+    case Runtime::CSharp:
+    case Runtime::DotNetSolution:
+        break;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::string_view architecture_label_name(ArchitectureLabel label) noexcept
@@ -719,10 +930,10 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     }
 
     // --- Library indicators ----------------------------------------
-    // Canonical reusable-library shape: top-level `include/` (or
-    // `lib/`) + `src/` and no entry point. Top-level scope is
-    // load-bearing — a server vendoring `deps/<lib>/include/` would
-    // otherwise bubble up that nested `include/` and mislabel.
+    // (1) Canonical C/C++ shape: top-level `include/` (or `lib/`) +
+    //     `src/` and no entry point. Top-level scope is load-bearing —
+    //     a server vendoring `deps/<lib>/include/` would otherwise
+    //     bubble up that nested `include/` and mislabel.
     const auto& top = signals.top_level_dirs;
     const bool has_top_include = top.contains("include");
     if ((has_top_include || top.contains("lib")) && top.contains("src") && main_count == 0) {
@@ -736,6 +947,18 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
             out.confidence = 85;
         }
         return out;
+    }
+
+    // (2) Per-ecosystem signals for Node, PHP, Ruby, Python framework-
+    //     libraries (express, Slim, sinatra, flask, …) that previously
+    //     read 65% Monolith because they don't follow C/C++ layout.
+    if (manifest) {
+        if (auto hit = detect_ecosystem_library(project_root, *manifest, index, main_count); hit) {
+            out.label = ArchitectureLabel::Library;
+            out.reasoning = std::move(hit->reasoning);
+            out.confidence = hit->confidence;
+            return out;
+        }
     }
 
     // --- Default: Monolith -----------------------------------------
