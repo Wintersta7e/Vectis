@@ -130,7 +130,12 @@ public:
 
 private:
     mutable std::shared_mutex m_mutex;
-    std::vector<FileEntry> m_files; // index == file_id - 1
+    // Files are stored in insertion order. Right after `add_file` the
+    // positional index equals `file_id - 1`, but `compact()` drops
+    // tombstoned entries and leaves the surviving ids non-contiguous —
+    // never index `m_files` by `id - 1`; iterate with a `id != 0` guard
+    // or look up via `m_by_file`.
+    std::vector<FileEntry> m_files;
     std::vector<Symbol> m_symbols;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_by_file;
 

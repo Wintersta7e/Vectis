@@ -313,8 +313,11 @@ detect_npm_monorepo(const std::filesystem::path& project_root)
     }
 
     const std::string pkg = read_text_capped(project_root / "package.json");
-    if (!pkg.empty() && pkg.find("\"workspaces\"") != std::string::npos) {
-        return std::string{"npm workspaces (package.json \"workspaces\")"};
+    // Match `"workspaces":` (with optional whitespace) so a description
+    // or keyword containing the bare token doesn't trigger a false hit.
+    if (!pkg.empty() && (pkg.find(R"("workspaces":)") != std::string::npos ||
+                         pkg.find(R"("workspaces" :)") != std::string::npos)) {
+        return std::string{R"(npm workspaces (package.json "workspaces"))"};
     }
     return std::nullopt;
 }
@@ -596,7 +599,11 @@ detect_php_library(const std::filesystem::path& project_root)
     ec.clear();
     const bool has_public_index =
         std::filesystem::exists(project_root / "public" / "index.php", ec) && !ec;
-    if (!has_index_php && !has_public_index && composer.find("\"autoload\"") != std::string::npos) {
+    // Match `"autoload":` as a JSON key, not the bare token, so a
+    // description like "PSR-4 autoload helper" can't trip the check.
+    const bool has_autoload_key = composer.find(R"("autoload":)") != std::string::npos ||
+                                  composer.find(R"("autoload" :)") != std::string::npos;
+    if (!has_index_php && !has_public_index && has_autoload_key) {
         return LibraryHit{"PHP library (composer.json with autoload, no `index.php` entry)",
                           k_library_inferred_confidence};
     }
@@ -610,7 +617,11 @@ detect_php_library(const std::filesystem::path& project_root)
 detect_ruby_library(const std::filesystem::path& project_root)
 {
     std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(project_root, ec)) {
+    std::filesystem::directory_iterator it(project_root, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    for (const auto& entry : it) {
         if (ec) {
             break;
         }

@@ -253,8 +253,9 @@ TEST_F(ScannerFixture, IncrementalScanRunsCompactWhenFilesAreDeleted)
         EXPECT_FALSE(index.symbols_in_file(f.id).empty());
         EXPECT_NE(f.path_relative.filename().string(), "b.py");
     }
-    // snapshot_all_symbols should reflect the post-compact size, not
-    // the pre-delete one.
+    // Pin the exact post-compact symbol count: two surviving files,
+    // one symbol each. A weaker `<` would let a tombstone-leak through.
+    EXPECT_EQ(index.snapshot_all_symbols().size(), 2U);
     EXPECT_LT(index.snapshot_all_symbols().size(), symbols_before);
 }
 

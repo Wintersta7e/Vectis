@@ -355,12 +355,17 @@ TEST(CodeIndexTest, SnapshotAllSymbols_EmptyIndexReturnsEmpty)
 TEST(CodeIndexTest, Compact_NoOpOnEmptyIndex)
 {
     CodeIndex idx;
+    // compact() unconditionally bumps the generation counter as a
+    // mutation marker, even on empty input. Pin the current behaviour
+    // so a future "skip the bump" optimisation has to update the test.
+    const auto gen_before = idx.generation();
     idx.compact();
     EXPECT_EQ(idx.file_count(), 0U);
     EXPECT_EQ(idx.symbol_count(), 0U);
     EXPECT_EQ(idx.dependency_count(), 0U);
     EXPECT_TRUE(idx.snapshot_files().empty());
     EXPECT_TRUE(idx.snapshot_all_symbols().empty());
+    EXPECT_GT(idx.generation(), gen_before);
 }
 
 TEST(CodeIndexTest, Compact_AddFileAfterPreservesIdMonotonicity)
@@ -385,6 +390,10 @@ TEST(CodeIndexTest, Compact_AddFileAfterPreservesIdMonotonicity)
 
     const auto fd = idx.add_file(make_file("d.cpp", Language::Cpp));
     EXPECT_GT(fd, fc) << "post-compact ids must keep climbing past the highest pre-compact id";
+    // Explicit guard: the tombstoned id must NOT be reused. A naive
+    // compact that resets `m_next_file_id` to `m_files.size() + 1`
+    // would alias `fd` onto `fb` and silently corrupt later lookups.
+    EXPECT_NE(fd, fb) << "tombstoned id must not be reused after compact";
 
     const std::array<Symbol, 1> d_syms = {make_symbol(fd, "d1", SymbolKind::Function)};
     idx.add_symbols(d_syms);

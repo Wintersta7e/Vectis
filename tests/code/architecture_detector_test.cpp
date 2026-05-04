@@ -871,10 +871,12 @@ TEST(ArchitectureDetectorTest, NodeLibrary_KeywordsArrayDoesNotFalseTrigger)
 {
     // package.json with "main" / "module" / "exports" appearing only as
     // values inside the "keywords" array — extremely common in npm —
-    // must not trip the entry-field check. Regression guard for the
-    // bare-substring false positive caught in review.
+    // must not trip the entry-field check. The package is deliberately
+    // PUBLIC (no `"private": true`) so the test actually reaches
+    // has_entry_key; otherwise the private-flag short-circuit would
+    // make the test pass even if the JSON-key matcher were reverted.
     const fs::path root = fresh_tmp("node_keywords_main");
-    write_file(root / "package.json", R"({"name":"app","version":"1.0.0","private": true,)"
+    write_file(root / "package.json", R"({"name":"app","version":"1.0.0",)"
                                       R"("keywords":["main","module","exports"]})");
     write_file(root / "server.js", "console.log('app');\n");
 
@@ -890,7 +892,7 @@ TEST(ArchitectureDetectorTest, NodeLibrary_KeywordsArrayDoesNotFalseTrigger)
 TEST(ArchitectureDetectorTest, NodeLibrary_PackageJsonWithNoEntrySignalsIsNotLibrary)
 {
     // package.json without main/exports/module fields and no index.*
-    // file on disk → should fall through, NOT label Library.
+    // file on disk → should fall through to Monolith.
     const fs::path root = fresh_tmp("node_no_entry");
     write_file(root / "package.json", R"({"name":"foo","version":"1.0.0"})");
     write_file(root / "app.js", "console.log('hi');\n");
@@ -899,7 +901,7 @@ TEST(ArchitectureDetectorTest, NodeLibrary_PackageJsonWithNoEntrySignalsIsNotLib
     add_file(idx, "app.js", Language::JavaScript);
 
     const auto result = detect_architecture(idx, root);
-    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+    EXPECT_EQ(result.label, ArchitectureLabel::Monolith) << "reasoning: " << result.reasoning;
 
     fs::remove_all(root);
 }
@@ -928,6 +930,8 @@ TEST(ArchitectureDetectorTest, PythonLibrary_NoPackageInitIsNotLibrary)
 {
     // pyproject.toml present but zero __init__.py files → not a
     // packageable library (could be a script bundle, notebook, tool).
+    // Pin Monolith specifically so a regression that produces Unknown
+    // or some other label is also caught.
     const fs::path root = fresh_tmp("py_no_pkg");
     write_file(root / "pyproject.toml", "[project]\nname = \"scripts\"\n");
     write_file(root / "tool.py", "print('tool')\n");
@@ -938,7 +942,7 @@ TEST(ArchitectureDetectorTest, PythonLibrary_NoPackageInitIsNotLibrary)
     add_file(idx, "helper.py", Language::Python);
 
     const auto result = detect_architecture(idx, root);
-    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+    EXPECT_EQ(result.label, ArchitectureLabel::Monolith) << "reasoning: " << result.reasoning;
 
     fs::remove_all(root);
 }
