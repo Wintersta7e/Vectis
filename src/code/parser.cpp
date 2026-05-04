@@ -517,7 +517,9 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
                 }
                 // attribute nodes don't include the surrounding `[...]`
                 // — just the name + optional args. No sigil to strip.
-                std::string text = extract_marker(attr, {}, {});
+                // tree-sitter `attribute` excludes the surrounding
+                // `[ ]`, so no sigil to strip.
+                std::string text = extract_marker(attr, {});
                 if (!text.empty()) {
                     out.emplace_back(std::move(text));
                 }
@@ -529,35 +531,22 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
     case Language::Rust: {
         // tree-sitter-rust places outer `attribute_item` nodes
         // (`#[...]`) as preceding siblings of the declaration they
-        // annotate, all as named children of a common parent
-        // (`source_file`, `impl_item`'s `declaration_list`, `mod_item`,
-        // etc.). Walk siblings up to `node`'s position and collect.
-        const TSNode parent = ts_node_parent(node);
-        if (ts_node_is_null(parent)) {
-            return {};
-        }
+        // annotate. Walk backwards from `node` collecting them; stop
+        // at the first non-attribute sibling. O(attributes-on-this-
+        // symbol) per call, vs the O(siblings-of-parent) the forward
+        // walk had — a real win on Rust files with many top-level
+        // declarations.
         std::vector<std::string> out;
-        const std::uint32_t parent_count = ts_node_named_child_count(parent);
-        std::vector<std::string> pending; // attributes since last non-attribute sibling
-        for (std::uint32_t i = 0; i < parent_count; ++i) {
-            const TSNode sibling = ts_node_named_child(parent, i);
-            if (ts_node_eq(sibling, node)) {
-                out = std::move(pending);
-                break;
+        TSNode cur = ts_node_prev_named_sibling(node);
+        while (!ts_node_is_null(cur) && std::string_view{ts_node_type(cur)} == "attribute_item") {
+            std::string text = extract_marker(cur, "#[", "]");
+            if (!text.empty()) {
+                out.emplace_back(std::move(text));
             }
-            const std::string_view st{ts_node_type(sibling)};
-            if (st == "attribute_item") {
-                std::string text = extract_marker(sibling, "#[", "]");
-                if (!text.empty()) {
-                    pending.emplace_back(std::move(text));
-                }
-            }
-            else {
-                // Non-attribute sibling resets the run — only attributes
-                // *immediately* preceding the declaration belong to it.
-                pending.clear();
-            }
+            cur = ts_node_prev_named_sibling(cur);
         }
+        // Backward walk yields reverse order — restore source order.
+        std::reverse(out.begin(), out.end());
         return out;
     }
 

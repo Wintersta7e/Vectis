@@ -1194,6 +1194,66 @@ public class Bar {
     EXPECT_TRUE(plain_m->decorators.empty());
 }
 
+TEST(ParserTest, RustAttributesDoNotLeakAcrossDeclarations)
+{
+    // Regression guard for the "only attributes immediately preceding
+    // the declaration belong to it" invariant — backward walk must
+    // stop at the first non-attribute sibling.
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+#[derive(Debug)]
+struct First;
+
+struct Second;
+
+#[inline]
+fn third() {}
+)";
+    const auto result = parser->parse_file(Language::Rust, source);
+
+    const auto* first = find_named(result.symbols, "First");
+    const auto* second = find_named(result.symbols, "Second");
+    const auto* third = find_named(result.symbols, "third");
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    ASSERT_NE(third, nullptr);
+
+    ASSERT_EQ(first->decorators.size(), 1U);
+    EXPECT_EQ(first->decorators[0], "derive(Debug)");
+    // `Second` has no preceding attribute sibling — the prior `First`
+    // declaration is between #[derive(Debug)] and Second, so the
+    // attribute must NOT bleed onto Second.
+    EXPECT_TRUE(second->decorators.empty());
+    ASSERT_EQ(third->decorators.size(), 1U);
+    EXPECT_EQ(third->decorators[0], "inline");
+}
+
+TEST(ParserTest, MultilineAnnotationArgsAreCollapsedToSingleLine)
+{
+    // Java annotations can span multiple lines with embedded newlines
+    // in their argument list. The captured text should be a single
+    // line — `extract_marker` strips trailing whitespace; tree-sitter
+    // preserves any internal whitespace verbatim. Pin the current
+    // behaviour so a future trim change doesn't silently mutate the
+    // user-visible decorator strings.
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+public class A {
+    @RequestMapping(value = "/api",
+                    method = RequestMethod.GET)
+    public String x() { return "x"; }
+}
+)";
+    const auto result = parser->parse_file(Language::Java, source);
+    const auto* x = find_named(result.symbols, "x");
+    ASSERT_NE(x, nullptr);
+    ASSERT_EQ(x->decorators.size(), 1U);
+    // Whitespace between the args is preserved internally; only the
+    // outer trim runs. The exact bytes match what tree-sitter spans.
+    EXPECT_NE(x->decorators[0].find("RequestMapping(value = \"/api\","), std::string::npos);
+    EXPECT_NE(x->decorators[0].find("method = RequestMethod.GET)"), std::string::npos);
+}
+
 TEST(ParserTest, ExtractsRustOuterAttributes)
 {
     auto parser = make_parser();
