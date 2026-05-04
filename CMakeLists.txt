@@ -332,6 +332,7 @@ add_library(vectis_core STATIC
     src/code/dependency_resolver.cpp
     src/code/digest_exporter.cpp
     src/code/exclude_dirs.cpp
+    src/code/explain.cpp
     src/code/gitignore.cpp
     src/code/hotspot_detector.cpp
     src/code/language.cpp

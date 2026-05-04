@@ -16,6 +16,7 @@
 #include "code/code_index_store.h"
 #include "code/digest_exporter.h"
 #include "code/exclude_dirs.h"
+#include "code/explain.h"
 #include "code/gitignore.h"
 #include "code/parser.h"
 #include "code/scanner.h"
@@ -31,7 +32,10 @@ namespace {
 constexpr const char* k_usage = R"(vectis — portable developer intelligence tool
 
 USAGE
-    vectis digest <path> [opts]   Scan <path> and emit a digest.
+    vectis digest <path> [opts]   Scan <path> and emit a structured digest.
+    vectis explain <path> [opts]  Scan <path> and print a short narrative
+                                  summary (architecture, scale, hotspots,
+                                  dependencies). Plain text, ~20 lines.
     vectis --help                 Show this text.
 
 DIGEST OPTIONS
@@ -282,6 +286,87 @@ int run_cached(const vectis::code::ScanConfig& config, const std::filesystem::pa
     return 0;
 }
 
+struct ExplainArgs
+{
+    std::filesystem::path project_root;
+    bool use_cache = false;
+    std::filesystem::path cache_dir;
+    bool quiet = false;
+};
+
+bool parse_explain_args(int argc, char** argv, ExplainArgs& out)
+{
+    if (argc < 3) {
+        std::fprintf(stderr, "error: `explain` requires a path argument.\n");
+        return false;
+    }
+    out.project_root = argv[2];
+    for (int i = 3; i < argc; ++i) {
+        const std::string_view arg{argv[i]};
+        if (arg == "--cache") {
+            out.use_cache = true;
+        }
+        else if (arg == "--cache-dir" && i + 1 < argc) {
+            out.use_cache = true;
+            out.cache_dir = argv[i + 1];
+            ++i;
+        }
+        else if (arg == "--quiet" || arg == "-q") {
+            out.quiet = true;
+        }
+        else {
+            std::fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
+            return false;
+        }
+    }
+    return true;
+}
+
+int run_explain(const ExplainArgs& args)
+{
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    if (!fs::exists(args.project_root, ec) || !fs::is_directory(args.project_root, ec)) {
+        std::fprintf(stderr, "error: not a directory: %s\n", args.project_root.string().c_str());
+        return 1;
+    }
+    const fs::path abs_root = fs::absolute(args.project_root, ec);
+    if (ec) {
+        std::fprintf(stderr, "error: cannot resolve absolute path: %s\n", ec.message().c_str());
+        return 1;
+    }
+
+    vectis::code::TreeSitterParser parser;
+    parser.register_builtin_languages();
+    vectis::code::CodeIndex index;
+
+    const auto scan_config = make_scan_config(abs_root);
+    int scan_rc = 0;
+    if (args.use_cache) {
+        const fs::path cache_dir =
+            args.cache_dir.empty() ? abs_root / "vectis-data" : fs::absolute(args.cache_dir, ec);
+        scan_rc = run_cached(scan_config, cache_dir, parser, index, args.quiet);
+    }
+    else {
+        scan_rc = run_uncached(scan_config, parser, index);
+    }
+    if (scan_rc != 0) {
+        return scan_rc;
+    }
+
+    vectis::code::ExplainOptions explain_opts;
+    explain_opts.project_root = abs_root;
+    explain_opts.project_name = abs_root.filename().string();
+    explain_opts.exclude_dir_names = scan_config.exclude_dir_names;
+    const std::string body = vectis::code::build_explanation(index, explain_opts);
+    std::fwrite(body.data(), 1, body.size(), stdout);
+    if (!body.empty() && body.back() != '\n') {
+        std::fputc('\n', stdout);
+    }
+    return 0;
+}
+
 int run_digest(const DigestArgs& args)
 {
     namespace fs = std::filesystem;
@@ -377,6 +462,14 @@ int run(int argc, char** argv)
             return 1;
         }
         return run_digest(args);
+    }
+    if (cmd == "explain") {
+        ExplainArgs args;
+        if (!parse_explain_args(argc, argv, args)) {
+            print_usage();
+            return 1;
+        }
+        return run_explain(args);
     }
 
     std::fprintf(stderr, "error: unknown subcommand '%s'\n", argv[1]);
