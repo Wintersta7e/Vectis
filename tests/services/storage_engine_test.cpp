@@ -103,12 +103,13 @@ TEST_F(StorageEngineTest, MigrateIsIdempotent)
     auto r = m_engine.migrate();
     ASSERT_TRUE(r) << r.error().message;
 
-    // One migration version should be recorded (v1 initial_schema).
+    // Both migrations (v1 initial_schema, v2 symbol_visibility) should
+    // be recorded exactly once even after a second migrate() call.
     auto stmt = m_engine.prepare("SELECT COUNT(*) FROM schema_version");
     ASSERT_TRUE(stmt);
     auto rows = stmt->query();
     ASSERT_TRUE(rows);
-    EXPECT_EQ((*rows)[0].get_int(0), 1);
+    EXPECT_EQ((*rows)[0].get_int(0), 2);
 }
 
 // ---- Raw execute + query ---------------------------------------------------

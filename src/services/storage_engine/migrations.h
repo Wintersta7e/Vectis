@@ -71,6 +71,9 @@ inline constexpr std::array k_migrations = {
         CREATE INDEX IF NOT EXISTS idx_deps_source     ON dependencies(source_file_id);
         CREATE INDEX IF NOT EXISTS idx_deps_target     ON dependencies(target_file_id);
     )"},
+    Migration{2, "symbol_visibility", R"(
+        ALTER TABLE symbols ADD COLUMN visibility TEXT DEFAULT '';
+    )"},
 };
 // clang-format on
 

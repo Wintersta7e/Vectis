@@ -126,6 +126,9 @@ constexpr const char* k_vectis_version = "0.1.0";
         if (sym.complexity > 0) {
             symbol_node["complexity"] = sym.complexity;
         }
+        if (!sym.visibility.empty()) {
+            symbol_node["visibility"] = sym.visibility;
+        }
         symbols_array.push_back(std::move(symbol_node));
     }
     node["symbols"] = std::move(symbols_array);
@@ -375,12 +378,16 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         if (include_file_details) {
             const std::string path = path_for(lookup, file.id);
             for (const auto& sym : file_node["symbols"]) {
-                symbols_flat.push_back({
+                nlohmann::json flat = {
                     {"name", sym["name"]},
                     {"kind", sym["kind"]},
                     {"path", path},
                     {"line", sym["line"]},
-                });
+                };
+                if (sym.contains("visibility")) {
+                    flat["visibility"] = sym["visibility"];
+                }
+                symbols_flat.push_back(std::move(flat));
             }
         }
         files_array.push_back(std::move(file_node));

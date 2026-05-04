@@ -273,6 +273,117 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
     }
 }
 
+/// Compute the visibility/API-surface category for a symbol. Languages
+/// vary widely in how they encode this; we collapse each into one of
+/// the strings documented on `Symbol::visibility`. An empty string
+/// means "language doesn't express visibility / not yet implemented"
+/// — consumers should treat that as "public" when filtering.
+[[nodiscard]] std::string extract_visibility(TSNode node, Language language, std::string_view name)
+{
+    using std::string;
+    switch (language) {
+    case Language::Go:
+        // Go encodes visibility purely in the symbol name: an uppercase
+        // first letter exports the symbol from its package; lowercase
+        // keeps it package-private. The convention is enforced by the
+        // compiler, so this is a complete signal.
+        if (name.empty()) {
+            return {};
+        }
+        return std::isupper(static_cast<unsigned char>(name[0])) != 0 ? "public" : "private";
+
+    case Language::Python: {
+        // Python has no enforced visibility, but the convention is
+        // canonical: leading underscore = "internal, do not import".
+        // `__name__` (dunder) is the standard library's own metadata
+        // protocol — those are public by intention even though they
+        // start with `_`.
+        if (name.empty()) {
+            return {};
+        }
+        const bool is_dunder = name.size() >= 4 && name.starts_with("__") && name.ends_with("__");
+        if (is_dunder) {
+            return "public";
+        }
+        return name.front() == '_' ? "private" : "public";
+    }
+
+    case Language::Rust: {
+        // Walk the captured node's named children looking for a
+        // visibility_modifier. The grammar names them
+        //   (visibility_modifier "pub")           — fully public
+        //   (visibility_modifier "pub" "(crate)") — pub(crate) → "internal"
+        //   (visibility_modifier "pub" "(super)") — pub(super) → "internal"
+        // Absence of a visibility_modifier means private (Rust default).
+        const std::uint32_t child_count = ts_node_named_child_count(node);
+        for (std::uint32_t i = 0; i < child_count; ++i) {
+            const TSNode child = ts_node_named_child(node, i);
+            const std::string_view type{ts_node_type(child)};
+            if (type != "visibility_modifier") {
+                continue;
+            }
+            // Look for a parenthesised qualifier inside the modifier.
+            const std::uint32_t qual_count = ts_node_child_count(child);
+            for (std::uint32_t j = 0; j < qual_count; ++j) {
+                const TSNode qual = ts_node_child(child, j);
+                const std::string_view qtext{ts_node_type(qual)};
+                if (qtext == "(") {
+                    return "internal";
+                }
+            }
+            return "public";
+        }
+        return "private";
+    }
+
+    case Language::Java:
+    case Language::CSharp:
+    case Language::TypeScript: {
+        // Java/C#/TypeScript all use word-token modifiers attached to
+        // the declaration. Walk children once looking for a `modifier`
+        // (Java/C#) or `accessibility_modifier` (TypeScript) node.
+        // Map the keyword text to our string set; default depends on
+        // the language but is "public" for top-level declarations and
+        // for languages whose implicit visibility is permissive.
+        const std::uint32_t child_count = ts_node_child_count(node);
+        for (std::uint32_t i = 0; i < child_count; ++i) {
+            const TSNode child = ts_node_child(node, i);
+            const std::string_view type{ts_node_type(child)};
+            if (type != "modifiers" && type != "modifier" && type != "accessibility_modifier") {
+                continue;
+            }
+            // The modifier(s) child contains keyword leaves. Walk
+            // its descendants once and pick the first hit.
+            const std::uint32_t mod_count = ts_node_child_count(child);
+            for (std::uint32_t j = 0; j < mod_count; ++j) {
+                const TSNode mod = ts_node_child(child, j);
+                const std::string_view mt{ts_node_type(mod)};
+                if (mt == "public") {
+                    return "public";
+                }
+                if (mt == "private") {
+                    return "private";
+                }
+                if (mt == "protected") {
+                    return "protected";
+                }
+                if (mt == "internal") {
+                    return "internal";
+                }
+            }
+        }
+        // No explicit modifier found. Java's package-private is the
+        // pragmatic equivalent of "internal" but most consumers care
+        // about "is this exported", and with no explicit private the
+        // safest answer is the language's looser default.
+        return language == Language::Java ? "internal" : "public";
+    }
+
+    default:
+        return {};
+    }
+}
+
 } // namespace
 
 struct TreeSitterParser::Impl
@@ -516,6 +627,26 @@ TreeSitterParser::ParseResult TreeSitterParser::parse_file(Language language,
         }
 
         if (has_name && has_kind && !symbol.name.empty() && !skip_this_match) {
+            // Visibility is computed from the captured node + symbol
+            // name. We still need the node, so this happens before the
+            // move into result.symbols. The kind capture overwrote the
+            // node we looked at last, but for visibility we want the
+            // outer declaration node; track it separately.
+            // Re-walk captures to find the kind capture's node again.
+            for (std::uint16_t i = 0; i < match.capture_count; ++i) {
+                const TSQueryCapture& capture = match.captures[i];
+                std::uint32_t capture_len = 0;
+                const char* capture_chars =
+                    ts_query_capture_name_for_id(entry.query, capture.index, &capture_len);
+                const std::string_view capture_name(capture_chars, capture_len);
+                if (capture_name == "name") {
+                    continue;
+                }
+                if (capture_name_to_kind(capture_name) == symbol.kind) {
+                    symbol.visibility = extract_visibility(capture.node, language, symbol.name);
+                    break;
+                }
+            }
             result.symbols.push_back(std::move(symbol));
         }
     }

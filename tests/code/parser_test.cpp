@@ -986,4 +986,106 @@ const registry = {
     EXPECT_TRUE(has_symbol(result.symbols, "deregister", SymbolKind::Method));
 }
 
+// -----------------------------------------------------------------------------
+// Visibility — per-language API-surface classification
+// -----------------------------------------------------------------------------
+
+namespace {
+
+// Find the symbol with the given name. Returns nullptr if missing.
+const Symbol* find_named(const std::vector<Symbol>& syms, std::string_view name)
+{
+    for (const auto& s : syms) {
+        if (s.name == name) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST(ParserTest, VisibilityGoFromCapitalisation)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+package foo
+
+func ExportedFunc() {}
+func unexportedFunc() {}
+type ExportedStruct struct{}
+type unexportedStruct struct{}
+)";
+    const auto result = parser->parse_file(Language::Go, source);
+
+    const auto* exp_fn = find_named(result.symbols, "ExportedFunc");
+    const auto* unexp_fn = find_named(result.symbols, "unexportedFunc");
+    ASSERT_NE(exp_fn, nullptr);
+    ASSERT_NE(unexp_fn, nullptr);
+    EXPECT_EQ(exp_fn->visibility, "public");
+    EXPECT_EQ(unexp_fn->visibility, "private");
+}
+
+TEST(ParserTest, VisibilityPythonUnderscoreConvention)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+def public_func():
+    pass
+
+def _internal_func():
+    pass
+
+def __mangled_func():
+    pass
+
+def __dunder__():
+    pass
+
+class PublicClass:
+    pass
+
+class _InternalClass:
+    pass
+)";
+    const auto result = parser->parse_file(Language::Python, source);
+
+    const auto* pub = find_named(result.symbols, "public_func");
+    const auto* internal = find_named(result.symbols, "_internal_func");
+    const auto* mangled = find_named(result.symbols, "__mangled_func");
+    const auto* dunder = find_named(result.symbols, "__dunder__");
+    ASSERT_NE(pub, nullptr);
+    ASSERT_NE(internal, nullptr);
+    ASSERT_NE(mangled, nullptr);
+    ASSERT_NE(dunder, nullptr);
+    EXPECT_EQ(pub->visibility, "public");
+    EXPECT_EQ(internal->visibility, "private");
+    EXPECT_EQ(mangled->visibility, "private");
+    // Dunders are public by intent (Python's metaprotocol convention).
+    EXPECT_EQ(dunder->visibility, "public");
+}
+
+TEST(ParserTest, VisibilityRustPubKeyword)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+pub fn exported() {}
+fn unexported() {}
+pub(crate) fn crate_internal() {}
+pub struct ExportedType;
+struct PrivateType;
+)";
+    const auto result = parser->parse_file(Language::Rust, source);
+
+    const auto* exp = find_named(result.symbols, "exported");
+    const auto* unexp = find_named(result.symbols, "unexported");
+    const auto* crate = find_named(result.symbols, "crate_internal");
+    ASSERT_NE(exp, nullptr);
+    ASSERT_NE(unexp, nullptr);
+    ASSERT_NE(crate, nullptr);
+    EXPECT_EQ(exp->visibility, "public");
+    EXPECT_EQ(unexp->visibility, "private");
+    EXPECT_EQ(crate->visibility, "internal");
+}
+
 } // namespace

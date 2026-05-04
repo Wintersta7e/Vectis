@@ -123,6 +123,21 @@ struct FileEntry
 /// Method kinds — 1 for a straight-line function, incrementing for
 /// each decision point (if/while/for/case/&&/||/?:). Zero for every
 /// non-function kind.
+/// Visibility / API-surface category for a symbol. Languages encode
+/// this very differently — Go via capitalization, Python via under-
+/// score convention, Rust via `pub` keywords, Java/C#/TS via explicit
+/// modifiers — so the parser collapses each language's notion into a
+/// small fixed string set. A consumer that just wants "is this part of
+/// the public API" can compare against "public".
+///
+///   "public"    — exported / part of the documented API.
+///   "private"   — internal / hidden / leading underscore / lowercase
+///                 in Go / no `pub` in Rust / explicit `private`.
+///   "protected" — Java/C#/TS `protected` member.
+///   "internal"  — C# `internal`, Rust `pub(crate)` / `pub(super)`.
+///   ""          — unknown / language doesn't express visibility /
+///                 not yet implemented for the language. Treat as
+///                 public when filtering.
 struct Symbol
 {
     std::int64_t id = 0;
@@ -135,6 +150,7 @@ struct Symbol
     std::string signature;
     std::vector<std::string> members;
     int complexity = 0;
+    std::string visibility; // see comment above
 };
 
 } // namespace vectis::code

@@ -135,9 +135,10 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
     }
 
     // Insert symbols.
-    auto ins_sym = storage.prepare("INSERT INTO symbols (id, file_id, name, kind, signature, "
-                                   "line_start, line_end, parent_id, complexity, members) "
-                                   "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    auto ins_sym =
+        storage.prepare("INSERT INTO symbols (id, file_id, name, kind, signature, "
+                        "line_start, line_end, parent_id, complexity, members, visibility) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (!ins_sym) {
         return tl::unexpected(ins_sym.error());
     }
@@ -156,6 +157,7 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
         ins_sym->bind(9, static_cast<std::int64_t>(s.complexity));
         const auto members_str = join_members(s.members);
         ins_sym->bind(10, std::string_view{members_str});
+        ins_sym->bind(11, std::string_view{s.visibility});
         if (auto r = ins_sym->execute(); !r) {
             return r;
         }
@@ -269,9 +271,9 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
     }
 
     // Load symbols — batch by file_id for add_symbols.
-    auto sel_syms =
-        storage.prepare("SELECT id, file_id, name, kind, signature, line_start, line_end, "
-                        "parent_id, complexity, members FROM symbols ORDER BY file_id, id");
+    auto sel_syms = storage.prepare(
+        "SELECT id, file_id, name, kind, signature, line_start, line_end, "
+        "parent_id, complexity, members, visibility FROM symbols ORDER BY file_id, id");
     if (!sel_syms) {
         return tl::unexpected(sel_syms.error());
     }
@@ -304,6 +306,7 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
             s.parent_id = row.get_int(7);
             s.complexity = static_cast<int>(row.get_int(8));
             s.members = split_members(row.get_text(9));
+            s.visibility = row.get_text(10);
             batch.push_back(std::move(s));
         });
         !r) {

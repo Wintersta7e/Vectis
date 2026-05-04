@@ -47,11 +47,20 @@ void populate_synthetic_index(CodeIndex& index)
     const std::int64_t f2_id = index.add_file(std::move(f2));
 
     const std::array<Symbol, 6> batch = {
-        Symbol{0, f1_id, "App", SymbolKind::Class, 13, 460, 0, "", {}},
-        Symbol{
-            0, f1_id, "initialize", SymbolKind::Method, 109, 256, 0, "bool App::initialize()", {}},
-        Symbol{0, f1_id, "run", SymbolKind::Method, 258, 300, 0, "int App::run()", {}},
-        Symbol{0, f2_id, "Scanner", SymbolKind::Class, 52, 280, 0, "", {}},
+        Symbol{0, f1_id, "App", SymbolKind::Class, 13, 460, 0, "", {}, 0, ""},
+        Symbol{0,
+               f1_id,
+               "initialize",
+               SymbolKind::Method,
+               109,
+               256,
+               0,
+               "bool App::initialize()",
+               {},
+               0,
+               ""},
+        Symbol{0, f1_id, "run", SymbolKind::Method, 258, 300, 0, "int App::run()", {}, 0, ""},
+        Symbol{0, f2_id, "Scanner", SymbolKind::Class, 52, 280, 0, "", {}, 0, ""},
         Symbol{0,
                f1_id,
                "ErrorKind",
@@ -60,8 +69,10 @@ void populate_synthetic_index(CodeIndex& index)
                22,
                0,
                "",
-               {"IoError", "ParseError", "NetworkError"}},
-        Symbol{0, f2_id, "Point", SymbolKind::Struct, 30, 34, 0, "", {"x", "y"}},
+               {"IoError", "ParseError", "NetworkError"},
+               0,
+               ""},
+        Symbol{0, f2_id, "Point", SymbolKind::Struct, 30, 34, 0, "", {"x", "y"}, 0, ""},
     };
     index.add_symbols(batch);
 }
