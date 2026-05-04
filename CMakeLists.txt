@@ -41,6 +41,13 @@ else()
     # silence this one piece — it has not caught a real bug in this
     # codebase and the workaround (`= {}` on every member) is noise.
     add_compile_options(-Wno-missing-field-initializers)
+    # gcc 13 + fmt v9 (transitively pulled in via spdlog) emits a
+    # known false-positive pair of warnings (`-Werror=array-bounds`
+    # and `-Werror=stringop-overflow`) from inside fmt's float-
+    # formatting bigint code under -O3 inlining. None of our code
+    # touches fmt's float formatter directly; entirely a third-
+    # party-header issue that breaks the Release CI build.
+    add_compile_options(-Wno-array-bounds -Wno-stringop-overflow)
 endif()
 
 # --- Static linking (opt-in) -------------------------------------------------
