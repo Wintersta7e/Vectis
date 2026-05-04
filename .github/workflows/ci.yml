@@ -107,6 +107,12 @@ jobs:
       - name: Run clang-tidy on Vectis sources
         # `.clang-tidy` already has WarningsAsErrors: '*'; passing the flag
         # explicitly is belt-and-suspenders against future config drift.
+        # `--extra-arg=-Wno-unknown-warning-option` makes clang-tidy
+        # silently ignore gcc-only flags it finds in compile_commands.json
+        # (e.g. `-Wno-stringop-overflow`, gated to GNU in CMakeLists.txt
+        # but still recorded for the gcc-built Debug compile lines).
         run: |
           find src -name '*.cpp' -not -path '*/queries/*' -print0 \
-            | xargs -0 -P "$(nproc)" -I {} clang-tidy -p build --quiet --warnings-as-errors='*' {}
+            | xargs -0 -P "$(nproc)" -I {} clang-tidy -p build \
+                --quiet --warnings-as-errors='*' \
+                --extra-arg=-Wno-unknown-warning-option {}

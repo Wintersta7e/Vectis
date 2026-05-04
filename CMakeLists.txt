@@ -47,7 +47,12 @@ else()
     # formatting bigint code under -O3 inlining. None of our code
     # touches fmt's float formatter directly; entirely a third-
     # party-header issue that breaks the Release CI build.
-    add_compile_options(-Wno-array-bounds -Wno-stringop-overflow)
+    # `-Wstringop-overflow` is gcc-only — clang/clang-tidy reject
+    # the suppression as an unknown warning option.
+    add_compile_options(-Wno-array-bounds)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        add_compile_options(-Wno-stringop-overflow)
+    endif()
 endif()
 
 # --- Static linking (opt-in) -------------------------------------------------
