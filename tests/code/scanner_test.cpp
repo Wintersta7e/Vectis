@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -253,10 +254,18 @@ TEST_F(ScannerFixture, IncrementalScanRunsCompactWhenFilesAreDeleted)
         EXPECT_FALSE(index.symbols_in_file(f.id).empty());
         EXPECT_NE(f.path_relative.filename().string(), "b.py");
     }
-    // Pin the exact post-compact symbol count: two surviving files,
-    // one symbol each. A weaker `<` would let a tombstone-leak through.
-    EXPECT_EQ(index.snapshot_all_symbols().size(), 2U);
-    EXPECT_LT(index.snapshot_all_symbols().size(), symbols_before);
+    // Verify the surviving symbols by NAME — a count assertion would
+    // be brittle to tree-sitter grammar updates that emit additional
+    // module-level captures. The named survivors come from the
+    // surviving files (alpha, gamma) and beta must NOT reappear.
+    const auto syms = index.snapshot_all_symbols();
+    const auto has_name = [&](std::string_view n) {
+        return std::any_of(syms.begin(), syms.end(), [&](const auto& s) { return s.name == n; });
+    };
+    EXPECT_TRUE(has_name("alpha"));
+    EXPECT_TRUE(has_name("gamma"));
+    EXPECT_FALSE(has_name("beta")) << "tombstoned symbol must not survive compact";
+    EXPECT_LT(syms.size(), symbols_before);
 }
 
 } // namespace

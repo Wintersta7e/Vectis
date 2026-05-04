@@ -214,11 +214,19 @@ void augment_signals_from_disk(PathSignals& signals, const std::filesystem::path
         return name.empty() || name[0] == '.' || exclude_dir_names.contains(name) ||
                k_non_source_subtree_names.contains(name);
     };
-    for (const auto& top_entry : std::filesystem::directory_iterator(project_root, ec)) {
+    // Capture iterators separately so a constructor-time ec doesn't
+    // run the loop body once with a sentinel value (matches the
+    // pattern used by the ecosystem library detectors).
+    std::filesystem::directory_iterator top_it(project_root, ec);
+    if (ec) {
+        return;
+    }
+    for (const auto& top_entry : top_it) {
         if (ec) {
             return;
         }
         if (!top_entry.is_directory(ec) || ec) {
+            ec.clear();
             continue;
         }
         const std::string top_name = top_entry.path().filename().string();
@@ -227,11 +235,18 @@ void augment_signals_from_disk(PathSignals& signals, const std::filesystem::path
         }
         signals.top_level_dirs.insert(top_name);
         signals.segments.insert(top_name);
-        for (const auto& sub_entry : std::filesystem::directory_iterator(top_entry.path(), ec)) {
+
+        std::filesystem::directory_iterator sub_it(top_entry.path(), ec);
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+        for (const auto& sub_entry : sub_it) {
             if (ec) {
                 break;
             }
             if (!sub_entry.is_directory(ec) || ec) {
+                ec.clear();
                 continue;
             }
             const std::string sub_name = sub_entry.path().filename().string();
@@ -499,7 +514,15 @@ detect_root_manifest(const std::filesystem::path& project_root)
     }
 
     // C# names are user-defined; .sln takes precedence over .csproj.
-    for (const auto& entry : std::filesystem::directory_iterator(project_root, ec)) {
+    // Capture the iterator separately so a constructor-time ec on an
+    // unreadable project root produces a clean nullopt rather than a
+    // garbage first iteration (matches the pattern used by the
+    // ecosystem library detectors).
+    std::filesystem::directory_iterator it(project_root, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    for (const auto& entry : it) {
         if (ec) {
             break;
         }
