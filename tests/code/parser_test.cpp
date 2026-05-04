@@ -1120,6 +1120,120 @@ def plain():
     EXPECT_TRUE(plain->decorators.empty());
 }
 
+TEST(ParserTest, ExtractsJavaAnnotations)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+@RestController
+@RequestMapping("/api")
+public class Foo {
+    @Autowired
+    private Bar bar;
+
+    @GetMapping("/x")
+    @Transactional
+    public String x() { return "x"; }
+
+    public String plain() { return "p"; }
+}
+)";
+    const auto result = parser->parse_file(Language::Java, source);
+
+    const auto* foo = find_named(result.symbols, "Foo");
+    const auto* x = find_named(result.symbols, "x");
+    const auto* plain = find_named(result.symbols, "plain");
+    ASSERT_NE(foo, nullptr);
+    ASSERT_NE(x, nullptr);
+    ASSERT_NE(plain, nullptr);
+
+    ASSERT_EQ(foo->decorators.size(), 2U);
+    EXPECT_EQ(foo->decorators[0], "RestController");
+    EXPECT_EQ(foo->decorators[1], R"(RequestMapping("/api"))");
+
+    ASSERT_EQ(x->decorators.size(), 2U);
+    EXPECT_EQ(x->decorators[0], R"(GetMapping("/x"))");
+    EXPECT_EQ(x->decorators[1], "Transactional");
+
+    EXPECT_TRUE(plain->decorators.empty());
+}
+
+TEST(ParserTest, ExtractsCSharpAttributes)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+public class Bar {
+    [HttpGet("/x")]
+    [Authorize]
+    public string Get() { return "x"; }
+
+    [Test, Category("Slow")]
+    public void Slow() {}
+
+    public void Plain() {}
+}
+)";
+    const auto result = parser->parse_file(Language::CSharp, source);
+
+    const auto* get_m = find_named(result.symbols, "Get");
+    const auto* slow_m = find_named(result.symbols, "Slow");
+    const auto* plain_m = find_named(result.symbols, "Plain");
+    ASSERT_NE(get_m, nullptr);
+    ASSERT_NE(slow_m, nullptr);
+    ASSERT_NE(plain_m, nullptr);
+
+    ASSERT_EQ(get_m->decorators.size(), 2U);
+    EXPECT_EQ(get_m->decorators[0], R"(HttpGet("/x"))");
+    EXPECT_EQ(get_m->decorators[1], "Authorize");
+
+    // [Test, Category("Slow")] is a single attribute_list with two
+    // attribute children — both should surface.
+    ASSERT_EQ(slow_m->decorators.size(), 2U);
+    EXPECT_EQ(slow_m->decorators[0], "Test");
+    EXPECT_EQ(slow_m->decorators[1], R"(Category("Slow"))");
+
+    EXPECT_TRUE(plain_m->decorators.empty());
+}
+
+TEST(ParserTest, ExtractsRustOuterAttributes)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+#[derive(Debug, Clone)]
+pub struct Foo {}
+
+#[test]
+fn it_works() {}
+
+#[inline]
+#[must_use]
+pub fn frobnicate() -> i32 { 1 }
+
+fn plain() {}
+)";
+    const auto result = parser->parse_file(Language::Rust, source);
+
+    const auto* foo = find_named(result.symbols, "Foo");
+    const auto* it_works = find_named(result.symbols, "it_works");
+    const auto* frob = find_named(result.symbols, "frobnicate");
+    const auto* plain = find_named(result.symbols, "plain");
+    ASSERT_NE(foo, nullptr);
+    ASSERT_NE(it_works, nullptr);
+    ASSERT_NE(frob, nullptr);
+    ASSERT_NE(plain, nullptr);
+
+    ASSERT_EQ(foo->decorators.size(), 1U);
+    EXPECT_EQ(foo->decorators[0], "derive(Debug, Clone)");
+
+    ASSERT_EQ(it_works->decorators.size(), 1U);
+    EXPECT_EQ(it_works->decorators[0], "test");
+
+    ASSERT_EQ(frob->decorators.size(), 2U);
+    EXPECT_EQ(frob->decorators[0], "inline");
+    EXPECT_EQ(frob->decorators[1], "must_use");
+
+    EXPECT_TRUE(plain->decorators.empty());
+}
+
 TEST(ParserTest, VisibilityJavaModifiers)
 {
     auto parser = make_parser();

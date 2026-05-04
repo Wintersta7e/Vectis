@@ -392,54 +392,178 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
 
 /// Extract decorator/annotation text attached to a symbol. Currently
 /// supports Python `@decorator` syntax (the most common case in real
-/// codebases). Tree-sitter-python wraps a decorated function/class
-/// in a `decorated_definition` node; we walk up from the captured
-/// inner node to the parent and collect every `decorator` sibling.
-/// The leading `@` is stripped so the output is just the call/name
-/// (e.g. `app.route("/")` rather than `@app.route("/")`).
+/// codebases) plus Java annotations, C# attributes, and Rust outer
+/// attributes — the four common shapes where each language wraps the
+/// declaration in a parent node containing the markers as siblings or
+/// attaches them as preceding sibling children.
+///
+/// Output: marker text in source order with the language's leading
+/// sigil stripped (e.g. `app.route("/")` not `@app.route("/")`,
+/// `RestController` not `@RestController`, `derive(Debug)` not
+/// `#[derive(Debug)]`, `HttpGet` not `[HttpGet]`).
 [[nodiscard]] std::vector<std::string> extract_decorators(TSNode node, Language language,
                                                           std::string_view content)
 {
-    if (language != Language::Python) {
-        return {};
-    }
-    const TSNode parent = ts_node_parent(node);
-    if (ts_node_is_null(parent)) {
-        return {};
-    }
-    if (std::string_view{ts_node_type(parent)} != "decorated_definition") {
-        return {};
-    }
-    std::vector<std::string> out;
-    const std::uint32_t child_count = ts_node_named_child_count(parent);
-    out.reserve(child_count);
-    for (std::uint32_t i = 0; i < child_count; ++i) {
-        const TSNode child = ts_node_named_child(parent, i);
-        if (std::string_view{ts_node_type(child)} != "decorator") {
-            continue;
-        }
-        const std::uint32_t start = ts_node_start_byte(child);
-        const std::uint32_t end = ts_node_end_byte(child);
+    // Extract a node's source text, trimming outer whitespace + the
+    // language's marker sigil (e.g. "@" for Java/Python, "#[" + "]"
+    // for Rust attributes, no sigil for C# attribute children).
+    const auto extract_marker = [&content](TSNode marker, std::string_view leading,
+                                           std::string_view trailing = {}) -> std::string {
+        const std::uint32_t start = ts_node_start_byte(marker);
+        const std::uint32_t end = ts_node_end_byte(marker);
         if (start >= end || end > content.size()) {
-            continue;
+            return {};
         }
         std::string_view text(content.data() + start, end - start);
-        // Trim leading `@` and any leading whitespace; tree-sitter's
-        // decorator node spans `@expr` so the first byte is always `@`.
-        if (!text.empty() && text.front() == '@') {
-            text.remove_prefix(1);
-        }
-        // Trim trailing whitespace (decorators can run to end-of-line
-        // and the node sometimes includes the newline in its byte range).
         while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' ||
                                  text.back() == '\t')) {
             text.remove_suffix(1);
         }
-        if (!text.empty()) {
-            out.emplace_back(text);
+        if (!leading.empty() && text.size() >= leading.size() && text.starts_with(leading)) {
+            text.remove_prefix(leading.size());
         }
+        if (!trailing.empty() && text.size() >= trailing.size() && text.ends_with(trailing)) {
+            text.remove_suffix(trailing.size());
+        }
+        while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
+            text.remove_suffix(1);
+        }
+        return std::string{text};
+    };
+
+    const auto collect_siblings_of_type =
+        [&](TSNode parent, std::string_view child_type, std::string_view leading,
+            std::string_view trailing = {}) -> std::vector<std::string> {
+        std::vector<std::string> out;
+        if (ts_node_is_null(parent)) {
+            return out;
+        }
+        const std::uint32_t child_count = ts_node_named_child_count(parent);
+        out.reserve(child_count);
+        for (std::uint32_t i = 0; i < child_count; ++i) {
+            const TSNode child = ts_node_named_child(parent, i);
+            if (std::string_view{ts_node_type(child)} != child_type) {
+                continue;
+            }
+            std::string text = extract_marker(child, leading, trailing);
+            if (!text.empty()) {
+                out.emplace_back(std::move(text));
+            }
+        }
+        return out;
+    };
+
+    switch (language) {
+    case Language::Python: {
+        // tree-sitter-python wraps a decorated def/class in a
+        // `decorated_definition` parent containing each `decorator`
+        // sibling.
+        const TSNode parent = ts_node_parent(node);
+        if (ts_node_is_null(parent) ||
+            std::string_view{ts_node_type(parent)} != "decorated_definition") {
+            return {};
+        }
+        return collect_siblings_of_type(parent, "decorator", "@");
     }
-    return out;
+
+    case Language::Java: {
+        // tree-sitter-java attaches `marker_annotation` (e.g. `@Foo`)
+        // and `annotation` (e.g. `@Foo(args)`) nodes inside the
+        // declaration's `modifiers` child. The captured node is the
+        // declaration itself; iterate its children for `modifiers`.
+        std::vector<std::string> out;
+        const std::uint32_t child_count = ts_node_named_child_count(node);
+        for (std::uint32_t i = 0; i < child_count; ++i) {
+            const TSNode child = ts_node_named_child(node, i);
+            if (std::string_view{ts_node_type(child)} != "modifiers") {
+                continue;
+            }
+            // Inside `modifiers`, both `marker_annotation` and
+            // `annotation` are siblings.
+            const std::uint32_t mod_count = ts_node_named_child_count(child);
+            for (std::uint32_t j = 0; j < mod_count; ++j) {
+                const TSNode mod = ts_node_named_child(child, j);
+                const std::string_view mt{ts_node_type(mod)};
+                if (mt != "marker_annotation" && mt != "annotation") {
+                    continue;
+                }
+                std::string text = extract_marker(mod, "@");
+                if (!text.empty()) {
+                    out.emplace_back(std::move(text));
+                }
+            }
+            break; // only one modifiers child per decl
+        }
+        return out;
+    }
+
+    case Language::CSharp: {
+        // tree-sitter-c-sharp groups attributes inside `attribute_list`
+        // children. A declaration may have multiple `attribute_list`s
+        // (each `[A, B]` is one list). Each list contains `attribute`
+        // children whose text is the bare name + optional args.
+        std::vector<std::string> out;
+        const std::uint32_t child_count = ts_node_named_child_count(node);
+        for (std::uint32_t i = 0; i < child_count; ++i) {
+            const TSNode child = ts_node_named_child(node, i);
+            if (std::string_view{ts_node_type(child)} != "attribute_list") {
+                continue;
+            }
+            const std::uint32_t inner = ts_node_named_child_count(child);
+            for (std::uint32_t j = 0; j < inner; ++j) {
+                const TSNode attr = ts_node_named_child(child, j);
+                if (std::string_view{ts_node_type(attr)} != "attribute") {
+                    continue;
+                }
+                // attribute nodes don't include the surrounding `[...]`
+                // — just the name + optional args. No sigil to strip.
+                std::string text = extract_marker(attr, {}, {});
+                if (!text.empty()) {
+                    out.emplace_back(std::move(text));
+                }
+            }
+        }
+        return out;
+    }
+
+    case Language::Rust: {
+        // tree-sitter-rust places outer `attribute_item` nodes
+        // (`#[...]`) as preceding siblings of the declaration they
+        // annotate, all as named children of a common parent
+        // (`source_file`, `impl_item`'s `declaration_list`, `mod_item`,
+        // etc.). Walk siblings up to `node`'s position and collect.
+        const TSNode parent = ts_node_parent(node);
+        if (ts_node_is_null(parent)) {
+            return {};
+        }
+        std::vector<std::string> out;
+        const std::uint32_t parent_count = ts_node_named_child_count(parent);
+        std::vector<std::string> pending; // attributes since last non-attribute sibling
+        for (std::uint32_t i = 0; i < parent_count; ++i) {
+            const TSNode sibling = ts_node_named_child(parent, i);
+            if (ts_node_eq(sibling, node)) {
+                out = std::move(pending);
+                break;
+            }
+            const std::string_view st{ts_node_type(sibling)};
+            if (st == "attribute_item") {
+                std::string text = extract_marker(sibling, "#[", "]");
+                if (!text.empty()) {
+                    pending.emplace_back(std::move(text));
+                }
+            }
+            else {
+                // Non-attribute sibling resets the run — only attributes
+                // *immediately* preceding the declaration belong to it.
+                pending.clear();
+            }
+        }
+        return out;
+    }
+
+    default:
+        return {};
+    }
 }
 
 } // namespace
