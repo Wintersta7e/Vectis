@@ -13,18 +13,70 @@ constexpr std::string_view k_query_python = R"(
 (class_definition    name: (identifier) @name) @class
 )";
 
+// JavaScript: declarative + the CJS / prototype patterns that dominate
+// pre-ESM codebases. Without the variable-bound and member-assignment
+// rules a project like express (lots of `app.x = function() {}` and
+// `var foo = function() {}`) extracts under one symbol per file.
 constexpr std::string_view k_query_javascript = R"(
 (function_declaration name: (identifier) @name) @function
 (class_declaration    name: (identifier) @name) @class
 (method_definition    name: (property_identifier) @name) @method
+
+; var/const/let foo = function() {} | () => {}
+(variable_declarator
+  name: (identifier) @name
+  value: [(function_expression) (arrow_function)]) @function
+
+; const Foo = class { ... }
+(variable_declarator
+  name: (identifier) @name
+  value: (class)) @class
+
+; obj.method = function() {} / Foo.prototype.bar = () => {}
+(assignment_expression
+  left: (member_expression
+    property: (property_identifier) @name)
+  right: [(function_expression) (arrow_function)]) @function
+
+; { foo: function() {}, bar: () => {} } — CJS module.exports objects
+(pair
+  key: (property_identifier) @name
+  value: [(function_expression) (arrow_function)]) @method
 )";
 
+// TypeScript: same idea — class fields with arrow values, abstract
+// classes, and enums all show up in real codebases (NestJS, Redux's TS
+// rewrite) and were previously invisible.
 constexpr std::string_view k_query_typescript = R"(
-(function_declaration   name: (identifier) @name)        @function
-(class_declaration      name: (type_identifier) @name)   @class
-(method_definition      name: (property_identifier) @name) @method
-(interface_declaration  name: (type_identifier) @name)   @interface
-(type_alias_declaration name: (type_identifier) @name)   @type
+(function_declaration       name: (identifier) @name)        @function
+(class_declaration          name: (type_identifier) @name)   @class
+(abstract_class_declaration name: (type_identifier) @name)   @class
+(method_definition          name: (property_identifier) @name) @method
+(interface_declaration      name: (type_identifier) @name)   @interface
+(type_alias_declaration     name: (type_identifier) @name)   @type
+(enum_declaration           name: (identifier) @name)        @enum
+
+(variable_declarator
+  name: (identifier) @name
+  value: [(function_expression) (arrow_function)]) @function
+
+(variable_declarator
+  name: (identifier) @name
+  value: (class)) @class
+
+(assignment_expression
+  left: (member_expression
+    property: (property_identifier) @name)
+  right: [(function_expression) (arrow_function)]) @function
+
+(pair
+  key: (property_identifier) @name
+  value: [(function_expression) (arrow_function)]) @method
+
+; Class field with arrow value: `class Foo { handler = () => {} }`
+(public_field_definition
+  name: (property_identifier) @name
+  value: (arrow_function)) @method
 )";
 
 constexpr std::string_view k_query_c = R"(

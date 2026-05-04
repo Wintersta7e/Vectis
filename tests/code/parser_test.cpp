@@ -904,4 +904,86 @@ var express = require('express');
     EXPECT_TRUE(saw_express);
 }
 
+TEST(ParserTest, ExtractsJavaScriptCjsAndPrototypePatterns)
+{
+    // Real-world CJS frameworks (express, koa, pre-ESM lodash) lean on
+    // module.exports objects, prototype assignment, and var/const-bound
+    // function expressions. The minimal `function_declaration` query
+    // misses all of them — a 141-file express tree previously exposed
+    // 123 symbols, dominated by class methods alone.
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+function topLevel() {}
+
+class Counter {
+    bump() {}
+}
+
+const arrowConst = () => 42;
+var fnExpr = function namedExpr() { return 1; };
+let classBound = class { hidden() {} };
+
+const app = {};
+app.init = function init() {};
+app.use = (mw) => {};
+
+function Foo() {}
+Foo.prototype.render = function render() {};
+
+module.exports = {
+    create: function () {},
+    destroy: () => {},
+};
+)";
+    const auto result = parser->parse_file(Language::JavaScript, source);
+    EXPECT_TRUE(has_symbol(result.symbols, "topLevel", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "Counter", SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "bump", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "arrowConst", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "fnExpr", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "classBound", SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "init", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "use", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "render", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "create", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "destroy", SymbolKind::Method));
+}
+
+TEST(ParserTest, ExtractsTypeScriptModernPatterns)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+abstract class Base {
+    abstract handle(): void;
+}
+
+enum Status {
+    Idle,
+    Busy,
+}
+
+const factory = (): Base | null => null;
+const Service = class { ping() {} };
+
+class Component {
+    handler = (): void => {};
+    static cache = new Map();
+}
+
+const registry = {
+    register: function (key: string) {},
+    deregister: (key: string) => {},
+};
+)";
+    const auto result = parser->parse_file(Language::TypeScript, source);
+    EXPECT_TRUE(has_symbol(result.symbols, "Base", SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "Status", SymbolKind::Enum));
+    EXPECT_TRUE(has_symbol(result.symbols, "factory", SymbolKind::Function));
+    EXPECT_TRUE(has_symbol(result.symbols, "Service", SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "Component", SymbolKind::Class));
+    EXPECT_TRUE(has_symbol(result.symbols, "handler", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "register", SymbolKind::Method));
+    EXPECT_TRUE(has_symbol(result.symbols, "deregister", SymbolKind::Method));
+}
+
 } // namespace
