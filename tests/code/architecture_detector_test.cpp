@@ -863,4 +863,109 @@ TEST(ArchitectureDetectorTest, GoLibrary_CommentsBeforePackageClause)
     fs::remove_all(root);
 }
 
+// -----------------------------------------------------------------------------
+// Negative regression guards (Round 2 review fallout)
+// -----------------------------------------------------------------------------
+
+TEST(ArchitectureDetectorTest, NodeLibrary_KeywordsArrayDoesNotFalseTrigger)
+{
+    // package.json with "main" / "module" / "exports" appearing only as
+    // values inside the "keywords" array — extremely common in npm —
+    // must not trip the entry-field check. Regression guard for the
+    // bare-substring false positive caught in review.
+    const fs::path root = fresh_tmp("node_keywords_main");
+    write_file(root / "package.json", R"({"name":"app","version":"1.0.0","private": true,)"
+                                      R"("keywords":["main","module","exports"]})");
+    write_file(root / "server.js", "console.log('app');\n");
+
+    CodeIndex idx;
+    add_file(idx, "server.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, NodeLibrary_PackageJsonWithNoEntrySignalsIsNotLibrary)
+{
+    // package.json without main/exports/module fields and no index.*
+    // file on disk → should fall through, NOT label Library.
+    const fs::path root = fresh_tmp("node_no_entry");
+    write_file(root / "package.json", R"({"name":"foo","version":"1.0.0"})");
+    write_file(root / "app.js", "console.log('hi');\n");
+
+    CodeIndex idx;
+    add_file(idx, "app.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PhpLibrary_AutoloadWithIndexPhpIsNotLibrary)
+{
+    // composer.json with autoload AND index.php at root → web app, not
+    // a library. Regression guard for the inverted-condition risk.
+    const fs::path root = fresh_tmp("php_autoload_with_index");
+    write_file(root / "composer.json",
+               R"({"name":"vendor/foo","autoload":{"psr-4":{"Foo\\":"src/"}}})");
+    write_file(root / "index.php", "<?php\necho 'hello';\n");
+    write_file(root / "src" / "Foo.php", "<?php\nclass Foo {}\n");
+
+    CodeIndex idx;
+    add_file(idx, "index.php", Language::Php);
+    add_file(idx, "src/Foo.php", Language::Php);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, PythonLibrary_NoPackageInitIsNotLibrary)
+{
+    // pyproject.toml present but zero __init__.py files → not a
+    // packageable library (could be a script bundle, notebook, tool).
+    const fs::path root = fresh_tmp("py_no_pkg");
+    write_file(root / "pyproject.toml", "[project]\nname = \"scripts\"\n");
+    write_file(root / "tool.py", "print('tool')\n");
+    write_file(root / "helper.py", "def helper(): pass\n");
+
+    CodeIndex idx;
+    add_file(idx, "tool.py", Language::Python);
+    add_file(idx, "helper.py", Language::Python);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, DiskWalk_EmptyExcludeSetFallsBackToCanonicalDefaults)
+{
+    // The empty-set fallback path inside detect_architecture replaces an
+    // empty caller-supplied set with default_scanner_exclude_dir_names().
+    // Without the fallback, a default-constructed ExportOptions would
+    // walk into noise dirs (htmlcov/, node_modules/) at the project
+    // root and inject their inner segments as architecture signals.
+    const fs::path root = fresh_tmp("empty_excludes_fallback");
+    fs::create_directories(root / "htmlcov" / "controllers");
+    fs::create_directories(root / "htmlcov" / "models");
+    fs::create_directories(root / "htmlcov" / "views");
+    write_file(root / "main.py", "print('ok')\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.py", Language::Python);
+
+    // Pass an explicitly empty set — the fallback should kick in and
+    // canonical excludes (which include htmlcov) should still apply.
+    const std::unordered_set<std::string> empty;
+    const auto result = detect_architecture(idx, root, empty);
+    EXPECT_NE(result.label, ArchitectureLabel::Mvc) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
 } // namespace

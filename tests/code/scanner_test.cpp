@@ -211,4 +211,51 @@ TEST_F(ScannerFixture, CancelledBeforeStartReturnsCancelledError)
     EXPECT_EQ(result.error().kind, vectis::core::ErrorKind::Cancelled);
 }
 
+TEST_F(ScannerFixture, IncrementalScanRunsCompactWhenFilesAreDeleted)
+{
+    using vectis::code::IncrementalScanResult;
+
+    // Initial state: three files, full scan, three live entries.
+    write("a.py", "def alpha(): pass\n");
+    write("b.py", "def beta(): pass\n");
+    write("c.py", "def gamma(): pass\n");
+
+    CodeIndex index;
+    ASSERT_TRUE(run_scan(index));
+    EXPECT_EQ(index.file_count(), 3U);
+    const std::size_t symbols_before = index.symbol_count();
+    EXPECT_GE(symbols_before, 3U);
+
+    // Delete `b.py` from disk and run an incremental scan. compact()
+    // is hooked at the end of run_incremental whenever files were
+    // deleted or updated, so the surviving index should be tombstone-
+    // free and the per-file lookups still consistent.
+    std::filesystem::remove(m_root / "b.py");
+
+    ScanConfig cfg;
+    cfg.root = m_root;
+    cfg.epoch = 1;
+    std::atomic<std::int64_t> epoch{1};
+    const CancellationToken token{};
+
+    const auto result =
+        Scanner::run_incremental(cfg, index, m_parser, [](const ScanProgress&) {}, token, epoch);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->files_deleted, 1U);
+    EXPECT_EQ(index.file_count(), 2U);
+
+    // Compaction invariant: the remaining symbols still resolve via
+    // their per-file lookups (m_by_file was rebuilt with fresh indices)
+    // and snapshot_files reports only live paths.
+    const auto files = index.snapshot_files();
+    ASSERT_EQ(files.size(), 2U);
+    for (const auto& f : files) {
+        EXPECT_FALSE(index.symbols_in_file(f.id).empty());
+        EXPECT_NE(f.path_relative.filename().string(), "b.py");
+    }
+    // snapshot_all_symbols should reflect the post-compact size, not
+    // the pre-delete one.
+    EXPECT_LT(index.snapshot_all_symbols().size(), symbols_before);
+}
+
 } // namespace

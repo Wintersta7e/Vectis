@@ -346,4 +346,55 @@ TEST(CodeIndexTest, Compact_RemovesSoftDeletedEntriesAndPreservesLiveLookups)
     EXPECT_TRUE(idx.symbols_in_file(fb).empty());
 }
 
+TEST(CodeIndexTest, SnapshotAllSymbols_EmptyIndexReturnsEmpty)
+{
+    CodeIndex idx;
+    EXPECT_TRUE(idx.snapshot_all_symbols().empty());
+}
+
+TEST(CodeIndexTest, Compact_NoOpOnEmptyIndex)
+{
+    CodeIndex idx;
+    idx.compact();
+    EXPECT_EQ(idx.file_count(), 0U);
+    EXPECT_EQ(idx.symbol_count(), 0U);
+    EXPECT_EQ(idx.dependency_count(), 0U);
+    EXPECT_TRUE(idx.snapshot_files().empty());
+    EXPECT_TRUE(idx.snapshot_all_symbols().empty());
+}
+
+TEST(CodeIndexTest, Compact_AddFileAfterPreservesIdMonotonicity)
+{
+    // After compact, m_next_file_id and m_next_symbol_id must keep
+    // counting forward — newly-added files should not collide with
+    // ids that lived before the compaction.
+    CodeIndex idx;
+    const auto fa = idx.add_file(make_file("a.cpp", Language::Cpp));
+    const auto fb = idx.add_file(make_file("b.cpp", Language::Cpp));
+    const auto fc = idx.add_file(make_file("c.cpp", Language::Cpp));
+
+    const std::array<Symbol, 1> a_syms = {make_symbol(fa, "a1", SymbolKind::Function)};
+    const std::array<Symbol, 1> b_syms = {make_symbol(fb, "b1", SymbolKind::Function)};
+    const std::array<Symbol, 1> c_syms = {make_symbol(fc, "c1", SymbolKind::Function)};
+    idx.add_symbols(a_syms);
+    idx.add_symbols(b_syms);
+    idx.add_symbols(c_syms);
+
+    idx.remove_file(fb);
+    idx.compact();
+
+    const auto fd = idx.add_file(make_file("d.cpp", Language::Cpp));
+    EXPECT_GT(fd, fc) << "post-compact ids must keep climbing past the highest pre-compact id";
+
+    const std::array<Symbol, 1> d_syms = {make_symbol(fd, "d1", SymbolKind::Function)};
+    idx.add_symbols(d_syms);
+
+    // The new file's symbol resolves; the surviving original files still resolve.
+    ASSERT_EQ(idx.symbols_in_file(fd).size(), 1U);
+    EXPECT_EQ(idx.symbols_in_file(fd)[0].name, "d1");
+    EXPECT_EQ(idx.symbols_in_file(fa).size(), 1U);
+    EXPECT_EQ(idx.symbols_in_file(fc).size(), 1U);
+    EXPECT_EQ(idx.file_count(), 3U);
+}
+
 } // namespace
