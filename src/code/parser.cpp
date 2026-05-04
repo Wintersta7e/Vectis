@@ -280,7 +280,6 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
 /// — consumers should treat that as "public" when filtering.
 [[nodiscard]] std::string extract_visibility(TSNode node, Language language, std::string_view name)
 {
-    using std::string;
     switch (language) {
     case Language::Go:
         // Go encodes visibility purely in the symbol name: an uppercase
@@ -370,11 +369,20 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
                 }
             }
         }
-        // No explicit modifier found. Java's package-private is the
-        // pragmatic equivalent of "internal" but most consumers care
-        // about "is this exported", and with no explicit private the
-        // safest answer is the language's looser default.
-        return language == Language::Java ? "internal" : "public";
+        // No explicit modifier found. Default per language:
+        //   Java: package-private (we report "internal").
+        //   C#:   `internal` for top-level types and `private` for
+        //         class members. We collapse both onto "internal" —
+        //         distinguishing them needs parent-kind context that
+        //         this helper doesn't have, and a misclassified C#
+        //         member as "internal" is closer to the truth than as
+        //         "public" (the prior behaviour).
+        //   TypeScript: members default to public; this helper is
+        //         called on declaration nodes so that's what we report.
+        if (language == Language::TypeScript) {
+            return "public";
+        }
+        return "internal";
     }
 
     default:
@@ -621,6 +629,7 @@ TreeSitterParser::ParseResult TreeSitterParser::parse_file(Language language,
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
         Symbol symbol;
+        TSNode kind_node{}; // outer declaration node for visibility/decorators
         bool has_name = false;
         bool has_kind = false;
         bool skip_this_match = false; // set for local-scope false positives
@@ -645,6 +654,7 @@ TreeSitterParser::ParseResult TreeSitterParser::parse_file(Language language,
                 if (kind != SymbolKind::Unknown) {
                     symbol.kind = kind;
                     has_kind = true;
+                    kind_node = capture.node;
                     const TSPoint start_pt = ts_node_start_point(capture.node);
                     const TSPoint end_pt = ts_node_end_point(capture.node);
                     symbol.line_start = static_cast<int>(start_pt.row) + 1;
@@ -677,27 +687,8 @@ TreeSitterParser::ParseResult TreeSitterParser::parse_file(Language language,
         }
 
         if (has_name && has_kind && !symbol.name.empty() && !skip_this_match) {
-            // Visibility is computed from the captured node + symbol
-            // name. We still need the node, so this happens before the
-            // move into result.symbols. The kind capture overwrote the
-            // node we looked at last, but for visibility we want the
-            // outer declaration node; track it separately.
-            // Re-walk captures to find the kind capture's node again.
-            for (std::uint16_t i = 0; i < match.capture_count; ++i) {
-                const TSQueryCapture& capture = match.captures[i];
-                std::uint32_t capture_len = 0;
-                const char* capture_chars =
-                    ts_query_capture_name_for_id(entry.query, capture.index, &capture_len);
-                const std::string_view capture_name(capture_chars, capture_len);
-                if (capture_name == "name") {
-                    continue;
-                }
-                if (capture_name_to_kind(capture_name) == symbol.kind) {
-                    symbol.visibility = extract_visibility(capture.node, language, symbol.name);
-                    symbol.decorators = extract_decorators(capture.node, language, content);
-                    break;
-                }
-            }
+            symbol.visibility = extract_visibility(kind_node, language, symbol.name);
+            symbol.decorators = extract_decorators(kind_node, language, content);
             result.symbols.push_back(std::move(symbol));
         }
     }

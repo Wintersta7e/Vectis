@@ -1120,6 +1120,93 @@ def plain():
     EXPECT_TRUE(plain->decorators.empty());
 }
 
+TEST(ParserTest, VisibilityJavaModifiers)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+public class A {
+    public void p() {}
+    private void v() {}
+    protected void t() {}
+    void packagePrivate() {}
+}
+)";
+    const auto result = parser->parse_file(Language::Java, source);
+    const auto* p = find_named(result.symbols, "p");
+    const auto* v = find_named(result.symbols, "v");
+    const auto* t = find_named(result.symbols, "t");
+    const auto* pp = find_named(result.symbols, "packagePrivate");
+    ASSERT_NE(p, nullptr);
+    ASSERT_NE(v, nullptr);
+    ASSERT_NE(t, nullptr);
+    ASSERT_NE(pp, nullptr);
+    EXPECT_EQ(p->visibility, "public");
+    EXPECT_EQ(v->visibility, "private");
+    EXPECT_EQ(t->visibility, "protected");
+    // No keyword → Java package-private. We collapse onto "internal".
+    EXPECT_EQ(pp->visibility, "internal");
+}
+
+TEST(ParserTest, VisibilityCSharpModifiers)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+public class A {
+    public int Pub() => 1;
+    private int Priv() => 2;
+    protected int Prot() => 3;
+    internal int Intl() => 4;
+    int Default() => 5;
+}
+)";
+    const auto result = parser->parse_file(Language::CSharp, source);
+    const auto* pub_m = find_named(result.symbols, "Pub");
+    const auto* priv_m = find_named(result.symbols, "Priv");
+    const auto* prot_m = find_named(result.symbols, "Prot");
+    const auto* intl_m = find_named(result.symbols, "Intl");
+    const auto* def_m = find_named(result.symbols, "Default");
+    ASSERT_NE(pub_m, nullptr);
+    ASSERT_NE(priv_m, nullptr);
+    ASSERT_NE(prot_m, nullptr);
+    ASSERT_NE(intl_m, nullptr);
+    ASSERT_NE(def_m, nullptr);
+    EXPECT_EQ(pub_m->visibility, "public");
+    EXPECT_EQ(priv_m->visibility, "private");
+    EXPECT_EQ(prot_m->visibility, "protected");
+    EXPECT_EQ(intl_m->visibility, "internal");
+    // Unmodified C# class member is private at the language level.
+    // We report "internal" — accurate at top level, conservative at
+    // member level (better than the prior "public" which was wrong).
+    EXPECT_EQ(def_m->visibility, "internal");
+}
+
+TEST(ParserTest, VisibilityTypeScriptModifiers)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+class A {
+    public p(): void {}
+    private v(): void {}
+    protected t(): void {}
+    plain(): void {}
+}
+)";
+    const auto result = parser->parse_file(Language::TypeScript, source);
+    const auto* p = find_named(result.symbols, "p");
+    const auto* v = find_named(result.symbols, "v");
+    const auto* t = find_named(result.symbols, "t");
+    const auto* plain = find_named(result.symbols, "plain");
+    ASSERT_NE(p, nullptr);
+    ASSERT_NE(v, nullptr);
+    ASSERT_NE(t, nullptr);
+    ASSERT_NE(plain, nullptr);
+    EXPECT_EQ(p->visibility, "public");
+    EXPECT_EQ(v->visibility, "private");
+    EXPECT_EQ(t->visibility, "protected");
+    // TS members default to public.
+    EXPECT_EQ(plain->visibility, "public");
+}
+
 TEST(ParserTest, VisibilityRustPubKeyword)
 {
     auto parser = make_parser();

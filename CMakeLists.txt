@@ -34,6 +34,13 @@ if(MSVC)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 else()
     add_compile_options(-Wall -Wextra -Werror -Wpedantic)
+    # gcc's -Wmissing-field-initializers fires when callers use C++20
+    # designated initialisers and leave fields off. The warning predates
+    # the feature and produces false positives on every Symbol-like
+    # struct in our tests. clang doesn't warn here. We keep -Wextra but
+    # silence this one piece — it has not caught a real bug in this
+    # codebase and the workaround (`= {}` on every member) is noise.
+    add_compile_options(-Wno-missing-field-initializers)
 endif()
 
 # --- Static linking (opt-in) -------------------------------------------------

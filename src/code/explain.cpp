@@ -70,8 +70,7 @@ template <typename K, typename V>
         if (i > 0) {
             oss << ", ";
         }
-        const int pct =
-            static_cast<int>((top[i].second * 100 + classified / 2) / classified); // NOLINT
+        const int pct = static_cast<int>((top[i].second * 100 + classified / 2) / classified);
         oss << top[i].first << " (" << pct << "%, " << top[i].second << " files)";
     }
     return oss.str();
