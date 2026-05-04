@@ -69,9 +69,18 @@ struct PathSignals
     /// Files with `Language::Unknown` aren't counted.
     std::array<std::size_t, k_language_count + 1> language_counts{};
     std::size_t classified_files = 0;
+
+    /// Python library signals harvested during the same walk that
+    /// builds the rest of this struct — `__init__.py` for either
+    /// `src/<pkg>/` or `<pkg>/` at depth 1, plus presence of an app
+    /// bootstrap (`manage.py` / `wsgi.py` / `asgi.py`) that would
+    /// disqualify a library label.
+    bool has_python_pkg_init = false;
+    bool has_python_app_entry = false;
+    std::string python_sample_pkg;
 };
 
-[[nodiscard]] PathSignals collect_path_signals(const CodeIndex& index)
+[[nodiscard]] [[nodiscard]] PathSignals collect_path_signals(const CodeIndex& index)
 {
     PathSignals out;
     for (const FileEntry& file : index.snapshot_files()) {
@@ -97,10 +106,43 @@ struct PathSignals
             }
         }
 
+        const std::string name = file.path_relative.filename().string();
         if (!under_non_source) {
-            const std::string name = file.path_relative.filename().string();
             if (name.starts_with("main.") || name == "main") {
                 ++out.main_count;
+            }
+            // Python library / app-entry detection — same single-pass
+            // walk as the rest of PathSignals.
+            const auto depth = std::distance(file.path_relative.begin(), file.path_relative.end());
+            if ((name == "manage.py" || name == "wsgi.py" || name == "asgi.py" ||
+                 name == "__main__.py") &&
+                depth <= 2) {
+                out.has_python_app_entry = true;
+            }
+            if (name == "__init__.py") {
+                auto it = file.path_relative.begin();
+                if (it != file.path_relative.end()) {
+                    const std::string first = it->string();
+                    ++it;
+                    if (it != file.path_relative.end()) {
+                        if (first == "src") {
+                            const std::string pkg = it->string();
+                            ++it;
+                            if (it != file.path_relative.end() && it->string() == "__init__.py") {
+                                out.has_python_pkg_init = true;
+                                if (out.python_sample_pkg.empty()) {
+                                    out.python_sample_pkg = pkg;
+                                }
+                            }
+                        }
+                        else if (it->string() == "__init__.py") {
+                            out.has_python_pkg_init = true;
+                            if (out.python_sample_pkg.empty()) {
+                                out.python_sample_pkg = first;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -473,12 +515,20 @@ struct LibraryHit
     std::uint8_t confidence = 0;
 };
 
-/// Node.js library: `package.json` declares an entry field (`main`,
-/// `exports`, or `module`) — or, when those default to the conventional
-/// `index.*` (express 5.x ships no `main`), there's a root `index.js`
-/// or a `src/index.*` entry. Substring-match avoids dragging in a JSON
-/// parser; the 64 KB cap on package.json is plenty for these checks.
-[[nodiscard]] std::optional<std::string>
+/// Confidence for an unambiguous declaration (gemspec at root,
+/// composer.json with `"type": "library"`).
+constexpr std::uint8_t k_library_explicit_confidence = 80;
+
+/// Confidence for a layout-inferred library (Node `main`/`index.*`
+/// entry, Python `<pkg>/__init__.py` shape, PHP autoload without
+/// `index.php`).
+constexpr std::uint8_t k_library_inferred_confidence = 75;
+
+/// Node.js library: substring-match `package.json` for `main`/`exports`/
+/// `module` (avoids dragging in a JSON parser; the 64 KB cap is plenty),
+/// and fall back to a conventional `index.*` at the root or under `src/`
+/// when those defaults are implicit (express 5.x ships no `main`).
+[[nodiscard]] std::optional<LibraryHit>
 detect_node_library(const std::filesystem::path& project_root)
 {
     const std::string pkg = read_text_capped(project_root / "package.json");
@@ -487,36 +537,29 @@ detect_node_library(const std::filesystem::path& project_root)
     }
     // Apps in monorepos are commonly marked private to block accidental
     // publishes — a strong signal that this isn't a library.
-    if (pkg.find("\"private\": true") != std::string::npos ||
-        pkg.find("\"private\":true") != std::string::npos) {
+    if (pkg.find(R"("private": true)") != std::string::npos ||
+        pkg.find(R"("private":true)") != std::string::npos) {
         return std::nullopt;
     }
-    const bool has_entry_field = pkg.find("\"main\"") != std::string::npos ||
-                                 pkg.find("\"exports\"") != std::string::npos ||
-                                 pkg.find("\"module\"") != std::string::npos;
-    if (has_entry_field) {
-        return std::string{"Node.js library (package.json with `main`/`exports`/`module` entry, "
-                           "not marked private)"};
-    }
-    std::error_code ec;
-    const auto file_exists = [&](const char* name) {
-        ec.clear();
-        return std::filesystem::exists(project_root / name, ec) && !ec;
+    const auto hit = [](std::string entry) {
+        return LibraryHit{"Node.js library (package.json with " + std::move(entry) +
+                              ", not marked private)",
+                          k_library_inferred_confidence};
     };
-    static constexpr std::array<const char*, 4> k_root_index_names = {"index.js", "index.mjs",
-                                                                      "index.cjs", "index.ts"};
-    for (const char* name : k_root_index_names) {
-        if (file_exists(name)) {
-            return std::string{"Node.js library (package.json + root `"} + name +
-                   "` entry, not marked private)";
-        }
+    if (pkg.find(R"("main")") != std::string::npos ||
+        pkg.find(R"("exports")") != std::string::npos ||
+        pkg.find(R"("module")") != std::string::npos) {
+        return hit("`main`/`exports`/`module` entry");
     }
-    static constexpr std::array<const char*, 4> k_src_index_names = {
-        "src/index.js", "src/index.mjs", "src/index.cjs", "src/index.ts"};
-    for (const char* name : k_src_index_names) {
-        if (file_exists(name)) {
-            return std::string{"Node.js library (package.json + `"} + name +
-                   "` entry, not marked private)";
+    static constexpr std::array<std::string_view, 8> k_index_paths = {
+        "index.js",     "index.mjs",     "index.cjs",     "index.ts",
+        "src/index.js", "src/index.mjs", "src/index.cjs", "src/index.ts",
+    };
+    std::error_code ec;
+    for (const std::string_view rel : k_index_paths) {
+        ec.clear();
+        if (std::filesystem::exists(project_root / rel, ec) && !ec) {
+            return hit(std::string{"`"} + std::string{rel} + "` entry");
         }
     }
     return std::nullopt;
@@ -525,7 +568,7 @@ detect_node_library(const std::filesystem::path& project_root)
 /// PHP library: explicit `"type": "library"` is unambiguous; otherwise
 /// composer.json with autoload declarations and no `index.php` entry
 /// at the project root is the typical PSR-4 package shape.
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::optional<LibraryHit>
 detect_php_library(const std::filesystem::path& project_root)
 {
     const std::string composer = read_text_capped(project_root / "composer.json");
@@ -534,7 +577,8 @@ detect_php_library(const std::filesystem::path& project_root)
     }
     if (composer.find(R"("type": "library")") != std::string::npos ||
         composer.find(R"("type":"library")") != std::string::npos) {
-        return std::string{R"(PHP library (composer.json `"type": "library"`))"};
+        return LibraryHit{R"(PHP library (composer.json `"type": "library"`))",
+                          k_library_explicit_confidence};
     }
     std::error_code ec;
     const bool has_index_php = std::filesystem::exists(project_root / "index.php", ec) && !ec;
@@ -542,15 +586,16 @@ detect_php_library(const std::filesystem::path& project_root)
     const bool has_public_index =
         std::filesystem::exists(project_root / "public" / "index.php", ec) && !ec;
     if (!has_index_php && !has_public_index && composer.find("\"autoload\"") != std::string::npos) {
-        return std::string{"PHP library (composer.json with autoload, no `index.php` entry)"};
+        return LibraryHit{"PHP library (composer.json with autoload, no `index.php` entry)",
+                          k_library_inferred_confidence};
     }
     return std::nullopt;
 }
 
-/// Ruby gem: presence of any `*.gemspec` at the project root. The
-/// gemspec file itself is the canonical "this is a packagable gem"
-/// marker; nothing else looks like one.
-[[nodiscard]] std::optional<std::string>
+/// Ruby gem: any `*.gemspec` at the project root. Nothing else looks
+/// like one, and a gemspec is the canonical "this is a packagable gem"
+/// declaration.
+[[nodiscard]] std::optional<LibraryHit>
 detect_ruby_library(const std::filesystem::path& project_root)
 {
     std::error_code ec;
@@ -563,109 +608,50 @@ detect_ruby_library(const std::filesystem::path& project_root)
             continue;
         }
         if (entry.path().extension().string() == ".gemspec") {
-            return std::string{"Ruby gem (" + entry.path().filename().string() + ")"};
+            return LibraryHit{"Ruby gem (" + entry.path().filename().string() + ")",
+                              k_library_explicit_confidence};
         }
     }
     return std::nullopt;
 }
 
-/// Python library: `pyproject.toml` or `setup.py` plus a discoverable
-/// package directory (`src/<pkg>/__init__.py` or `<pkg>/__init__.py`
-/// at depth 1). `main_count == 0` and the absence of `manage.py` /
-/// `wsgi.py` / `asgi.py` rule out application shapes (Django, FastAPI
-/// app skeletons) that would otherwise share the manifest.
-[[nodiscard]] std::optional<std::string>
-detect_python_library(const std::filesystem::path& project_root, const CodeIndex& index,
-                      std::size_t main_count)
+/// Python library: `pyproject.toml` or `setup.py` at the root plus a
+/// discoverable package — both signals collected during the same
+/// `collect_path_signals` walk that the rest of the detector uses, so
+/// this helper is just a fact-check against `signals`.
+[[nodiscard]] std::optional<LibraryHit>
+detect_python_library(const std::filesystem::path& project_root, const PathSignals& signals)
 {
     std::error_code ec;
     const bool has_pyproject = std::filesystem::exists(project_root / "pyproject.toml", ec) && !ec;
     ec.clear();
     const bool has_setup = std::filesystem::exists(project_root / "setup.py", ec) && !ec;
-    ec.clear();
     if (!has_pyproject && !has_setup) {
         return std::nullopt;
     }
-    if (main_count > 0) {
-        return std::nullopt;
-    }
-    bool has_app_entry = false;
-    bool has_pkg_init = false;
-    std::string sample_pkg;
-    for (const FileEntry& file : index.snapshot_files()) {
-        const auto& path = file.path_relative;
-        const std::string fname = path.filename().string();
-        if (fname == "manage.py" || fname == "wsgi.py" || fname == "asgi.py" ||
-            fname == "__main__.py") {
-            const auto depth = std::distance(path.begin(), path.end());
-            if (depth <= 2) {
-                has_app_entry = true;
-            }
-        }
-        if (fname != "__init__.py") {
-            continue;
-        }
-        auto it = path.begin();
-        if (it == path.end()) {
-            continue;
-        }
-        const std::string first = it->string();
-        ++it;
-        if (it == path.end()) {
-            continue;
-        }
-        if (first == "src") {
-            const std::string pkg = it->string();
-            ++it;
-            if (it != path.end() && it->string() == "__init__.py") {
-                has_pkg_init = true;
-                if (sample_pkg.empty()) {
-                    sample_pkg = pkg;
-                }
-            }
-        }
-        else if (it->string() == "__init__.py") {
-            // <first>/__init__.py at depth 1.
-            has_pkg_init = true;
-            if (sample_pkg.empty()) {
-                sample_pkg = first;
-            }
-        }
-    }
-    if (!has_pkg_init || has_app_entry) {
+    if (signals.main_count > 0 || signals.has_python_app_entry || !signals.has_python_pkg_init) {
         return std::nullopt;
     }
     const std::string manifest_name = has_pyproject ? "pyproject.toml" : "setup.py";
-    return std::string{"Python library (" + manifest_name + " + `" + sample_pkg +
-                       "/__init__.py`, no app entry)"};
+    return LibraryHit{"Python library (" + manifest_name + " + `" + signals.python_sample_pkg +
+                          "/__init__.py`, no app entry)",
+                      k_library_inferred_confidence};
 }
 
 /// Dispatch on manifest runtime to pick the right ecosystem detector.
 [[nodiscard]] std::optional<LibraryHit>
 detect_ecosystem_library(const std::filesystem::path& project_root, const ManifestInfo& manifest,
-                         const CodeIndex& index, std::size_t main_count)
+                         const PathSignals& signals)
 {
     switch (manifest.runtime) {
     case Runtime::NodeJs:
-        if (auto r = detect_node_library(project_root); r) {
-            return LibraryHit{std::move(*r), 75};
-        }
-        break;
+        return detect_node_library(project_root);
     case Runtime::Php:
-        if (auto r = detect_php_library(project_root); r) {
-            return LibraryHit{std::move(*r), 80};
-        }
-        break;
+        return detect_php_library(project_root);
     case Runtime::Ruby:
-        if (auto r = detect_ruby_library(project_root); r) {
-            return LibraryHit{std::move(*r), 80};
-        }
-        break;
+        return detect_ruby_library(project_root);
     case Runtime::Python:
-        if (auto r = detect_python_library(project_root, index, main_count); r) {
-            return LibraryHit{std::move(*r), 75};
-        }
-        break;
+        return detect_python_library(project_root, signals);
     case Runtime::Go:
     case Runtime::Java:
     case Runtime::CCpp:
@@ -749,7 +735,11 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     }
 
     auto signals = collect_path_signals(index);
-    augment_signals_from_disk(signals, project_root, exclude_dir_names);
+    // Empty caller-supplied set means "no overrides" — fall back to the
+    // canonical scanner list so the disk walk still skips noise dirs.
+    const auto& effective_excludes =
+        exclude_dir_names.empty() ? default_scanner_exclude_dir_names() : exclude_dir_names;
+    augment_signals_from_disk(signals, project_root, effective_excludes);
     const auto& segments = signals.segments;
     const auto manifest = detect_root_manifest(project_root);
     const int runtime_pct = manifest ? runtime_share(signals, manifest->runtime) : 0;
@@ -953,7 +943,7 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     //     libraries (express, Slim, sinatra, flask, …) that previously
     //     read 65% Monolith because they don't follow C/C++ layout.
     if (manifest) {
-        if (auto hit = detect_ecosystem_library(project_root, *manifest, index, main_count); hit) {
+        if (auto hit = detect_ecosystem_library(project_root, *manifest, signals); hit) {
             out.label = ArchitectureLabel::Library;
             out.reasoning = std::move(hit->reasoning);
             out.confidence = hit->confidence;

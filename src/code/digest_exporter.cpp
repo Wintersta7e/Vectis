@@ -335,9 +335,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                                                      const ExportOptions& options)
 {
     const ArchitectureDescription desc =
-        options.exclude_dir_names.empty()
-            ? detect_architecture(index, options.project_root)
-            : detect_architecture(index, options.project_root, options.exclude_dir_names);
+        detect_architecture(index, options.project_root, options.exclude_dir_names);
     nlohmann::json node;
     node["label"] = std::string{architecture_label_name(desc.label)};
     node["reasoning"] = desc.reasoning;
@@ -440,9 +438,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
     // --- Architecture ---------------------------------------------
     const ArchitectureDescription arch =
-        options.exclude_dir_names.empty()
-            ? detect_architecture(index, options.project_root)
-            : detect_architecture(index, options.project_root, options.exclude_dir_names);
+        detect_architecture(index, options.project_root, options.exclude_dir_names);
     out << "## Architecture\n\n";
     out << "**" << architecture_label_name(arch.label) << "** " << "(confidence "
         << static_cast<int>(arch.confidence) << "/100)  \n";

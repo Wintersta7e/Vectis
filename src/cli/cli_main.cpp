@@ -181,10 +181,9 @@ vectis::code::ScanConfig make_scan_config(const std::filesystem::path& abs_root)
 
 /// Run a scan without touching disk. Every invocation starts with an
 /// empty in-memory CodeIndex and does a full tree walk.
-int run_uncached(const std::filesystem::path& abs_root, vectis::code::TreeSitterParser& parser,
+int run_uncached(const vectis::code::ScanConfig& config, vectis::code::TreeSitterParser& parser,
                  vectis::code::CodeIndex& index)
 {
-    const auto config = make_scan_config(abs_root);
     std::atomic<std::int64_t> epoch{1};
     vectis::core::CancellationToken token;
     const auto noop_progress = [](const auto&) {};
@@ -201,7 +200,7 @@ int run_uncached(const std::filesystem::path& abs_root, vectis::code::TreeSitter
 
 /// Cached path: open the SQLite state, load any existing index, do a
 /// hash-based incremental scan, persist the updated state.
-int run_cached(const std::filesystem::path& abs_root, const std::filesystem::path& cache_dir,
+int run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& cache_dir,
                vectis::code::TreeSitterParser& parser, vectis::code::CodeIndex& index, bool quiet)
 {
     namespace fs = std::filesystem;
@@ -229,9 +228,8 @@ int run_cached(const std::filesystem::path& abs_root, const std::filesystem::pat
     vectis::services::IndexEngine index_engine;
     index_engine.initialize(&storage);
 
-    const bool have_existing_cache = vectis::code::has_cache_for(storage, abs_root);
+    const bool have_existing_cache = vectis::code::has_cache_for(storage, config.root);
 
-    const auto config = make_scan_config(abs_root);
     std::atomic<std::int64_t> epoch{1};
     vectis::core::CancellationToken token;
     const auto noop_progress = [](const auto&) {};
@@ -271,7 +269,7 @@ int run_cached(const std::filesystem::path& abs_root, const std::filesystem::pat
     }
 
     vectis::code::CacheMetadata meta;
-    meta.project_root = abs_root;
+    meta.project_root = config.root;
     meta.scan_timestamp = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
                                              std::chrono::system_clock::now().time_since_epoch())
                                              .count());
@@ -305,14 +303,19 @@ int run_digest(const DigestArgs& args)
 
     const auto t_start = std::chrono::steady_clock::now();
 
+    // Build the scan config once: the same exclude set seeds the
+    // scanner walk and (via ExportOptions) the architecture detector's
+    // disk walk further down.
+    const auto scan_config = make_scan_config(abs_root);
+
     int scan_rc = 0;
     if (args.use_cache) {
         const fs::path cache_dir =
             args.cache_dir.empty() ? abs_root / "vectis-data" : fs::absolute(args.cache_dir, ec);
-        scan_rc = run_cached(abs_root, cache_dir, parser, index, args.quiet);
+        scan_rc = run_cached(scan_config, cache_dir, parser, index, args.quiet);
     }
     else {
-        scan_rc = run_uncached(abs_root, parser, index);
+        scan_rc = run_uncached(scan_config, parser, index);
     }
     if (scan_rc != 0) {
         return scan_rc;
@@ -331,9 +334,7 @@ int run_digest(const DigestArgs& args)
     export_opts.format = args.format;
     export_opts.project_root = abs_root;
     export_opts.project_name = abs_root.filename().string();
-    // Mirror the scanner's exclude set so the architecture detector's
-    // disk walk skips exactly what was filtered out of the index.
-    export_opts.exclude_dir_names = make_scan_config(abs_root).exclude_dir_names;
+    export_opts.exclude_dir_names = scan_config.exclude_dir_names;
 
     const std::string body = vectis::code::build_digest_string(index, export_opts);
 
