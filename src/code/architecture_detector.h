@@ -4,6 +4,9 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <unordered_set>
+
+#include "code/exclude_dirs.h"
 
 namespace vectis::code {
 
@@ -62,7 +65,14 @@ struct ArchitectureDescription
 /// detection. Deliberately conservative — falls back to Monolith
 /// (for small projects) or Unknown (for projects with no recognized
 /// indicators) rather than guessing wildly.
-[[nodiscard]] ArchitectureDescription
-detect_architecture(const CodeIndex& index, const std::filesystem::path& project_root);
+///
+/// `exclude_dir_names` controls which directory names the supplemental
+/// disk walk treats as off-limits. Defaults to the scanner's canonical
+/// list so tests don't have to thread it explicitly. Production callers
+/// should pass `ScanConfig::exclude_dir_names` so .gitignore-derived
+/// names also apply.
+[[nodiscard]] ArchitectureDescription detect_architecture(
+    const CodeIndex& index, const std::filesystem::path& project_root,
+    const std::unordered_set<std::string>& exclude_dir_names = default_scanner_exclude_dir_names());
 
 } // namespace vectis::code

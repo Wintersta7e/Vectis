@@ -145,22 +145,6 @@ struct PathSignals
 constexpr std::array<std::string_view, 4> k_spa_root_configs = {"next.config.js", "vite.config.ts",
                                                                 "vite.config.js", "nuxt.config.ts"};
 
-/// Directory names skipped by the disk walk. Heavy build outputs,
-/// dependency caches, and version-control internals — would otherwise
-/// dwarf the project's actual layout in walk time and introduce noise.
-const std::unordered_set<std::string> k_disk_walk_skip = {"node_modules", "bower_components",
-                                                          "build",        "target",
-                                                          "out",          "dist",
-                                                          "bin",          "obj",
-                                                          "tmp",          "log",
-                                                          "logs",         "coverage",
-                                                          "__pycache__",  ".cache",
-                                                          ".next",        ".nuxt",
-                                                          ".tmp",         ".git",
-                                                          ".hg",          ".svn",
-                                                          ".vs",          ".idea",
-                                                          ".vscode"};
-
 /// Walk up to two levels of directories under `project_root` and add
 /// their names to the path signals. The index-based walk only sees
 /// directories that contain a file vectis indexes, so layouts where
@@ -168,7 +152,11 @@ const std::unordered_set<std::string> k_disk_walk_skip = {"node_modules", "bower
 /// is `.html.erb` templates) get missed. Two levels deep is enough
 /// for the canonical layouts (`app/views/`, `src/Project.UI/`,
 /// top-level `controllers/`) without paying for a deep recursive walk.
-void augment_signals_from_disk(PathSignals& signals, const std::filesystem::path& project_root)
+///
+/// `exclude_dir_names` is the same set the scanner used, so the disk
+/// walk skips exactly what was filtered out of the index — no drift.
+void augment_signals_from_disk(PathSignals& signals, const std::filesystem::path& project_root,
+                               const std::unordered_set<std::string>& exclude_dir_names)
 {
     if (project_root.empty()) {
         return;
@@ -177,8 +165,8 @@ void augment_signals_from_disk(PathSignals& signals, const std::filesystem::path
     if (!std::filesystem::is_directory(project_root, ec) || ec) {
         return;
     }
-    const auto skip = [](const std::string& name) {
-        return name.empty() || name[0] == '.' || k_disk_walk_skip.contains(name) ||
+    const auto skip = [&exclude_dir_names](const std::string& name) {
+        return name.empty() || name[0] == '.' || exclude_dir_names.contains(name) ||
                k_non_source_subtree_names.contains(name);
     };
     for (const auto& top_entry : std::filesystem::directory_iterator(project_root, ec)) {
@@ -509,8 +497,9 @@ std::string_view architecture_label_name(ArchitectureLabel label) noexcept
     return "Unknown";
 }
 
-ArchitectureDescription detect_architecture(const CodeIndex& index,
-                                            const std::filesystem::path& project_root)
+ArchitectureDescription
+detect_architecture(const CodeIndex& index, const std::filesystem::path& project_root,
+                    const std::unordered_set<std::string>& exclude_dir_names)
 {
     ArchitectureDescription out;
 
@@ -549,7 +538,7 @@ ArchitectureDescription detect_architecture(const CodeIndex& index,
     }
 
     auto signals = collect_path_signals(index);
-    augment_signals_from_disk(signals, project_root);
+    augment_signals_from_disk(signals, project_root, exclude_dir_names);
     const auto& segments = signals.segments;
     const auto manifest = detect_root_manifest(project_root);
     const int runtime_pct = manifest ? runtime_share(signals, manifest->runtime) : 0;

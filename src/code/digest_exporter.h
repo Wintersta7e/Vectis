@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 
 #include "code/code_index.h"
 #include "core/result.h"
@@ -36,6 +37,12 @@ struct ExportOptions
     /// Human-readable project name. If empty, derived from
     /// `project_root.filename().string()`.
     std::string project_name;
+    /// Forwarded to `detect_architecture` so its disk walk skips the
+    /// same directories the scanner did. Empty means "fall back to
+    /// the scanner's static defaults" (matches the `detect_architecture`
+    /// default arg). CLI populates this from `ScanConfig::exclude_dir_names`
+    /// so .gitignore-derived names also apply.
+    std::unordered_set<std::string> exclude_dir_names;
 };
 
 /// Default output path for a given `format`, sitting directly under

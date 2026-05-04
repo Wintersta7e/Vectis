@@ -15,6 +15,7 @@
 #include "code/code_index.h"
 #include "code/code_index_store.h"
 #include "code/digest_exporter.h"
+#include "code/exclude_dirs.h"
 #include "code/gitignore.h"
 #include "code/parser.h"
 #include "code/scanner.h"
@@ -168,48 +169,7 @@ vectis::code::ScanConfig make_scan_config(const std::filesystem::path& abs_root)
     vectis::code::ScanConfig config;
     config.root = abs_root;
     config.epoch = 1;
-    config.exclude_dir_names = {
-        // VCS metadata
-        ".git",
-        ".hg",
-        ".svn",
-        // Language / framework build outputs
-        "node_modules",
-        "target",
-        "build",
-        "build-win",
-        "out",
-        "dist",
-        "bin",
-        "obj",
-        "cmake-build-debug",
-        "cmake-build-release",
-        ".gradle",
-        ".next",
-        ".nuxt",
-        ".svelte-kit",
-        // Python virtualenvs + tool caches
-        ".venv",
-        "venv",
-        "env",
-        "virtualenv",
-        "build_venv",
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".tox",
-        // Test / coverage artifacts
-        "htmlcov",
-        // Generic caches
-        ".cache",
-        // IDE metadata
-        ".idea",
-        ".vscode",
-        ".vs",
-        // Vectis's own cache dir so --cache doesn't re-scan its WAL.
-        "vectis-data",
-    };
+    config.exclude_dir_names = vectis::code::default_scanner_exclude_dir_names();
     // Layer in .gitignore-derived names. insert() is idempotent — duplicates
     // against the built-ins are silently absorbed.
     auto gi = vectis::code::read_gitignore_dir_patterns(abs_root);
@@ -371,6 +331,9 @@ int run_digest(const DigestArgs& args)
     export_opts.format = args.format;
     export_opts.project_root = abs_root;
     export_opts.project_name = abs_root.filename().string();
+    // Mirror the scanner's exclude set so the architecture detector's
+    // disk walk skips exactly what was filtered out of the index.
+    export_opts.exclude_dir_names = make_scan_config(abs_root).exclude_dir_names;
 
     const std::string body = vectis::code::build_digest_string(index, export_opts);
 

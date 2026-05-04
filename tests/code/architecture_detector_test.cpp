@@ -583,4 +583,48 @@ TEST(ArchitectureDetectorTest, Monolith_BumpsConfidenceWithRootManifest)
     fs::remove_all(root);
 }
 
+TEST(ArchitectureDetectorTest, DiskWalk_SkipsCanonicalListMembers)
+{
+    // htmlcov/ is in the canonical scanner exclude list (added when the
+    // disk-walk skip-list was unified) but was missing from the old
+    // detector-local list. Verify it now gets skipped.
+    const fs::path root = fresh_tmp("disk_walk_canonical");
+    fs::create_directories(root / "htmlcov" / "controllers");
+    fs::create_directories(root / "htmlcov" / "models");
+    fs::create_directories(root / "htmlcov" / "views");
+    write_file(root / "main.py", "print('ok')\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.py", Language::Python);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Mvc) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, DiskWalk_RespectsCallerSuppliedExcludeSet)
+{
+    // Production callers (CLI -> ExportOptions) thread the runtime
+    // ScanConfig::exclude_dir_names through, so .gitignore-derived
+    // names extend the disk-walk filter. Simulate that by passing a
+    // custom set with an unusual project-specific name.
+    const fs::path root = fresh_tmp("disk_walk_custom_excludes");
+    fs::create_directories(root / "scratchpad" / "controllers");
+    fs::create_directories(root / "scratchpad" / "models");
+    fs::create_directories(root / "scratchpad" / "views");
+    write_file(root / "main.go", "package main\nfunc main() {}\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.go", Language::Go);
+
+    auto excludes = vectis::code::default_scanner_exclude_dir_names();
+    excludes.insert("scratchpad");
+
+    const auto result = detect_architecture(idx, root, excludes);
+    EXPECT_NE(result.label, ArchitectureLabel::Mvc) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
 } // namespace

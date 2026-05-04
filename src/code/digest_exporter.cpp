@@ -332,9 +332,12 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 }
 
 [[nodiscard]] nlohmann::json build_architecture_json(const CodeIndex& index,
-                                                     const std::filesystem::path& project_root)
+                                                     const ExportOptions& options)
 {
-    const ArchitectureDescription desc = detect_architecture(index, project_root);
+    const ArchitectureDescription desc =
+        options.exclude_dir_names.empty()
+            ? detect_architecture(index, options.project_root)
+            : detect_architecture(index, options.project_root, options.exclude_dir_names);
     nlohmann::json node;
     node["label"] = std::string{architecture_label_name(desc.label)};
     node["reasoning"] = desc.reasoning;
@@ -392,7 +395,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
     // Architecture is cheap (~150 bytes) and the single highest-value
     // orientation signal — worth emitting in both slim and full.
-    root["architecture"] = build_architecture_json(index, options.project_root);
+    root["architecture"] = build_architecture_json(index, options);
     if (include_file_details) {
         root["hotspots"] = build_hotspots_json(index, lookup, options.project_root,
                                                /*include_excerpts=*/true,
@@ -436,7 +439,10 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     out << "\n\n";
 
     // --- Architecture ---------------------------------------------
-    const ArchitectureDescription arch = detect_architecture(index, options.project_root);
+    const ArchitectureDescription arch =
+        options.exclude_dir_names.empty()
+            ? detect_architecture(index, options.project_root)
+            : detect_architecture(index, options.project_root, options.exclude_dir_names);
     out << "## Architecture\n\n";
     out << "**" << architecture_label_name(arch.label) << "** " << "(confidence "
         << static_cast<int>(arch.confidence) << "/100)  \n";
