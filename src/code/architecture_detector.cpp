@@ -988,12 +988,23 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     //     "ui", "platform") — this is the shape Vectis itself has
     //     and which the original list was missing.
     const std::vector<std::string_view> layered_signals = {
-        // Classic layered
-        "controllers", "services", "repositories", "models", "domain", "handlers", "dao", "routes",
+        // Classic layered (plural — Rails, JS, modern Java)
+        "controllers", "services", "repositories", "models", "handlers", "routes",
+        // Singular variants (Spring Boot Java idiom: rest/, service/,
+        // repository/, model/) so the calibration corpus's spring-
+        // petclinic-rest doesn't fall through to Monolith.
+        "controller", "service", "repository", "model", "handler", "route", "rest",
+        // Domain / DAO
+        "domain", "dao",
         // Plugin / modular layering
         "core", "modes", "plugins", "ui", "platform",
         // Hexagonal / clean architecture
-        "adapters", "ports", "infrastructure", "infra", "engine"};
+        "adapters", "ports", "infrastructure", "infra", "engine",
+        // Go Clean Architecture (bxcodec pattern)
+        "usecase", "usecases", "delivery"};
+    // NOTE: `apis` is intentionally NOT here — it's an ApiBackend
+    // trigger, and ApiBackend takes precedence over the Layered
+    // fallback below.
     std::size_t layered_matches = 0;
     std::string layered_reason = "found: ";
     bool first_match = true;
@@ -1024,6 +1035,25 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.reasoning = "Domain/Application/Infrastructure/Presentation "
                         "layering (Clean / hexagonal architecture)";
         out.confidence = 85;
+        return out;
+    }
+    // Go Clean Architecture — lowercase domain/repository/usecase/
+    // delivery layout from the bxcodec-go-clean-arch tradition, plus
+    // its modern variants where `delivery` collapsed into `rest` and
+    // `usecase` became `application` or `app`.
+    const auto any_segment = [&](std::initializer_list<std::string_view> names) -> bool {
+        return std::ranges::any_of(
+            names, [&](std::string_view n) { return segments.contains(std::string{n}); });
+    };
+    const int clean_go_hits = (segments.contains("domain") ? 1 : 0) +
+                              (any_segment({"repository", "repositories"}) ? 1 : 0) +
+                              (any_segment({"usecase", "usecases", "application"}) ? 1 : 0) +
+                              (any_segment({"delivery", "rest", "handlers"}) ? 1 : 0);
+    if (clean_go_hits >= 3) {
+        out.label = ArchitectureLabel::CleanArchitecture;
+        out.reasoning = "domain/repository/usecase/delivery layering "
+                        "(Go-style Clean Architecture)";
+        out.confidence = 80;
         return out;
     }
 
@@ -1083,32 +1113,47 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
             std::error_code ec;
             return std::filesystem::exists(project_root / n, ec) && !ec;
         });
-    if ((has_components && has_pages) || has_spa_config) {
+    // Older React apps (CRA, react-scripts) ship no framework config
+    // file; the package.json's `react-scripts` dependency is the
+    // closest stable marker. Only Node-runtime projects qualify.
+    const bool has_cra_marker =
+        manifest && manifest->runtime == Runtime::NodeJs && !project_root.empty() &&
+        read_text_capped(project_root / "package.json").find(R"("react-scripts")") !=
+            std::string::npos;
+    if ((has_components && has_pages) || has_spa_config || has_cra_marker) {
         out.label = ArchitectureLabel::FrontendSpa;
-        out.reasoning = has_spa_config ? "framework config file detected (next/vite/nuxt)"
-                                       : "found `components/` and `pages/` directories";
+        if (has_spa_config) {
+            out.reasoning = "framework config file detected (next/vite/nuxt)";
+        }
+        else if (has_cra_marker) {
+            out.reasoning = "react-scripts (Create React App) in package.json";
+        }
+        else {
+            out.reasoning = "found `components/` and `pages/` directories";
+        }
         out.confidence = 80;
         return out;
     }
 
-    // --- Layered fallback ------------------------------------------
-    if (layered_matches >= 3) {
-        out.label = ArchitectureLabel::Layered;
-        out.reasoning = layered_reason;
-        out.confidence = 70;
-        return out;
-    }
-
     // --- API backend indicators ------------------------------------
-    // A handlers/, routes/, or routers/ directory plus no src/pages
-    // and no frontend config implies an API backend. `routers/` is
-    // the Beego/Casdoor convention in the Go ecosystem.
+    // A handlers/, routes/, routers/, or apis/ directory plus no
+    // src/pages and no frontend config implies an API backend.
+    // `routers/` is the Beego/Casdoor convention; `apis/` is the
+    // PocketBase / Go-microservice convention. ApiBackend runs
+    // BEFORE the generic Layered fallback so an API project that
+    // happens to have several layered-name directories (pocketbase
+    // has core/+plugins/+ui/+models/) doesn't get the more generic
+    // "Layered" label when the more specific one fits.
     const bool has_handlers = segments.contains("handlers");
     const bool has_routes = segments.contains("routes");
     const bool has_routers = segments.contains("routers");
-    if ((has_handlers || has_routes || has_routers) && !has_pages && !has_spa_config) {
+    const bool has_apis = segments.contains("apis");
+    if ((has_handlers || has_routes || has_routers || has_apis) && !has_pages && !has_spa_config) {
         out.label = ArchitectureLabel::ApiBackend;
-        if (has_handlers) {
+        if (has_apis) {
+            out.reasoning = "found `apis/` directory, no frontend config";
+        }
+        else if (has_handlers) {
             out.reasoning = "found `handlers/` directory, no frontend config";
         }
         else if (has_routes) {
@@ -1122,6 +1167,14 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
             out.reasoning += " (" + std::string{runtime_label(manifest->runtime)} + " project)";
             out.confidence = 75;
         }
+        return out;
+    }
+
+    // --- Layered fallback ------------------------------------------
+    if (layered_matches >= 3) {
+        out.label = ArchitectureLabel::Layered;
+        out.reasoning = layered_reason;
+        out.confidence = 70;
         return out;
     }
 
@@ -1161,7 +1214,15 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     // A root build manifest pins higher confidence than "we have no
     // idea". A coherent codebase (manifest + ≥75% language match)
     // pins higher still.
-    if (main_count <= 1 || layered_matches > 0) {
+    // Allow projects with up to 2 main entry points (a primary main
+    // plus a single auxiliary tool / wasm variant — the watchtower
+    // shape) to fall through to Monolith. Monorepos with more
+    // entry points fire the Monorepo branch above. With a manifest
+    // present we always commit to Monolith rather than Unknown,
+    // since "I don't know what this project is" is more confusing
+    // than "single Java/Go/etc. application without a recognised
+    // layout" at low confidence.
+    if (main_count <= 2 || layered_matches > 0 || manifest) {
         out.label = ArchitectureLabel::Monolith;
         const bool coherent = manifest && runtime_pct >= 75;
         const std::string lbl{manifest ? runtime_label(manifest->runtime) : ""};
