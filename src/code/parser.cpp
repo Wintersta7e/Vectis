@@ -550,6 +550,39 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
         return out;
     }
 
+    case Language::TypeScript: {
+        // tree-sitter-typescript attaches `decorator` nodes either as
+        // children of the captured declaration (method_definition,
+        // public_field_definition, abstract_method_signature) or as
+        // preceding siblings (class_declaration, abstract_class_
+        // declaration). Try children first; if empty, walk back.
+        std::vector<std::string> out;
+        const std::uint32_t child_count = ts_node_named_child_count(node);
+        for (std::uint32_t i = 0; i < child_count; ++i) {
+            const TSNode child = ts_node_named_child(node, i);
+            if (std::string_view{ts_node_type(child)} != "decorator") {
+                continue;
+            }
+            std::string text = extract_marker(child, "@");
+            if (!text.empty()) {
+                out.emplace_back(std::move(text));
+            }
+        }
+        if (!out.empty()) {
+            return out;
+        }
+        TSNode cur = ts_node_prev_named_sibling(node);
+        while (!ts_node_is_null(cur) && std::string_view{ts_node_type(cur)} == "decorator") {
+            std::string text = extract_marker(cur, "@");
+            if (!text.empty()) {
+                out.emplace_back(std::move(text));
+            }
+            cur = ts_node_prev_named_sibling(cur);
+        }
+        std::reverse(out.begin(), out.end());
+        return out;
+    }
+
     default:
         return {};
     }

@@ -1194,6 +1194,46 @@ public class Bar {
     EXPECT_TRUE(plain_m->decorators.empty());
 }
 
+TEST(ParserTest, ExtractsTypeScriptDecorators)
+{
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+@Component({ selector: 'app-foo' })
+@Injectable()
+class Foo {
+    @Input() name: string = '';
+
+    @Get('/x')
+    @UseGuards(AuthGuard)
+    handler(): string {
+        return 'x';
+    }
+
+    plain(): void {}
+}
+)";
+    const auto result = parser->parse_file(Language::TypeScript, source);
+
+    const auto* foo = find_named(result.symbols, "Foo");
+    const auto* handler = find_named(result.symbols, "handler");
+    const auto* plain = find_named(result.symbols, "plain");
+    ASSERT_NE(foo, nullptr);
+    ASSERT_NE(handler, nullptr);
+    ASSERT_NE(plain, nullptr);
+
+    // Class-level decorators (preceding siblings of class_declaration).
+    ASSERT_EQ(foo->decorators.size(), 2U);
+    EXPECT_EQ(foo->decorators[0], "Component({ selector: 'app-foo' })");
+    EXPECT_EQ(foo->decorators[1], "Injectable()");
+
+    // Method decorators (children of method_definition).
+    ASSERT_EQ(handler->decorators.size(), 2U);
+    EXPECT_EQ(handler->decorators[0], "Get('/x')");
+    EXPECT_EQ(handler->decorators[1], "UseGuards(AuthGuard)");
+
+    EXPECT_TRUE(plain->decorators.empty());
+}
+
 TEST(ParserTest, RustAttributesDoNotLeakAcrossDeclarations)
 {
     // Regression guard for the "only attributes immediately preceding
