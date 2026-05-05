@@ -1,6 +1,6 @@
 # Build
 build/
-build-win/
+build-*/
 build-win-*.log
 cmake-build-*/
 out/
