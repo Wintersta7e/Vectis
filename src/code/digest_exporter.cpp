@@ -126,8 +126,8 @@ constexpr const char* k_vectis_version = "0.1.0";
         if (sym.complexity > 0) {
             symbol_node["complexity"] = sym.complexity;
         }
-        if (!sym.visibility.empty()) {
-            symbol_node["visibility"] = sym.visibility;
+        if (sym.visibility != Visibility::Unknown) {
+            symbol_node["visibility"] = visibility_name(sym.visibility);
         }
         if (!sym.decorators.empty()) {
             symbol_node["decorators"] = sym.decorators;

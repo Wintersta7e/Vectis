@@ -103,6 +103,72 @@ struct FileEntry
     return SymbolKind::Unknown;
 }
 
+/// Visibility / API-surface category for a symbol. Languages encode this
+/// very differently — Go via capitalisation, Python via underscore
+/// convention, Rust via `pub` keywords, Java/C#/TS via explicit modifiers
+/// — so the parser collapses each language's notion into this small fixed
+/// set. A consumer that just wants "is this part of the public API" can
+/// compare against `Visibility::Public`.
+///
+///   Public    — exported / part of the documented API.
+///   Private   — internal / hidden / leading underscore / lowercase
+///               in Go / no `pub` in Rust / explicit `private`.
+///   Protected — Java/C#/TS `protected` member.
+///   Internal  — C# `internal`, Rust `pub(crate)` / `pub(super)`,
+///               Java package-private.
+///   Unknown   — language doesn't express visibility / not yet
+///               implemented for the language. Treat as Public when
+///               filtering. Round-trips to/from the empty string so the
+///               on-disk SQLite TEXT column needs no migration.
+enum class Visibility : std::uint8_t
+{
+    Unknown = 0,
+    Public,
+    Private,
+    Protected,
+    Internal,
+};
+
+/// Short human-readable name for a visibility, used by the digest
+/// exporter and `vectis explain`. `Unknown` maps to the empty string so
+/// JSON consumers see no `"visibility"` field and the SQLite column's
+/// `DEFAULT ''` round-trips losslessly.
+[[nodiscard]] constexpr std::string_view visibility_name(Visibility v) noexcept
+{
+    switch (v) {
+    case Visibility::Public:
+        return "public";
+    case Visibility::Private:
+        return "private";
+    case Visibility::Protected:
+        return "protected";
+    case Visibility::Internal:
+        return "internal";
+    case Visibility::Unknown:
+        return "";
+    }
+    return "";
+}
+
+/// Reverse of `visibility_name`. Empty string and unrecognised names
+/// both map to `Visibility::Unknown`.
+[[nodiscard]] constexpr Visibility visibility_from_name(std::string_view name) noexcept
+{
+    if (name == "public") {
+        return Visibility::Public;
+    }
+    if (name == "private") {
+        return Visibility::Private;
+    }
+    if (name == "protected") {
+        return Visibility::Protected;
+    }
+    if (name == "internal") {
+        return Visibility::Internal;
+    }
+    return Visibility::Unknown;
+}
+
 /// One symbol extracted from a source file.
 ///
 /// `file_id` references `FileEntry::id`. Line numbers are 1-based to
@@ -123,21 +189,6 @@ struct FileEntry
 /// Method kinds — 1 for a straight-line function, incrementing for
 /// each decision point (if/while/for/case/&&/||/?:). Zero for every
 /// non-function kind.
-/// Visibility / API-surface category for a symbol. Languages encode
-/// this very differently — Go via capitalization, Python via under-
-/// score convention, Rust via `pub` keywords, Java/C#/TS via explicit
-/// modifiers — so the parser collapses each language's notion into a
-/// small fixed string set. A consumer that just wants "is this part of
-/// the public API" can compare against "public".
-///
-///   "public"    — exported / part of the documented API.
-///   "private"   — internal / hidden / leading underscore / lowercase
-///                 in Go / no `pub` in Rust / explicit `private`.
-///   "protected" — Java/C#/TS `protected` member.
-///   "internal"  — C# `internal`, Rust `pub(crate)` / `pub(super)`.
-///   ""          — unknown / language doesn't express visibility /
-///                 not yet implemented for the language. Treat as
-///                 public when filtering.
 struct Symbol
 {
     std::int64_t id = 0;
@@ -150,7 +201,7 @@ struct Symbol
     std::string signature;
     std::vector<std::string> members;
     int complexity = 0;
-    std::string visibility; // see comment above
+    Visibility visibility = Visibility::Unknown;
     /// Decorator / annotation text attached to this symbol, in source
     /// order, with the leading `@` stripped. Populated for languages
     /// where decorators are a first-class language feature; empty for

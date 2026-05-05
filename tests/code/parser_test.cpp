@@ -15,6 +15,7 @@ using vectis::code::Language;
 using vectis::code::Symbol;
 using vectis::code::SymbolKind;
 using vectis::code::TreeSitterParser;
+using vectis::code::Visibility;
 
 /// Helper: does the result contain a symbol with the given name + kind?
 bool has_symbol(const std::vector<Symbol>& symbols, std::string_view name, SymbolKind kind)
@@ -1022,8 +1023,8 @@ type unexportedStruct struct{}
     const auto* unexp_fn = find_named(result.symbols, "unexportedFunc");
     ASSERT_NE(exp_fn, nullptr);
     ASSERT_NE(unexp_fn, nullptr);
-    EXPECT_EQ(exp_fn->visibility, "public");
-    EXPECT_EQ(unexp_fn->visibility, "private");
+    EXPECT_EQ(exp_fn->visibility, Visibility::Public);
+    EXPECT_EQ(unexp_fn->visibility, Visibility::Private);
 }
 
 TEST(ParserTest, VisibilityPythonUnderscoreConvention)
@@ -1058,11 +1059,11 @@ class _InternalClass:
     ASSERT_NE(internal, nullptr);
     ASSERT_NE(mangled, nullptr);
     ASSERT_NE(dunder, nullptr);
-    EXPECT_EQ(pub->visibility, "public");
-    EXPECT_EQ(internal->visibility, "private");
-    EXPECT_EQ(mangled->visibility, "private");
+    EXPECT_EQ(pub->visibility, Visibility::Public);
+    EXPECT_EQ(internal->visibility, Visibility::Private);
+    EXPECT_EQ(mangled->visibility, Visibility::Private);
     // Dunders are public by intent (Python's metaprotocol convention).
-    EXPECT_EQ(dunder->visibility, "public");
+    EXPECT_EQ(dunder->visibility, Visibility::Public);
 }
 
 TEST(ParserTest, ExtractsPythonDecorators)
@@ -1354,11 +1355,11 @@ public class A {
     ASSERT_NE(v, nullptr);
     ASSERT_NE(t, nullptr);
     ASSERT_NE(pp, nullptr);
-    EXPECT_EQ(p->visibility, "public");
-    EXPECT_EQ(v->visibility, "private");
-    EXPECT_EQ(t->visibility, "protected");
+    EXPECT_EQ(p->visibility, Visibility::Public);
+    EXPECT_EQ(v->visibility, Visibility::Private);
+    EXPECT_EQ(t->visibility, Visibility::Protected);
     // No keyword → Java package-private. We collapse onto "internal".
-    EXPECT_EQ(pp->visibility, "internal");
+    EXPECT_EQ(pp->visibility, Visibility::Internal);
 }
 
 TEST(ParserTest, VisibilityCSharpModifiers)
@@ -1384,14 +1385,14 @@ public class A {
     ASSERT_NE(prot_m, nullptr);
     ASSERT_NE(intl_m, nullptr);
     ASSERT_NE(def_m, nullptr);
-    EXPECT_EQ(pub_m->visibility, "public");
-    EXPECT_EQ(priv_m->visibility, "private");
-    EXPECT_EQ(prot_m->visibility, "protected");
-    EXPECT_EQ(intl_m->visibility, "internal");
+    EXPECT_EQ(pub_m->visibility, Visibility::Public);
+    EXPECT_EQ(priv_m->visibility, Visibility::Private);
+    EXPECT_EQ(prot_m->visibility, Visibility::Protected);
+    EXPECT_EQ(intl_m->visibility, Visibility::Internal);
     // Unmodified C# class member is private at the language level.
     // We report "internal" — accurate at top level, conservative at
     // member level (better than the prior "public" which was wrong).
-    EXPECT_EQ(def_m->visibility, "internal");
+    EXPECT_EQ(def_m->visibility, Visibility::Internal);
 }
 
 TEST(ParserTest, VisibilityTypeScriptModifiers)
@@ -1414,11 +1415,11 @@ class A {
     ASSERT_NE(v, nullptr);
     ASSERT_NE(t, nullptr);
     ASSERT_NE(plain, nullptr);
-    EXPECT_EQ(p->visibility, "public");
-    EXPECT_EQ(v->visibility, "private");
-    EXPECT_EQ(t->visibility, "protected");
+    EXPECT_EQ(p->visibility, Visibility::Public);
+    EXPECT_EQ(v->visibility, Visibility::Private);
+    EXPECT_EQ(t->visibility, Visibility::Protected);
     // TS members default to public.
-    EXPECT_EQ(plain->visibility, "public");
+    EXPECT_EQ(plain->visibility, Visibility::Public);
 }
 
 TEST(ParserTest, VisibilityRustPubKeyword)
@@ -1439,9 +1440,9 @@ struct PrivateType;
     ASSERT_NE(exp, nullptr);
     ASSERT_NE(unexp, nullptr);
     ASSERT_NE(crate, nullptr);
-    EXPECT_EQ(exp->visibility, "public");
-    EXPECT_EQ(unexp->visibility, "private");
-    EXPECT_EQ(crate->visibility, "internal");
+    EXPECT_EQ(exp->visibility, Visibility::Public);
+    EXPECT_EQ(unexp->visibility, Visibility::Private);
+    EXPECT_EQ(crate->visibility, Visibility::Internal);
 }
 
 } // namespace

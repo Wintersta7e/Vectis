@@ -86,17 +86,20 @@ template <typename K, typename V>
     std::size_t prot = 0;
     std::size_t internal = 0;
     for (const auto& s : symbols) {
-        if (s.visibility.empty() || s.visibility == "public") {
+        switch (s.visibility) {
+        case Visibility::Unknown:
+        case Visibility::Public:
             ++pub;
-        }
-        else if (s.visibility == "private") {
+            break;
+        case Visibility::Private:
             ++priv;
-        }
-        else if (s.visibility == "protected") {
+            break;
+        case Visibility::Protected:
             ++prot;
-        }
-        else if (s.visibility == "internal") {
+            break;
+        case Visibility::Internal:
             ++internal;
+            break;
         }
     }
     std::ostringstream oss;

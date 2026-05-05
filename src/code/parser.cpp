@@ -274,11 +274,11 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
 }
 
 /// Compute the visibility/API-surface category for a symbol. Languages
-/// vary widely in how they encode this; we collapse each into one of
-/// the strings documented on `Symbol::visibility`. An empty string
-/// means "language doesn't express visibility / not yet implemented"
-/// — consumers should treat that as "public" when filtering.
-[[nodiscard]] std::string extract_visibility(TSNode node, Language language, std::string_view name)
+/// vary widely in how they encode this; we collapse each into the
+/// `Visibility` enum documented on `Symbol::visibility`. `Unknown`
+/// means "language doesn't express visibility / not yet implemented" —
+/// consumers should treat that as Public when filtering.
+[[nodiscard]] Visibility extract_visibility(TSNode node, Language language, std::string_view name)
 {
     switch (language) {
     case Language::Go:
@@ -287,9 +287,10 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
         // keeps it package-private. The convention is enforced by the
         // compiler, so this is a complete signal.
         if (name.empty()) {
-            return {};
+            return Visibility::Unknown;
         }
-        return std::isupper(static_cast<unsigned char>(name[0])) != 0 ? "public" : "private";
+        return std::isupper(static_cast<unsigned char>(name[0])) != 0 ? Visibility::Public
+                                                                     : Visibility::Private;
 
     case Language::Python: {
         // Python has no enforced visibility, but the convention is
@@ -298,21 +299,21 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
         // protocol — those are public by intention even though they
         // start with `_`.
         if (name.empty()) {
-            return {};
+            return Visibility::Unknown;
         }
         const bool is_dunder = name.size() >= 4 && name.starts_with("__") && name.ends_with("__");
         if (is_dunder) {
-            return "public";
+            return Visibility::Public;
         }
-        return name.front() == '_' ? "private" : "public";
+        return name.front() == '_' ? Visibility::Private : Visibility::Public;
     }
 
     case Language::Rust: {
         // Walk the captured node's named children looking for a
         // visibility_modifier. The grammar names them
         //   (visibility_modifier "pub")           — fully public
-        //   (visibility_modifier "pub" "(crate)") — pub(crate) → "internal"
-        //   (visibility_modifier "pub" "(super)") — pub(super) → "internal"
+        //   (visibility_modifier "pub" "(crate)") — pub(crate) → Internal
+        //   (visibility_modifier "pub" "(super)") — pub(super) → Internal
         // Absence of a visibility_modifier means private (Rust default).
         const std::uint32_t child_count = ts_node_named_child_count(node);
         for (std::uint32_t i = 0; i < child_count; ++i) {
@@ -327,12 +328,12 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
                 const TSNode qual = ts_node_child(child, j);
                 const std::string_view qtext{ts_node_type(qual)};
                 if (qtext == "(") {
-                    return "internal";
+                    return Visibility::Internal;
                 }
             }
-            return "public";
+            return Visibility::Public;
         }
-        return "private";
+        return Visibility::Private;
     }
 
     case Language::Java:
@@ -340,8 +341,8 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
     case Language::TypeScript: {
         // Java/C#/TS all use word-token modifiers attached to declarations. Walk children once
         // looking for a `modifier` (Java/C#) or `accessibility_modifier` (TypeScript) node. Map the
-        // keyword text to our string set; default depends on the language but is "public" for
-        // top-level declarations and for languages whose implicit visibility is permissive.
+        // keyword text to our enum; default depends on the language but is Public for top-level
+        // declarations and for languages whose implicit visibility is permissive.
         const std::uint32_t child_count = ts_node_child_count(node);
         for (std::uint32_t i = 0; i < child_count; ++i) {
             const TSNode child = ts_node_child(node, i);
@@ -356,37 +357,37 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
                 const TSNode mod = ts_node_child(child, j);
                 const std::string_view mt{ts_node_type(mod)};
                 if (mt == "public") {
-                    return "public";
+                    return Visibility::Public;
                 }
                 if (mt == "private") {
-                    return "private";
+                    return Visibility::Private;
                 }
                 if (mt == "protected") {
-                    return "protected";
+                    return Visibility::Protected;
                 }
                 if (mt == "internal") {
-                    return "internal";
+                    return Visibility::Internal;
                 }
             }
         }
         // No explicit modifier found. Default per language:
-        //   Java: package-private (we report "internal").
+        //   Java: package-private (we report Internal).
         //   C#:   `internal` for top-level types and `private` for
-        //         class members. We collapse both onto "internal" —
+        //         class members. We collapse both onto Internal —
         //         distinguishing them needs parent-kind context that
         //         this helper doesn't have, and a misclassified C#
-        //         member as "internal" is closer to the truth than as
-        //         "public" (the prior behaviour).
+        //         member as Internal is closer to the truth than as
+        //         Public (the prior behaviour).
         //   TypeScript: members default to public; this helper is
         //         called on declaration nodes so that's what we report.
         if (language == Language::TypeScript) {
-            return "public";
+            return Visibility::Public;
         }
-        return "internal";
+        return Visibility::Internal;
     }
 
     default:
-        return {};
+        return Visibility::Unknown;
     }
 }
 

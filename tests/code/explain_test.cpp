@@ -18,6 +18,7 @@ using vectis::code::FileEntry;
 using vectis::code::Language;
 using vectis::code::Symbol;
 using vectis::code::SymbolKind;
+using vectis::code::Visibility;
 
 void populate_test_index(CodeIndex& index)
 {
@@ -41,7 +42,7 @@ void populate_test_index(CodeIndex& index)
                .kind = SymbolKind::Class,
                .line_start = 1,
                .line_end = 80,
-               .visibility = "public"},
+               .visibility = Visibility::Public},
         Symbol{.file_id = fid1,
                .name = "handle_request",
                .kind = SymbolKind::Function,
@@ -49,7 +50,7 @@ void populate_test_index(CodeIndex& index)
                .line_end = 70,
                .signature = "def handle_request(req)",
                .complexity = 18,
-               .visibility = "public"},
+               .visibility = Visibility::Public},
         Symbol{.file_id = fid1,
                .name = "_helper",
                .kind = SymbolKind::Function,
@@ -57,7 +58,7 @@ void populate_test_index(CodeIndex& index)
                .line_end = 95,
                .signature = "def _helper()",
                .complexity = 1,
-               .visibility = "private"},
+               .visibility = Visibility::Private},
     };
     const std::array<Symbol, 1> b_syms = {
         Symbol{.file_id = fid2,
@@ -67,7 +68,7 @@ void populate_test_index(CodeIndex& index)
                .line_end = 10,
                .signature = "def _internal_init()",
                .complexity = 1,
-               .visibility = "private"},
+               .visibility = Visibility::Private},
     };
     index.add_symbols(a_syms);
     index.add_symbols(b_syms);

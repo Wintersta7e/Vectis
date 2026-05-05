@@ -157,7 +157,7 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
         ins_sym->bind(9, static_cast<std::int64_t>(s.complexity));
         const auto members_str = join_members(s.members);
         ins_sym->bind(10, std::string_view{members_str});
-        ins_sym->bind(11, std::string_view{s.visibility});
+        ins_sym->bind(11, visibility_name(s.visibility));
         // Decorators share the members serialiser — newline-joined,
         // since none of the decorator texts contain literal newlines.
         const auto decorators_str = join_members(s.decorators);
@@ -311,7 +311,7 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
             s.parent_id = row.get_int(7);
             s.complexity = static_cast<int>(row.get_int(8));
             s.members = split_members(row.get_text(9));
-            s.visibility = row.get_text(10);
+            s.visibility = visibility_from_name(row.get_text(10));
             s.decorators = split_members(row.get_text(11));
             batch.push_back(std::move(s));
         });
