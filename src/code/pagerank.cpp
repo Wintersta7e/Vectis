@@ -48,7 +48,7 @@ std::vector<PageRankResult> compute_pagerank(std::span<const FileEntry> files,
         adj.erase(std::unique(adj.begin(), adj.end()), adj.end());
     }
 
-    const double n_d = static_cast<double>(n);
+    const auto n_d = static_cast<double>(n);
     const double base = (1.0 - options.damping) / n_d;
 
     std::vector<double> rank(n, 1.0 / n_d);

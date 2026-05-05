@@ -1,5 +1,6 @@
 #include "code/scanner.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -107,12 +108,9 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
         if (config.exclude_dir_names.find(name) != config.exclude_dir_names.end()) {
             return true;
         }
-        for (const std::string& glob : config.exclude_dir_globs) {
-            if (wildcard_match(glob, name)) {
-                return true;
-            }
-        }
-        return false;
+        return std::ranges::any_of(config.exclude_dir_globs, [&](const std::string& glob) {
+            return wildcard_match(glob, name);
+        });
     };
 
     std::error_code ec;
@@ -403,12 +401,9 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         if (config.exclude_dir_names.find(name) != config.exclude_dir_names.end()) {
             return true;
         }
-        for (const std::string& glob : config.exclude_dir_globs) {
-            if (wildcard_match(glob, name)) {
-                return true;
-            }
-        }
-        return false;
+        return std::ranges::any_of(config.exclude_dir_globs, [&](const std::string& glob) {
+            return wildcard_match(glob, name);
+        });
     };
 
     std::error_code ec;
