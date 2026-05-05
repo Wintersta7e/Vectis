@@ -97,8 +97,20 @@ Result<void> FileWatcher::watch(const fs::path& root, Callback on_change)
     m_impl->add_watch_recursive(root, fs::path{});
     m_impl->watching = true;
 
-    VECTIS_LOG_INFO("FileWatcher: watching '{}' ({} directories)", root.string(),
-                    m_impl->wd_to_path.size());
+    if (m_impl->wd_to_path.empty()) {
+        // inotify_init1 succeeded but no inotify_add_watch did — root
+        // is missing, unreadable, or holds no addressable directories.
+        // Returning success keeps the watcher structurally valid (the
+        // caller can stop() and retry) but poll() will yield nothing
+        // until something actually gets watched, so warn loudly.
+        VECTIS_LOG_WARN("FileWatcher: zero directories watched for '{}' — path may not "
+                        "exist or be inaccessible. poll() will produce no events.",
+                        root.string());
+    }
+    else {
+        VECTIS_LOG_INFO("FileWatcher: watching '{}' ({} directories)", root.string(),
+                        m_impl->wd_to_path.size());
+    }
 
     return {};
 }
