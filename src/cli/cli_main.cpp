@@ -174,11 +174,16 @@ vectis::code::ScanConfig make_scan_config(const std::filesystem::path& abs_root)
     config.root = abs_root;
     config.epoch = 1;
     config.exclude_dir_names = vectis::code::default_scanner_exclude_dir_names();
-    // Layer in .gitignore-derived names. insert() is idempotent — duplicates
-    // against the built-ins are silently absorbed.
+    // Layer in .gitignore-derived patterns. Exact-name inserts are idempotent
+    // — duplicates against the built-ins are silently absorbed. Glob patterns
+    // are appended; duplication is harmless because the scanner short-circuits
+    // on the first match.
     auto gi = vectis::code::read_gitignore_dir_patterns(abs_root);
-    for (const auto& name : gi) {
+    for (const auto& name : gi.exact_names) {
         config.exclude_dir_names.insert(name);
+    }
+    for (auto& pattern : gi.glob_patterns) {
+        config.exclude_dir_globs.push_back(std::move(pattern));
     }
     return config;
 }

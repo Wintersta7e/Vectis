@@ -40,7 +40,14 @@ struct ScanSummary
 struct ScanConfig
 {
     std::filesystem::path root;
+    /// Exact directory basenames to skip (O(1) hash lookup). Built from
+    /// the scanner's defaults plus any non-glob `.gitignore` lines.
     std::unordered_set<std::string> exclude_dir_names;
+    /// Wildcard directory-name patterns (`build-*`, `*.egg-info`,
+    /// `cmake-build-?`) populated from glob-bearing `.gitignore` lines.
+    /// Tested in order against each directory basename via
+    /// `wildcard_match`.
+    std::vector<std::string> exclude_dir_globs;
     std::int64_t epoch = 0;
 };
 

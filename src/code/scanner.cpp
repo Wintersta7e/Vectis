@@ -15,6 +15,7 @@
 
 #include "code/code_index.h"
 #include "code/dependency_resolver.h"
+#include "code/gitignore.h"
 #include "code/language.h"
 #include "code/parser.h"
 #include "code/symbol.h"
@@ -102,8 +103,16 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
     // user writes `code.exclude = ["node_modules", ".git"]` as names,
     // not path prefixes.
     const auto is_excluded_dir_name = [&](const std::filesystem::path& dir) {
-        return config.exclude_dir_names.find(dir.filename().string()) !=
-               config.exclude_dir_names.end();
+        const std::string name = dir.filename().string();
+        if (config.exclude_dir_names.find(name) != config.exclude_dir_names.end()) {
+            return true;
+        }
+        for (const std::string& glob : config.exclude_dir_globs) {
+            if (wildcard_match(glob, name)) {
+                return true;
+            }
+        }
+        return false;
     };
 
     std::error_code ec;
@@ -390,8 +399,16 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
     };
 
     const auto is_excluded_dir_name = [&](const std::filesystem::path& dir) {
-        return config.exclude_dir_names.find(dir.filename().string()) !=
-               config.exclude_dir_names.end();
+        const std::string name = dir.filename().string();
+        if (config.exclude_dir_names.find(name) != config.exclude_dir_names.end()) {
+            return true;
+        }
+        for (const std::string& glob : config.exclude_dir_globs) {
+            if (wildcard_match(glob, name)) {
+                return true;
+            }
+        }
+        return false;
     };
 
     std::error_code ec;

@@ -2,38 +2,61 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <unordered_set>
+#include <vector>
 
 namespace vectis::code {
 
-/// Read `<root>/.gitignore` and return the subset of entries that can
-/// be mapped to bare directory names. Those names plug directly into
-/// `ScanConfig::exclude_dir_names`, which is matched against each
-/// directory's basename during the recursive walk.
+/// Patterns extracted from `<root>/.gitignore`, split by matching shape
+/// so the scanner can dispatch each through its cheapest predicate:
 ///
-/// Only simple name-only patterns are picked up — the scanner's
-/// exclude mechanism is basename-based and can't represent path
-/// prefixes or glob wildcards without additional machinery. These
-/// forms survive:
+///   - `exact_names` — bare directory basenames (`build`, `.venv`,
+///     `target`); `unordered_set::contains(name)` is O(1).
+///   - `glob_patterns` — directory-level patterns that use `*` or `?`
+///     wildcards (`build-*`, `cmake-build-*`, `dist-?`); requires the
+///     scanner to walk the list and test each via `wildcard_match`.
+struct GitignorePatterns
+{
+    std::unordered_set<std::string> exact_names;
+    std::vector<std::string> glob_patterns;
+};
+
+/// Read `<root>/.gitignore` and reduce each line to a directory-level
+/// match form. Patterns plug directly into `ScanConfig::exclude_dir_names`
+/// and `ScanConfig::exclude_dir_globs`, both matched against directory
+/// basenames during the recursive walk.
 ///
-///   - `build/`     → "build"
-///   - `.venv`      → ".venv"
-///   - `/target/`   → "target"  (leading slash stripped, still a name)
+/// Supported pattern shapes:
 ///
-/// These forms are ignored (returned set excludes them):
+///   - `build/`              → exact name "build"
+///   - `.venv`               → exact name ".venv"
+///   - `/target/`            → exact name "target" (leading `/` stripped)
+///   - `build-*/`            → glob "build-*"
+///   - `*.egg-info`          → glob "*.egg-info"
+///   - `cmake-build-?`       → glob "cmake-build-?"
 ///
-///   - `docs/build/`   — path prefix, needs two-level match
-///   - `*.egg-info/`   — wildcard, needs glob
-///   - `!important/`   — negation, not supported
-///   - `# comment`     — comment
+/// Unsupported shapes (silently dropped):
+///
+///   - `docs/build/`         — path prefix, needs multi-segment match
+///   - `!important/`         — negation
+///   - `# comment`           — comment
+///   - `[abc]/`              — character class (use `?` or full name)
 ///
 /// Falling back to no-op on unsupported patterns is deliberate: a
 /// false-negative (something the user wanted excluded isn't) is a
 /// performance issue, whereas a false-positive (matching something we
 /// shouldn't) would silently drop legitimate code from the digest.
 ///
-/// Returns an empty set if `<root>/.gitignore` is absent or unreadable.
-[[nodiscard]] std::unordered_set<std::string>
+/// Returns empty patterns if `<root>/.gitignore` is absent or unreadable.
+[[nodiscard]] GitignorePatterns
 read_gitignore_dir_patterns(const std::filesystem::path& root);
+
+/// Match `name` against a glob `pattern` containing `*` (any run of
+/// chars) and `?` (single char) metacharacters. No bracket expressions
+/// or path-segment globbing — this is a basename-only matcher. Greedy
+/// backtracking implementation; pattern + name are both expected to be
+/// short (directory basenames), so worst-case backtracking is fine.
+[[nodiscard]] bool wildcard_match(std::string_view pattern, std::string_view name) noexcept;
 
 } // namespace vectis::code

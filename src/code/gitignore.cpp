@@ -11,12 +11,24 @@ namespace {
 
 [[nodiscard]] bool has_glob_meta(std::string_view s) noexcept
 {
-    return std::ranges::any_of(s, [](char c) { return c == '*' || c == '?' || c == '['; });
+    return std::ranges::any_of(s, [](char c) { return c == '*' || c == '?'; });
 }
 
-/// Reduce one gitignore line to a bare directory name, or return an
-/// empty view if the pattern can't be represented by basename alone.
-[[nodiscard]] std::string_view to_dir_name(std::string_view line) noexcept
+/// Categorise one trimmed gitignore line into either an exact directory
+/// name, a glob pattern, or "skip".
+struct Categorised
+{
+    enum class Kind : std::uint8_t
+    {
+        Skip,
+        Exact,
+        Glob,
+    };
+    Kind kind = Kind::Skip;
+    std::string_view value;
+};
+
+[[nodiscard]] Categorised categorise(std::string_view line) noexcept
 {
     // Trim trailing whitespace + CR (CRLF-flavoured files survive a
     // text-mode read on some platforms with the \r intact).
@@ -37,9 +49,12 @@ namespace {
     if (line.front() == '!') {
         return {};
     } // negation (unsupported)
-    if (has_glob_meta(line)) {
+
+    // Bracket expressions (`[abc]`) are still unsupported by `wildcard_match`,
+    // so we drop those rather than silently mis-matching.
+    if (line.find('[') != std::string_view::npos) {
         return {};
-    } // wildcard (unsupported)
+    }
 
     // Strip leading `/` — in gitignore this anchors the pattern to the
     // repo root, but our basename-matching scanner ignores path depth
@@ -59,14 +74,59 @@ namespace {
         return {};
     }
 
-    return line;
+    if (line.empty()) {
+        return {};
+    }
+
+    if (has_glob_meta(line)) {
+        return {Categorised::Kind::Glob, line};
+    }
+    return {Categorised::Kind::Exact, line};
 }
 
 } // namespace
 
-std::unordered_set<std::string> read_gitignore_dir_patterns(const std::filesystem::path& root)
+bool wildcard_match(std::string_view pattern, std::string_view name) noexcept
 {
-    std::unordered_set<std::string> result;
+    // Iterative greedy matcher with single-star backtracking. Time
+    // complexity is O(|pattern| * |name|) worst-case (consecutive `*`s
+    // never backtrack past the most-recent `*`), and patterns/names at
+    // call sites are directory basenames — never long.
+    std::size_t pi = 0;
+    std::size_t ni = 0;
+    std::size_t star_pi = std::string_view::npos;
+    std::size_t star_ni = 0;
+
+    while (ni < name.size()) {
+        if (pi < pattern.size() && (pattern[pi] == '?' || pattern[pi] == name[ni])) {
+            ++pi;
+            ++ni;
+        }
+        else if (pi < pattern.size() && pattern[pi] == '*') {
+            star_pi = pi;
+            star_ni = ni;
+            ++pi;
+        }
+        else if (star_pi != std::string_view::npos) {
+            // Backtrack: re-anchor the most recent `*` over one more
+            // character of `name`.
+            pi = star_pi + 1;
+            ++star_ni;
+            ni = star_ni;
+        }
+        else {
+            return false;
+        }
+    }
+    while (pi < pattern.size() && pattern[pi] == '*') {
+        ++pi;
+    }
+    return pi == pattern.size();
+}
+
+GitignorePatterns read_gitignore_dir_patterns(const std::filesystem::path& root)
+{
+    GitignorePatterns result;
 
     std::ifstream in(root / ".gitignore");
     if (!in) {
@@ -75,9 +135,16 @@ std::unordered_set<std::string> read_gitignore_dir_patterns(const std::filesyste
 
     std::string line;
     while (std::getline(in, line)) {
-        const std::string_view name = to_dir_name(line);
-        if (!name.empty()) {
-            result.emplace(name);
+        const Categorised cat = categorise(line);
+        switch (cat.kind) {
+        case Categorised::Kind::Exact:
+            result.exact_names.emplace(cat.value);
+            break;
+        case Categorised::Kind::Glob:
+            result.glob_patterns.emplace_back(cat.value);
+            break;
+        case Categorised::Kind::Skip:
+            break;
         }
     }
     return result;
