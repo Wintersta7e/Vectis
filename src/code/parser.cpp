@@ -300,14 +300,49 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
 /// `Visibility` enum documented on `Symbol::visibility`. `Unknown`
 /// means "language doesn't express visibility / not yet implemented" —
 /// consumers should treat that as Public when filtering.
-[[nodiscard]] Visibility extract_visibility(TSNode node, Language language, std::string_view name)
+/// Extract Java / C# / TypeScript visibility by walking word-token
+/// modifiers (`public`, `private`, `protected`, `internal`). Uses raw
+/// `ts_node_child` because modifier keyword leaves are anonymous
+/// tokens in the tree-sitter grammars. Returns `Visibility::Unknown`
+/// if no explicit modifier was found — caller picks the per-language
+/// default.
+[[nodiscard]] Visibility extract_modifier_visibility(TSNode node)
+{
+    const std::uint32_t child_count = ts_node_child_count(node);
+    for (std::uint32_t i = 0; i < child_count; ++i) {
+        const TSNode child = ts_node_child(node, i);
+        const std::string_view type{ts_node_type(child)};
+        if (type != "modifiers" && type != "modifier" && type != "accessibility_modifier") {
+            continue;
+        }
+        const std::uint32_t mod_count = ts_node_child_count(child);
+        for (std::uint32_t j = 0; j < mod_count; ++j) {
+            const TSNode mod = ts_node_child(child, j);
+            const std::string_view mt{ts_node_type(mod)};
+            if (mt == "public") {
+                return Visibility::Public;
+            }
+            if (mt == "private") {
+                return Visibility::Private;
+            }
+            if (mt == "protected") {
+                return Visibility::Protected;
+            }
+            if (mt == "internal") {
+                return Visibility::Internal;
+            }
+        }
+    }
+    return Visibility::Unknown;
+}
+
+[[nodiscard]]Visibility extract_visibility(TSNode node, Language language, std::string_view name)
 {
     switch (language) {
     case Language::Go:
         // Go encodes visibility purely in the symbol name: an uppercase
-        // first letter exports the symbol from its package; lowercase
-        // keeps it package-private. The convention is enforced by the
-        // compiler, so this is a complete signal.
+        // first letter exports from the package; lowercase keeps it
+        // package-private. The convention is compiler-enforced.
         if (name.empty()) {
             return Visibility::Unknown;
         }
@@ -315,11 +350,8 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
                                                                      : Visibility::Private;
 
     case Language::Python: {
-        // Python has no enforced visibility, but the convention is
-        // canonical: leading underscore = "internal, do not import".
-        // `__name__` (dunder) is the standard library's own metadata
-        // protocol — those are public by intention even though they
-        // start with `_`.
+        // Leading underscore = internal; dunder names (`__init__`,
+        // `__name__`) are stdlib metadata and public by intention.
         if (name.empty()) {
             return Visibility::Unknown;
         }
@@ -353,50 +385,19 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
     case Language::Java:
     case Language::CSharp:
     case Language::TypeScript: {
-        // Java/C#/TS all use word-token modifiers attached to declarations. Walk children once
-        // looking for a `modifier` (Java/C#) or `accessibility_modifier` (TypeScript) node. Map the
-        // keyword text to our enum; default depends on the language but is Public for top-level
-        // declarations and for languages whose implicit visibility is permissive.
-        //
-        // NOTE: `ts_node_child` (raw) is used here rather than the named-child helpers because the
-        // modifier keyword leaves (`public`, `private`, …) are anonymous tokens in tree-sitter.
-        const std::uint32_t child_count = ts_node_child_count(node);
-        for (std::uint32_t i = 0; i < child_count; ++i) {
-            const TSNode child = ts_node_child(node, i);
-            const std::string_view type{ts_node_type(child)};
-            if (type != "modifiers" && type != "modifier" && type != "accessibility_modifier") {
-                continue;
-            }
-            // The modifier(s) child contains keyword leaves. Walk
-            // its descendants once and pick the first hit.
-            const std::uint32_t mod_count = ts_node_child_count(child);
-            for (std::uint32_t j = 0; j < mod_count; ++j) {
-                const TSNode mod = ts_node_child(child, j);
-                const std::string_view mt{ts_node_type(mod)};
-                if (mt == "public") {
-                    return Visibility::Public;
-                }
-                if (mt == "private") {
-                    return Visibility::Private;
-                }
-                if (mt == "protected") {
-                    return Visibility::Protected;
-                }
-                if (mt == "internal") {
-                    return Visibility::Internal;
-                }
-            }
+        // Java/C#/TS all use word-token modifiers; defer to the helper
+        // and apply per-language defaults when no modifier is present.
+        const Visibility found = extract_modifier_visibility(node);
+        if (found != Visibility::Unknown) {
+            return found;
         }
-        // No explicit modifier found. Default per language:
-        //   Java: package-private (we report Internal).
-        //   C#:   `internal` for top-level types and `private` for
-        //         class members. We collapse both onto Internal —
-        //         distinguishing them needs parent-kind context that
-        //         this helper doesn't have, and a misclassified C#
-        //         member as Internal is closer to the truth than as
-        //         Public (the prior behaviour).
-        //   TypeScript: members default to public; this helper is
-        //         called on declaration nodes so that's what we report.
+        // Per-language defaults when no modifier was found:
+        //   Java: package-private (reported as Internal).
+        //   C#:   `internal` for top-level types, `private` for class
+        //         members — we collapse both to Internal since we
+        //         don't have parent-kind context in this helper, and
+        //         "Internal" is closer to the truth than "Public".
+        //   TypeScript: members default to public.
         if (language == Language::TypeScript) {
             return Visibility::Public;
         }
@@ -419,150 +420,152 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
 /// sigil stripped (e.g. `app.route("/")` not `@app.route("/")`,
 /// `RestController` not `@RestController`, `derive(Debug)` not
 /// `#[derive(Debug)]`, `HttpGet` not `[HttpGet]`).
-[[nodiscard]] std::vector<std::string> extract_decorators(TSNode node, Language language,
+/// Extract the source bytes of `marker`, trim outer whitespace, then
+/// strip the language sigil (`leading` and optional `trailing`) — e.g.
+/// `"@"` for Python/Java/TS decorators, `"#["` + `"]"` for Rust outer
+/// attributes, both empty for C# attribute children that already lack
+/// the `[ ]`. Returns an empty string if the byte range is invalid.
+[[nodiscard]] std::string extract_marker_text(TSNode marker, std::string_view leading,
+                                              std::string_view trailing,
+                                              std::string_view content)
+{
+    const std::uint32_t start = ts_node_start_byte(marker);
+    const std::uint32_t end = ts_node_end_byte(marker);
+    if (start >= end || end > content.size()) {
+        return {};
+    }
+    std::string_view text(content.data() + start, end - start);
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' ||
+                             text.back() == '\t')) {
+        text.remove_suffix(1);
+    }
+    if (!leading.empty() && text.size() >= leading.size() && text.starts_with(leading)) {
+        text.remove_prefix(leading.size());
+    }
+    if (!trailing.empty() && text.size() >= trailing.size() && text.ends_with(trailing)) {
+        text.remove_suffix(trailing.size());
+    }
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
+        text.remove_suffix(1);
+    }
+    return std::string{text};
+}
+
+/// Append every named child of `parent` whose type matches `child_type`
+/// to `out` after running it through `extract_marker_text`. Empty
+/// results are skipped so callers don't have to filter.
+void collect_marker_children(TSNode parent, std::string_view child_type,
+                             std::string_view leading, std::string_view trailing,
+                             std::string_view content, std::vector<std::string>& out)
+{
+    for_each_named_child_of_type(parent, child_type, [&](TSNode child) {
+        std::string text = extract_marker_text(child, leading, trailing, content);
+        if (!text.empty()) {
+            out.emplace_back(std::move(text));
+        }
+    });
+}
+
+/// Walk preceding named siblings of `start` while their type matches
+/// `sibling_type`, collecting each via `extract_marker_text`. The walk
+/// is in source-reverse order — the vector is reversed before return so
+/// callers see source order. Used for Rust outer attributes
+/// (`#[...]` placed before a declaration) and TypeScript decorators
+/// attached as siblings of `class_declaration`.
+[[nodiscard]] std::vector<std::string>
+collect_marker_siblings_back(TSNode start, std::string_view sibling_type,
+                             std::string_view leading, std::string_view trailing,
+                             std::string_view content)
+{
+    std::vector<std::string> out;
+    TSNode cur = ts_node_prev_named_sibling(start);
+    while (!ts_node_is_null(cur) && std::string_view{ts_node_type(cur)} == sibling_type) {
+        std::string text = extract_marker_text(cur, leading, trailing, content);
+        if (!text.empty()) {
+            out.emplace_back(std::move(text));
+        }
+        cur = ts_node_prev_named_sibling(cur);
+    }
+    std::reverse(out.begin(), out.end());
+    return out;
+}
+
+/// Java annotations: `marker_annotation` and `annotation` nodes inside
+/// a `modifiers` child. Source order across the two types matters so we
+/// walk the list once and filter both kinds.
+[[nodiscard]] std::vector<std::string>
+extract_java_annotations(TSNode node, std::string_view content)
+{
+    std::vector<std::string> out;
+    const TSNode modifiers = first_named_child_of_type(node, "modifiers");
+    if (ts_node_is_null(modifiers)) {
+        return out;
+    }
+    const std::uint32_t mod_count = ts_node_named_child_count(modifiers);
+    for (std::uint32_t j = 0; j < mod_count; ++j) {
+        const TSNode mod = ts_node_named_child(modifiers, j);
+        const std::string_view mt{ts_node_type(mod)};
+        if (mt != "marker_annotation" && mt != "annotation") {
+            continue;
+        }
+        std::string text = extract_marker_text(mod, "@", {}, content);
+        if (!text.empty()) {
+            out.emplace_back(std::move(text));
+        }
+    }
+    return out;
+}
+
+/// TypeScript decorators attach two ways: as children of the captured
+/// declaration (method_definition, public_field_definition,
+/// abstract_method_signature) or as preceding siblings (class_declaration,
+/// abstract_class_declaration). Try children first; fall back to
+/// walking siblings.
+[[nodiscard]] std::vector<std::string>
+extract_typescript_decorators(TSNode node, std::string_view content)
+{
+    std::vector<std::string> out;
+    collect_marker_children(node, "decorator", "@", {}, content, out);
+    if (!out.empty()) {
+        return out;
+    }
+    return collect_marker_siblings_back(node, "decorator", "@", {}, content);
+}
+
+[[nodiscard]]std::vector<std::string> extract_decorators(TSNode node, Language language,
                                                           std::string_view content)
 {
-    // Extract a node's source text, trimming outer whitespace + the
-    // language's marker sigil (e.g. "@" for Java/Python, "#[" + "]"
-    // for Rust attributes, no sigil for C# attribute children).
-    const auto extract_marker = [&content](TSNode marker, std::string_view leading,
-                                           std::string_view trailing = {}) -> std::string {
-        const std::uint32_t start = ts_node_start_byte(marker);
-        const std::uint32_t end = ts_node_end_byte(marker);
-        if (start >= end || end > content.size()) {
-            return {};
-        }
-        std::string_view text(content.data() + start, end - start);
-        while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' ||
-                                 text.back() == '\t')) {
-            text.remove_suffix(1);
-        }
-        if (!leading.empty() && text.size() >= leading.size() && text.starts_with(leading)) {
-            text.remove_prefix(leading.size());
-        }
-        if (!trailing.empty() && text.size() >= trailing.size() && text.ends_with(trailing)) {
-            text.remove_suffix(trailing.size());
-        }
-        while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
-            text.remove_suffix(1);
-        }
-        return std::string{text};
-    };
-
-    // Append `extract_marker(child, leading, trailing)` for every named
-    // child of `parent` whose type matches `child_type`. Skips empty
-    // results so callers don't have to.
-    const auto collect_marker_children = [&](TSNode parent, std::string_view child_type,
-                                             std::string_view leading,
-                                             std::string_view trailing,
-                                             std::vector<std::string>& out) {
-        for_each_named_child_of_type(parent, child_type, [&](TSNode child) {
-            std::string text = extract_marker(child, leading, trailing);
-            if (!text.empty()) {
-                out.emplace_back(std::move(text));
-            }
-        });
-    };
-
     switch (language) {
     case Language::Python: {
         // tree-sitter-python wraps a decorated def/class in a
-        // `decorated_definition` parent containing each `decorator`
-        // sibling.
+        // `decorated_definition` parent containing each `decorator` sibling.
         const TSNode parent = ts_node_parent(node);
         if (ts_node_is_null(parent) ||
             std::string_view{ts_node_type(parent)} != "decorated_definition") {
             return {};
         }
         std::vector<std::string> out;
-        collect_marker_children(parent, "decorator", "@", {}, out);
+        collect_marker_children(parent, "decorator", "@", {}, content, out);
         return out;
     }
-
-    case Language::Java: {
-        // tree-sitter-java attaches `marker_annotation` (e.g. `@Foo`)
-        // and `annotation` (e.g. `@Foo(args)`) nodes inside the
-        // declaration's `modifiers` child. Source order across the two
-        // node types matters, so we walk the modifiers list once and
-        // filter both kinds rather than running two passes.
-        std::vector<std::string> out;
-        const TSNode modifiers = first_named_child_of_type(node, "modifiers");
-        if (ts_node_is_null(modifiers)) {
-            return out;
-        }
-        const std::uint32_t mod_count = ts_node_named_child_count(modifiers);
-        for (std::uint32_t j = 0; j < mod_count; ++j) {
-            const TSNode mod = ts_node_named_child(modifiers, j);
-            const std::string_view mt{ts_node_type(mod)};
-            if (mt != "marker_annotation" && mt != "annotation") {
-                continue;
-            }
-            std::string text = extract_marker(mod, "@");
-            if (!text.empty()) {
-                out.emplace_back(std::move(text));
-            }
-        }
-        return out;
-    }
-
+    case Language::Java:
+        return extract_java_annotations(node, content);
     case Language::CSharp: {
-        // tree-sitter-c-sharp groups attributes inside `attribute_list`
-        // children. A declaration may have multiple `attribute_list`s
-        // (each `[A, B]` is one list). Each list contains `attribute`
-        // children whose text is the bare name + optional args — no
-        // surrounding `[ ]` to strip.
+        // C# attributes group inside `attribute_list` children
+        // (`[A, B]`); each `attribute` carries the bare name + args.
         std::vector<std::string> out;
         for_each_named_child_of_type(node, "attribute_list", [&](TSNode list) {
-            collect_marker_children(list, "attribute", {}, {}, out);
+            collect_marker_children(list, "attribute", {}, {}, content, out);
         });
         return out;
     }
-
-    case Language::Rust: {
-        // tree-sitter-rust places outer `attribute_item` nodes
-        // (`#[...]`) as preceding siblings of the declaration they
-        // annotate. Walk backwards from `node` collecting them; stop
-        // at the first non-attribute sibling. O(attributes-on-this-
-        // symbol) per call, vs the O(siblings-of-parent) the forward
-        // walk had — a real win on Rust files with many top-level
-        // declarations.
-        std::vector<std::string> out;
-        TSNode cur = ts_node_prev_named_sibling(node);
-        while (!ts_node_is_null(cur) && std::string_view{ts_node_type(cur)} == "attribute_item") {
-            std::string text = extract_marker(cur, "#[", "]");
-            if (!text.empty()) {
-                out.emplace_back(std::move(text));
-            }
-            cur = ts_node_prev_named_sibling(cur);
-        }
-        // Backward walk yields reverse order — restore source order.
-        std::reverse(out.begin(), out.end());
-        return out;
-    }
-
-    case Language::TypeScript: {
-        // tree-sitter-typescript attaches `decorator` nodes either as
-        // children of the captured declaration (method_definition,
-        // public_field_definition, abstract_method_signature) or as
-        // preceding siblings (class_declaration, abstract_class_
-        // declaration). Try children first; if empty, walk back.
-        std::vector<std::string> out;
-        collect_marker_children(node, "decorator", "@", {}, out);
-        if (!out.empty()) {
-            return out;
-        }
-        TSNode cur = ts_node_prev_named_sibling(node);
-        while (!ts_node_is_null(cur) && std::string_view{ts_node_type(cur)} == "decorator") {
-            std::string text = extract_marker(cur, "@");
-            if (!text.empty()) {
-                out.emplace_back(std::move(text));
-            }
-            cur = ts_node_prev_named_sibling(cur);
-        }
-        std::reverse(out.begin(), out.end());
-        return out;
-    }
-
+    case Language::Rust:
+        // Outer `#[...]` attributes are preceding siblings of the
+        // declaration. Walking back from `node` is O(attributes-here);
+        // a forward parent walk would be O(siblings-of-parent).
+        return collect_marker_siblings_back(node, "attribute_item", "#[", "]", content);
+    case Language::TypeScript:
+        return extract_typescript_decorators(node, content);
     default:
         return {};
     }

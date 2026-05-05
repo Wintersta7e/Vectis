@@ -124,32 +124,36 @@ bool parse_digest_args(int argc, char** argv, DigestArgs& out)
     }
     out.project_root = argv[2];
 
-    for (int i = 3; i < argc; ++i) {
+    int i = 3;
+    while (i < argc) {
         const std::string_view arg{argv[i]};
         if ((arg == "--format" || arg == "-f") && i + 1 < argc) {
             if (!parse_format(argv[i + 1], out.format)) {
                 std::fprintf(stderr, "error: unknown --format '%s'\n", argv[i + 1]);
                 return false;
             }
-            ++i;
+            i += 2;
         }
         else if ((arg == "--output" || arg == "-o") && i + 1 < argc) {
             out.output_path = argv[i + 1];
-            ++i;
+            i += 2;
         }
         else if (arg == "--cache") {
             out.use_cache = true;
+            ++i;
         }
         else if (arg == "--cache-dir" && i + 1 < argc) {
             out.use_cache = true;
             out.cache_dir = argv[i + 1];
-            ++i;
+            i += 2;
         }
         else if (arg == "--quiet" || arg == "-q") {
             out.quiet = true;
+            ++i;
         }
         else if (arg == "--verbose" || arg == "-v") {
             out.verbose = true;
+            ++i;
         }
         else {
             std::fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
@@ -316,18 +320,21 @@ bool parse_explain_args(int argc, char** argv, ExplainArgs& out)
         return false;
     }
     out.project_root = argv[2];
-    for (int i = 3; i < argc; ++i) {
+    int i = 3;
+    while (i < argc) {
         const std::string_view arg{argv[i]};
         if (arg == "--cache") {
             out.use_cache = true;
+            ++i;
         }
         else if (arg == "--cache-dir" && i + 1 < argc) {
             out.use_cache = true;
             out.cache_dir = argv[i + 1];
-            ++i;
+            i += 2;
         }
         else if (arg == "--quiet" || arg == "-q") {
             out.quiet = true;
+            ++i;
         }
         else {
             std::fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
@@ -355,7 +362,7 @@ prepare_and_run_scan(const std::filesystem::path& project_root, bool use_cache,
         return vectis::core::make_error(vectis::core::ErrorKind::IoError,
                                         "not a directory", project_root.string());
     }
-    const fs::path abs_root = fs::absolute(project_root, ec);
+    fs::path abs_root = fs::absolute(project_root, ec);
     if (ec) {
         return vectis::core::make_error(vectis::core::ErrorKind::IoError,
                                         "cannot resolve absolute path", ec.message());
