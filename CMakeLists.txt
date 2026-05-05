@@ -355,6 +355,7 @@ add_library(vectis_core STATIC
     src/code/gitignore.cpp
     src/code/hotspot_detector.cpp
     src/code/language.cpp
+    src/code/pagerank.cpp
     src/code/parser.cpp
     src/code/parser_queries.cpp
     src/code/scanner.cpp

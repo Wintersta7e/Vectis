@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -14,6 +15,7 @@
 #include "code/code_index.h"
 #include "code/dependency_graph.h"
 #include "code/language.h"
+#include "code/pagerank.h"
 #include "code/symbol.h"
 
 namespace vectis::code {
@@ -228,6 +230,31 @@ std::string build_explanation(const CodeIndex& index, const ExplainOptions& opti
     }
 
     render_hotspots(out, symbols, files);
+
+    // Most central files by PageRank — shows the structural backbone.
+    // Distinct from hotspots (which are "complex / risky"); this is
+    // "imported by everything", so an agent picks reading order from it.
+    {
+        const std::vector<PageRankResult> ranked = compute_pagerank(index);
+        if (!ranked.empty()) {
+            // Cap at 5 — the explain output is meant to fit on a screen.
+            constexpr std::size_t k_cap = 5;
+            const std::size_t cap = std::min(k_cap, ranked.size());
+            std::unordered_map<std::int64_t, std::filesystem::path> id_to_path;
+            id_to_path.reserve(files.size());
+            for (const auto& f : files) {
+                id_to_path.emplace(f.id, f.path_relative);
+            }
+            out << "\nMost central files (by PageRank):\n";
+            for (std::size_t i = 0; i < cap; ++i) {
+                const auto it = id_to_path.find(ranked[i].file_id);
+                if (it == id_to_path.end()) {
+                    continue;
+                }
+                out << "  " << it->second.generic_string() << "\n";
+            }
+        }
+    }
 
     // Decorators / annotations — surface the top-N so an agent can see
     // "this project has 99 @app.route handlers, 17 @pytest.fixture

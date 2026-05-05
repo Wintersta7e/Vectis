@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
@@ -23,6 +24,7 @@
 #include "code/dependency.h"
 #include "code/dependency_graph.h"
 #include "code/hotspot_detector.h"
+#include "code/pagerank.h"
 #include "code/language.h"
 #include "code/symbol.h"
 #include "core/log.h"
@@ -337,6 +339,31 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     return arr;
 }
 
+/// Serialize the top-N most central files by PageRank. `max_entries`
+/// caps the list (slim digest passes 10; full digest passes 0 = no
+/// cap). Always emits the `score` rounded to 6 decimal places — small
+/// enough to keep round-trip diffs stable but precise enough to break
+/// ties between adjacent ranks.
+[[nodiscard]] nlohmann::json build_central_files_json(const CodeIndex& index,
+                                                      const FileIdToPath& lookup,
+                                                      std::size_t max_entries)
+{
+    auto out = nlohmann::json::array();
+    const std::vector<PageRankResult> ranked = compute_pagerank(index);
+    const std::size_t cap = max_entries == 0 ? ranked.size() : std::min(max_entries, ranked.size());
+    for (std::size_t i = 0; i < cap; ++i) {
+        const PageRankResult& r = ranked[i];
+        // Round to 6 dp via integer truncation to keep JSON stable.
+        const double rounded = std::round(r.score * 1e6) / 1e6;
+        out.push_back({
+            {"file_id", r.file_id},
+            {"path", path_for(lookup, r.file_id)},
+            {"score", rounded},
+        });
+    }
+    return out;
+}
+
 [[nodiscard]] nlohmann::json build_architecture_json(const CodeIndex& index,
                                                      const ExportOptions& options)
 {
@@ -411,13 +438,18 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         root["hotspots"] = build_hotspots_json(index, lookup, options.project_root,
                                                /*include_excerpts=*/true,
                                                /*max_entries=*/0);
+        root["central_files"] = build_central_files_json(index, lookup,
+                                                         /*max_entries=*/0);
         root["symbols"] = std::move(symbols_flat);
     }
     else {
         constexpr std::size_t k_slim_hotspot_cap = 10;
+        constexpr std::size_t k_slim_central_files_cap = 10;
         root["hotspots"] = build_hotspots_json(index, lookup, options.project_root,
                                                /*include_excerpts=*/false,
                                                /*max_entries=*/k_slim_hotspot_cap);
+        root["central_files"] = build_central_files_json(index, lookup,
+                                                         k_slim_central_files_cap);
     }
 
     return root;
@@ -496,6 +528,35 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
             out << "### `" << rel_path << "` (severity " << h.severity << ")\n\n```" << lang_hint
                 << "\n"
                 << excerpt << "```\n\n";
+        }
+    }
+
+    // --- Central files (PageRank) ---------------------------------
+    // Top 10 most central files by PageRank over the dep graph. This
+    // surfaces the structural backbone of the project — the headers /
+    // modules everyone else imports — so an agent reading the digest
+    // knows what's worth opening first.
+    {
+        const std::vector<PageRankResult> ranked = compute_pagerank(index);
+        if (!ranked.empty()) {
+            const FileIdToPath lookup = build_file_id_to_path(files);
+            out << "## Central Files\n\n";
+            out << "_Top 10 by PageRank over the dependency graph._\n\n";
+            const std::size_t cap = std::min<std::size_t>(10, ranked.size());
+            for (std::size_t i = 0; i < cap; ++i) {
+                const std::string path = path_for(lookup, ranked[i].file_id);
+                if (path.empty()) {
+                    continue;
+                }
+                const double rounded = std::round(ranked[i].score * 1e6) / 1e6;
+                out << "- `" << path << "` (";
+                out << std::fixed;
+                out.precision(6);
+                out << rounded << ")\n";
+                out.unsetf(std::ios::fixed);
+                out.precision(6);
+            }
+            out << "\n";
         }
     }
 
