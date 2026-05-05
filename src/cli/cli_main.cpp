@@ -7,11 +7,16 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <unordered_set>
+#include <vector>
 
+#include <nlohmann/json.hpp>
+
+#include "cli/mcp_server.h"
 #include "code/code_index.h"
 #include "code/code_index_store.h"
 #include "code/digest_exporter.h"
@@ -36,6 +41,9 @@ USAGE
     vectis explain <path> [opts]  Scan <path> and print a short narrative
                                   summary (architecture, scale, hotspots,
                                   dependencies). Plain text, ~20 lines.
+    vectis mcp                    Start a Model Context Protocol server on
+                                  stdio. Exposes the `digest` and `explain`
+                                  tools to MCP clients (Claude Code, etc.).
     vectis --help                 Show this text.
 
 DIGEST OPTIONS
@@ -62,6 +70,7 @@ EXAMPLES
     vectis digest ./my-project                        # JSON to stdout, no cache
     vectis digest ./my-project --cache --format md    # Cached, markdown
     vectis digest . --cache-dir /tmp/vc --format slim # Custom cache dir
+    vectis mcp                                        # MCP server on stdio
 )";
 
 void print_usage()
@@ -327,18 +336,25 @@ bool parse_explain_args(int argc, char** argv, ExplainArgs& out)
     return true;
 }
 
-int run_explain(const ExplainArgs& args)
+/// Run the explain pipeline and return the narrative body. `error_out`
+/// is set to a one-line message on failure (for callers that don't have
+/// stderr available, e.g. the MCP server). Return code matches CLI
+/// conventions: 0 on success, 1 on usage / argument error, 2 on scan
+/// or I/O failure.
+int compute_explain_body(const ExplainArgs& args, std::string& body, std::string& error_out)
 {
     namespace fs = std::filesystem;
+    body.clear();
+    error_out.clear();
 
     std::error_code ec;
     if (!fs::exists(args.project_root, ec) || !fs::is_directory(args.project_root, ec)) {
-        std::fprintf(stderr, "error: not a directory: %s\n", args.project_root.string().c_str());
+        error_out = "not a directory: " + args.project_root.string();
         return 1;
     }
     const fs::path abs_root = fs::absolute(args.project_root, ec);
     if (ec) {
-        std::fprintf(stderr, "error: cannot resolve absolute path: %s\n", ec.message().c_str());
+        error_out = std::string{"cannot resolve absolute path: "} + ec.message();
         return 1;
     }
 
@@ -357,6 +373,7 @@ int run_explain(const ExplainArgs& args)
         scan_rc = run_uncached(scan_config, parser, index);
     }
     if (scan_rc != 0) {
+        error_out = "scan failed";
         return scan_rc;
     }
 
@@ -364,7 +381,19 @@ int run_explain(const ExplainArgs& args)
     explain_opts.project_root = abs_root;
     explain_opts.project_name = abs_root.filename().string();
     explain_opts.exclude_dir_names = scan_config.exclude_dir_names;
-    const std::string body = vectis::code::build_explanation(index, explain_opts);
+    body = vectis::code::build_explanation(index, explain_opts);
+    return 0;
+}
+
+int run_explain(const ExplainArgs& args)
+{
+    std::string body;
+    std::string error_out;
+    const int rc = compute_explain_body(args, body, error_out);
+    if (rc != 0) {
+        std::fprintf(stderr, "error: %s\n", error_out.c_str());
+        return rc;
+    }
     std::fwrite(body.data(), 1, body.size(), stdout);
     if (!body.empty() && body.back() != '\n') {
         std::fputc('\n', stdout);
@@ -372,18 +401,23 @@ int run_explain(const ExplainArgs& args)
     return 0;
 }
 
-int run_digest(const DigestArgs& args)
+/// Run the digest pipeline and return the body. `error_out` is set to
+/// a one-line message on failure (for callers without a stderr — e.g.
+/// the MCP server). Same exit-code convention as `compute_explain_body`.
+int compute_digest_body(const DigestArgs& args, std::string& body, std::string& error_out)
 {
     namespace fs = std::filesystem;
+    body.clear();
+    error_out.clear();
 
     std::error_code ec;
     if (!fs::exists(args.project_root, ec) || !fs::is_directory(args.project_root, ec)) {
-        std::fprintf(stderr, "error: not a directory: %s\n", args.project_root.string().c_str());
+        error_out = "not a directory: " + args.project_root.string();
         return 1;
     }
     const fs::path abs_root = fs::absolute(args.project_root, ec);
     if (ec) {
-        std::fprintf(stderr, "error: cannot resolve absolute path: %s\n", ec.message().c_str());
+        error_out = std::string{"cannot resolve absolute path: "} + ec.message();
         return 1;
     }
 
@@ -408,6 +442,7 @@ int run_digest(const DigestArgs& args)
         scan_rc = run_uncached(scan_config, parser, index);
     }
     if (scan_rc != 0) {
+        error_out = "scan failed";
         return scan_rc;
     }
 
@@ -426,7 +461,19 @@ int run_digest(const DigestArgs& args)
     export_opts.project_name = abs_root.filename().string();
     export_opts.exclude_dir_names = scan_config.exclude_dir_names;
 
-    const std::string body = vectis::code::build_digest_string(index, export_opts);
+    body = vectis::code::build_digest_string(index, export_opts);
+    return 0;
+}
+
+int run_digest(const DigestArgs& args)
+{
+    std::string body;
+    std::string error_out;
+    const int rc = compute_digest_body(args, body, error_out);
+    if (rc != 0) {
+        std::fprintf(stderr, "error: %s\n", error_out.c_str());
+        return rc;
+    }
 
     // Output: stdout if --output missing or '-', else the named file.
     if (args.output_path.empty() || args.output_path == "-") {
@@ -444,6 +491,130 @@ int run_digest(const DigestArgs& args)
         out.write(body.data(), static_cast<std::streamsize>(body.size()));
     }
     return 0;
+}
+
+/// Build the digest tool's MCP handler. Captures nothing — the lambda
+/// re-runs the full scan on each call. Most clients invoke `digest`
+/// once per session, so caching across calls would just complicate the
+/// memory model without helping.
+[[nodiscard]] McpTool make_digest_tool()
+{
+    return McpTool{
+        .name = "digest",
+        .description =
+            "Generate a structured digest of a source tree. Returns architecture label, "
+            "scale, languages, hotspots, central files (PageRank), and dependency graph. "
+            "Default format is `slim` JSON (~5-50KB depending on project size); use `md` "
+            "for human-readable Markdown or `json` for the full digest with symbol bodies.",
+        .input_schema_json = R"({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or relative path to the project root to scan."
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["slim", "json", "md"],
+                    "default": "slim",
+                    "description": "Output format. `slim` is the agent-optimised JSON; `json` is the full digest; `md` is human-readable Markdown."
+                }
+            },
+            "required": ["path"]
+        })",
+        .handler =
+            [](const std::string& arguments_json) -> std::string {
+            nlohmann::json args;
+            try {
+                args = nlohmann::json::parse(arguments_json);
+            }
+            catch (const nlohmann::json::parse_error& e) {
+                throw McpHandlerError{-32602,
+                                      std::string{"arguments not valid JSON: "} + e.what()};
+            }
+            if (!args.contains("path") || !args["path"].is_string()) {
+                throw McpHandlerError{-32602, "missing required string argument `path`"};
+            }
+            DigestArgs cli_args;
+            cli_args.project_root = args["path"].get<std::string>();
+            cli_args.format = vectis::code::DigestFormat::SlimJson; // default
+            cli_args.quiet = true; // suppress the scan progress to stderr
+            if (args.contains("format")) {
+                if (!args["format"].is_string()) {
+                    throw McpHandlerError{-32602, "`format` must be a string"};
+                }
+                if (!parse_format(args["format"].get<std::string>(), cli_args.format)) {
+                    throw McpHandlerError{-32602,
+                                          "unknown format (expected slim|json|md)"};
+                }
+            }
+            std::string body;
+            std::string error_out;
+            const int rc = compute_digest_body(cli_args, body, error_out);
+            if (rc != 0) {
+                throw McpHandlerError{-32603, std::move(error_out)};
+            }
+            return body;
+        },
+    };
+}
+
+[[nodiscard]] McpTool make_explain_tool()
+{
+    return McpTool{
+        .name = "explain",
+        .description =
+            "Plain-text narrative summary of a source tree (~20 lines). Architecture "
+            "label, scale, languages, top hotspots, most central files (PageRank), "
+            "decorators, and dependency-graph stats. Designed for direct agent reading "
+            "without JSON parsing.",
+        .input_schema_json = R"({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or relative path to the project root to scan."
+                }
+            },
+            "required": ["path"]
+        })",
+        .handler =
+            [](const std::string& arguments_json) -> std::string {
+            nlohmann::json args;
+            try {
+                args = nlohmann::json::parse(arguments_json);
+            }
+            catch (const nlohmann::json::parse_error& e) {
+                throw McpHandlerError{-32602,
+                                      std::string{"arguments not valid JSON: "} + e.what()};
+            }
+            if (!args.contains("path") || !args["path"].is_string()) {
+                throw McpHandlerError{-32602, "missing required string argument `path`"};
+            }
+            ExplainArgs cli_args;
+            cli_args.project_root = args["path"].get<std::string>();
+            cli_args.quiet = true;
+            std::string body;
+            std::string error_out;
+            const int rc = compute_explain_body(cli_args, body, error_out);
+            if (rc != 0) {
+                throw McpHandlerError{-32603, std::move(error_out)};
+            }
+            return body;
+        },
+    };
+}
+
+int run_mcp_subcommand()
+{
+    // Quiet-by-default — MCP clients communicate over stdio and any
+    // stray stderr noise from the scanner ends up in the client's log.
+    // The handlers themselves set quiet=true on each invocation.
+    McpServerInfo info;
+    info.name = "vectis";
+    info.version = "0.1.0";
+    const std::vector<McpTool> tools{make_digest_tool(), make_explain_tool()};
+    return run_mcp_server(std::cin, std::cout, info, tools);
 }
 
 } // namespace
@@ -475,6 +646,9 @@ int run(int argc, char** argv)
             return 1;
         }
         return run_explain(args);
+    }
+    if (cmd == "mcp") {
+        return run_mcp_subcommand();
     }
 
     std::fprintf(stderr, "error: unknown subcommand '%s'\n", argv[1]);

@@ -339,6 +339,7 @@ vectis_add_ts_grammar(sql ts_sql "")
 # the test runner can link against the same objects without double-compiling.
 add_library(vectis_core STATIC
     src/cli/cli_main.cpp
+    src/cli/mcp_server.cpp
     src/core/config_manager.cpp
     src/core/log.cpp
     src/core/service_registry.cpp

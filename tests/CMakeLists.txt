@@ -6,6 +6,7 @@ include(GoogleTest)
 
 add_executable(vectis_tests
     cli/cli_cache_test.cpp
+    cli/mcp_server_test.cpp
     core/config_manager_test.cpp
     core/hash_test.cpp
     core/task_queue_test.cpp
