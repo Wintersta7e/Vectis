@@ -191,39 +191,69 @@ namespace {
     return std::string{content.substr(start, end - start)};
 }
 
+/// Walk `parent`'s named children and return the first one whose type
+/// matches `type_name`. Returns a null TSNode (test with
+/// `ts_node_is_null`) if no child matches. Tree-sitter grammars often
+/// follow a "outer node has at most one list-typed child" shape, so
+/// "find first" is the natural primitive.
+[[nodiscard]] TSNode first_named_child_of_type(TSNode parent, std::string_view type_name)
+{
+    const std::uint32_t n = ts_node_named_child_count(parent);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const TSNode child = ts_node_named_child(parent, i);
+        if (std::string_view{ts_node_type(child)} == type_name) {
+            return child;
+        }
+    }
+    return TSNode{};
+}
+
+/// Invoke `fn(child)` for each named child of `parent` whose type
+/// matches `type_name`, in source order. The visitor pattern keeps
+/// callers free of the index/count boilerplate that tree-sitter's C
+/// API requires.
+///
+/// `Fn` is taken by value because the helper invokes the callable
+/// repeatedly inside the loop — a forwarding reference would risk a
+/// move-from-rvalue on the second iteration, and the by-value copy is
+/// cheap for the lambdas we pass at every call site.
+template <typename Fn>
+void for_each_named_child_of_type(TSNode parent, std::string_view type_name, Fn fn)
+{
+    const std::uint32_t n = ts_node_named_child_count(parent);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const TSNode child = ts_node_named_child(parent, i);
+        if (std::string_view{ts_node_type(child)} == type_name) {
+            fn(child);
+        }
+    }
+}
+
 /// Walk an `enum_specifier` node and append the name of every
 /// enumerator (enum value) to `out`. Tree-sitter-cpp represents these
 /// as `enum_specifier > enumerator_list > enumerator > identifier`.
 void collect_enum_values(TSNode enum_node, std::string_view content, std::vector<std::string>& out)
 {
-    const std::uint32_t n = ts_node_named_child_count(enum_node);
-    for (std::uint32_t i = 0; i < n; ++i) {
-        const TSNode child = ts_node_named_child(enum_node, i);
-        if (std::string_view{ts_node_type(child)} != "enumerator_list") {
-            continue;
-        }
-        const std::uint32_t en = ts_node_named_child_count(child);
-        for (std::uint32_t j = 0; j < en; ++j) {
-            const TSNode enumerator = ts_node_named_child(child, j);
-            if (std::string_view{ts_node_type(enumerator)} != "enumerator") {
-                continue;
-            }
-            // An enumerator's first named child is its name identifier.
-            // Some enumerators have a following expression (for `= 1`);
-            // we want only the first identifier.
-            if (ts_node_named_child_count(enumerator) == 0) {
-                continue;
-            }
-            const TSNode name_node = ts_node_named_child(enumerator, 0);
-            if (std::string_view{ts_node_type(name_node)} == "identifier") {
-                std::string name = node_text(name_node, content);
-                if (!name.empty()) {
-                    out.push_back(std::move(name));
-                }
-            }
-        }
+    const TSNode list = first_named_child_of_type(enum_node, "enumerator_list");
+    if (ts_node_is_null(list)) {
         return;
     }
+    for_each_named_child_of_type(list, "enumerator", [&](TSNode enumerator) {
+        // An enumerator's first named child is its name identifier.
+        // Some enumerators have a following expression (for `= 1`); we
+        // want only the first identifier.
+        if (ts_node_named_child_count(enumerator) == 0) {
+            return;
+        }
+        const TSNode name_node = ts_node_named_child(enumerator, 0);
+        if (std::string_view{ts_node_type(name_node)} != "identifier") {
+            return;
+        }
+        std::string name = node_text(name_node, content);
+        if (!name.empty()) {
+            out.push_back(std::move(name));
+        }
+    });
 }
 
 /// Recursively walk a `field_declaration` subtree and append every
@@ -256,21 +286,13 @@ void collect_field_identifiers_rec(TSNode node, std::string_view content,
 void collect_struct_fields(TSNode struct_node, std::string_view content,
                            std::vector<std::string>& out)
 {
-    const std::uint32_t n = ts_node_named_child_count(struct_node);
-    for (std::uint32_t i = 0; i < n; ++i) {
-        const TSNode child = ts_node_named_child(struct_node, i);
-        if (std::string_view{ts_node_type(child)} != "field_declaration_list") {
-            continue;
-        }
-        const std::uint32_t fn = ts_node_named_child_count(child);
-        for (std::uint32_t j = 0; j < fn; ++j) {
-            const TSNode field = ts_node_named_child(child, j);
-            if (std::string_view{ts_node_type(field)} == "field_declaration") {
-                collect_field_identifiers_rec(field, content, out);
-            }
-        }
+    const TSNode list = first_named_child_of_type(struct_node, "field_declaration_list");
+    if (ts_node_is_null(list)) {
         return;
     }
+    for_each_named_child_of_type(list, "field_declaration", [&](TSNode field) {
+        collect_field_identifiers_rec(field, content, out);
+    });
 }
 
 /// Compute the visibility/API-surface category for a symbol. Languages
@@ -309,31 +331,23 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
     }
 
     case Language::Rust: {
-        // Walk the captured node's named children looking for a
-        // visibility_modifier. The grammar names them
+        // The grammar names the visibility modifier as
         //   (visibility_modifier "pub")           — fully public
         //   (visibility_modifier "pub" "(crate)") — pub(crate) → Internal
         //   (visibility_modifier "pub" "(super)") — pub(super) → Internal
-        // Absence of a visibility_modifier means private (Rust default).
-        const std::uint32_t child_count = ts_node_named_child_count(node);
-        for (std::uint32_t i = 0; i < child_count; ++i) {
-            const TSNode child = ts_node_named_child(node, i);
-            const std::string_view type{ts_node_type(child)};
-            if (type != "visibility_modifier") {
-                continue;
-            }
-            // Look for a parenthesised qualifier inside the modifier.
-            const std::uint32_t qual_count = ts_node_child_count(child);
-            for (std::uint32_t j = 0; j < qual_count; ++j) {
-                const TSNode qual = ts_node_child(child, j);
-                const std::string_view qtext{ts_node_type(qual)};
-                if (qtext == "(") {
-                    return Visibility::Internal;
-                }
-            }
-            return Visibility::Public;
+        // Absence means private (Rust default).
+        const TSNode modifier = first_named_child_of_type(node, "visibility_modifier");
+        if (ts_node_is_null(modifier)) {
+            return Visibility::Private;
         }
-        return Visibility::Private;
+        const std::uint32_t qual_count = ts_node_child_count(modifier);
+        for (std::uint32_t j = 0; j < qual_count; ++j) {
+            const TSNode qual = ts_node_child(modifier, j);
+            if (std::string_view{ts_node_type(qual)} == "(") {
+                return Visibility::Internal;
+            }
+        }
+        return Visibility::Public;
     }
 
     case Language::Java:
@@ -343,6 +357,9 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
         // looking for a `modifier` (Java/C#) or `accessibility_modifier` (TypeScript) node. Map the
         // keyword text to our enum; default depends on the language but is Public for top-level
         // declarations and for languages whose implicit visibility is permissive.
+        //
+        // NOTE: `ts_node_child` (raw) is used here rather than the named-child helpers because the
+        // modifier keyword leaves (`public`, `private`, …) are anonymous tokens in tree-sitter.
         const std::uint32_t child_count = ts_node_child_count(node);
         for (std::uint32_t i = 0; i < child_count; ++i) {
             const TSNode child = ts_node_child(node, i);
@@ -432,26 +449,19 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
         return std::string{text};
     };
 
-    const auto collect_siblings_of_type =
-        [&](TSNode parent, std::string_view child_type, std::string_view leading,
-            std::string_view trailing = {}) -> std::vector<std::string> {
-        std::vector<std::string> out;
-        if (ts_node_is_null(parent)) {
-            return out;
-        }
-        const std::uint32_t child_count = ts_node_named_child_count(parent);
-        out.reserve(child_count);
-        for (std::uint32_t i = 0; i < child_count; ++i) {
-            const TSNode child = ts_node_named_child(parent, i);
-            if (std::string_view{ts_node_type(child)} != child_type) {
-                continue;
-            }
+    // Append `extract_marker(child, leading, trailing)` for every named
+    // child of `parent` whose type matches `child_type`. Skips empty
+    // results so callers don't have to.
+    const auto collect_marker_children = [&](TSNode parent, std::string_view child_type,
+                                             std::string_view leading,
+                                             std::string_view trailing,
+                                             std::vector<std::string>& out) {
+        for_each_named_child_of_type(parent, child_type, [&](TSNode child) {
             std::string text = extract_marker(child, leading, trailing);
             if (!text.empty()) {
                 out.emplace_back(std::move(text));
             }
-        }
-        return out;
+        });
     };
 
     switch (language) {
@@ -464,36 +474,33 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
             std::string_view{ts_node_type(parent)} != "decorated_definition") {
             return {};
         }
-        return collect_siblings_of_type(parent, "decorator", "@");
+        std::vector<std::string> out;
+        collect_marker_children(parent, "decorator", "@", {}, out);
+        return out;
     }
 
     case Language::Java: {
         // tree-sitter-java attaches `marker_annotation` (e.g. `@Foo`)
         // and `annotation` (e.g. `@Foo(args)`) nodes inside the
-        // declaration's `modifiers` child. The captured node is the
-        // declaration itself; iterate its children for `modifiers`.
+        // declaration's `modifiers` child. Source order across the two
+        // node types matters, so we walk the modifiers list once and
+        // filter both kinds rather than running two passes.
         std::vector<std::string> out;
-        const std::uint32_t child_count = ts_node_named_child_count(node);
-        for (std::uint32_t i = 0; i < child_count; ++i) {
-            const TSNode child = ts_node_named_child(node, i);
-            if (std::string_view{ts_node_type(child)} != "modifiers") {
+        const TSNode modifiers = first_named_child_of_type(node, "modifiers");
+        if (ts_node_is_null(modifiers)) {
+            return out;
+        }
+        const std::uint32_t mod_count = ts_node_named_child_count(modifiers);
+        for (std::uint32_t j = 0; j < mod_count; ++j) {
+            const TSNode mod = ts_node_named_child(modifiers, j);
+            const std::string_view mt{ts_node_type(mod)};
+            if (mt != "marker_annotation" && mt != "annotation") {
                 continue;
             }
-            // Inside `modifiers`, both `marker_annotation` and
-            // `annotation` are siblings.
-            const std::uint32_t mod_count = ts_node_named_child_count(child);
-            for (std::uint32_t j = 0; j < mod_count; ++j) {
-                const TSNode mod = ts_node_named_child(child, j);
-                const std::string_view mt{ts_node_type(mod)};
-                if (mt != "marker_annotation" && mt != "annotation") {
-                    continue;
-                }
-                std::string text = extract_marker(mod, "@");
-                if (!text.empty()) {
-                    out.emplace_back(std::move(text));
-                }
+            std::string text = extract_marker(mod, "@");
+            if (!text.empty()) {
+                out.emplace_back(std::move(text));
             }
-            break; // only one modifiers child per decl
         }
         return out;
     }
@@ -502,30 +509,12 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
         // tree-sitter-c-sharp groups attributes inside `attribute_list`
         // children. A declaration may have multiple `attribute_list`s
         // (each `[A, B]` is one list). Each list contains `attribute`
-        // children whose text is the bare name + optional args.
+        // children whose text is the bare name + optional args — no
+        // surrounding `[ ]` to strip.
         std::vector<std::string> out;
-        const std::uint32_t child_count = ts_node_named_child_count(node);
-        for (std::uint32_t i = 0; i < child_count; ++i) {
-            const TSNode child = ts_node_named_child(node, i);
-            if (std::string_view{ts_node_type(child)} != "attribute_list") {
-                continue;
-            }
-            const std::uint32_t inner = ts_node_named_child_count(child);
-            for (std::uint32_t j = 0; j < inner; ++j) {
-                const TSNode attr = ts_node_named_child(child, j);
-                if (std::string_view{ts_node_type(attr)} != "attribute") {
-                    continue;
-                }
-                // attribute nodes don't include the surrounding `[...]`
-                // — just the name + optional args. No sigil to strip.
-                // tree-sitter `attribute` excludes the surrounding
-                // `[ ]`, so no sigil to strip.
-                std::string text = extract_marker(attr, {});
-                if (!text.empty()) {
-                    out.emplace_back(std::move(text));
-                }
-            }
-        }
+        for_each_named_child_of_type(node, "attribute_list", [&](TSNode list) {
+            collect_marker_children(list, "attribute", {}, {}, out);
+        });
         return out;
     }
 
@@ -558,17 +547,7 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
         // preceding siblings (class_declaration, abstract_class_
         // declaration). Try children first; if empty, walk back.
         std::vector<std::string> out;
-        const std::uint32_t child_count = ts_node_named_child_count(node);
-        for (std::uint32_t i = 0; i < child_count; ++i) {
-            const TSNode child = ts_node_named_child(node, i);
-            if (std::string_view{ts_node_type(child)} != "decorator") {
-                continue;
-            }
-            std::string text = extract_marker(child, "@");
-            if (!text.empty()) {
-                out.emplace_back(std::move(text));
-            }
-        }
+        collect_marker_children(node, "decorator", "@", {}, out);
         if (!out.empty()) {
             return out;
         }
