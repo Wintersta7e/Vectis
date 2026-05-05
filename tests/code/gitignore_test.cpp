@@ -242,7 +242,7 @@ TEST(WildcardMatch, MultipleStarsAndBacktracking)
     EXPECT_TRUE(wildcard_match("a*b*c", "abc"));
     EXPECT_TRUE(wildcard_match("a*b*c", "axxbyyc"));
     EXPECT_TRUE(wildcard_match("a*b*c", "ababc"));
-    EXPECT_FALSE(wildcard_match("a*b*c", "abca")); // no trailing c — actually false
+    EXPECT_FALSE(wildcard_match("a*b*c", "abca")); // doesn't end in 'c'
     EXPECT_FALSE(wildcard_match("a*b*c", "ab"));
 }
 

@@ -56,17 +56,13 @@ void write_message(std::ostream& out, const json& msg)
     out.flush();
 }
 
-[[nodiscard]] json handle_initialize(const json& id)
+[[nodiscard]] json handle_initialize(const json& id, const McpServerInfo& info)
 {
-    json result = json{
-        {"protocolVersion", k_protocol_version},
-        {"capabilities", json{{"tools", json::object()}}},
-        // `serverInfo` is filled by the caller — we don't have it
-        // in this private helper. Returning a placeholder; the public
-        // entry point patches it before sending.
-        {"serverInfo", json{{"name", "vectis"}, {"version", "0.1.0"}}},
-    };
-    return make_result(id, std::move(result));
+    return make_result(id, json{
+                               {"protocolVersion", k_protocol_version},
+                               {"capabilities", json{{"tools", json::object()}}},
+                               {"serverInfo", json{{"name", info.name}, {"version", info.version}}},
+                           });
 }
 
 [[nodiscard]] json tool_to_json(const McpTool& tool)
@@ -171,10 +167,7 @@ void process_message(std::ostream& out, const json& msg, const std::vector<McpTo
 
     json response;
     if (method == "initialize") {
-        response = handle_initialize(id);
-        // Patch in the real server name/version.
-        response["result"]["serverInfo"] =
-            json{{"name", info.name}, {"version", info.version}};
+        response = handle_initialize(id, info);
     }
     else if (method == "tools/list") {
         response = handle_tools_list(id, tools);

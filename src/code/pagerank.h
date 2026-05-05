@@ -1,13 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace vectis::code {
 
 class CodeIndex;
+struct Dependency;
+struct FileEntry;
 
-/// PageRank score for one file. `file_id` matches `FileEntry::id`.
 struct PageRankResult
 {
     std::int64_t file_id = 0;
@@ -46,5 +48,12 @@ struct PageRankOptions
 /// empty if `index` has no files.
 [[nodiscard]] std::vector<PageRankResult>
 compute_pagerank(const CodeIndex& index, const PageRankOptions& options = {});
+
+/// Lower-level overload for callers that already hold `files` and the
+/// dep list — saves the two `CodeIndex` snapshots that the
+/// index-taking overload would otherwise re-do under shared lock.
+[[nodiscard]] std::vector<PageRankResult>
+compute_pagerank(std::span<const FileEntry> files, std::span<const Dependency> deps,
+                 const PageRankOptions& options = {});
 
 } // namespace vectis::code

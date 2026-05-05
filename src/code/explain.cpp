@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <ostream>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -235,7 +236,9 @@ std::string build_explanation(const CodeIndex& index, const ExplainOptions& opti
     // Distinct from hotspots (which are "complex / risky"); this is
     // "imported by everything", so an agent picks reading order from it.
     {
-        const std::vector<PageRankResult> ranked = compute_pagerank(index);
+        const std::vector<Dependency> deps = index.all_dependencies();
+        const std::vector<PageRankResult> ranked =
+            compute_pagerank(std::span{files}, std::span{deps});
         if (!ranked.empty()) {
             // Cap at 5 — the explain output is meant to fit on a screen.
             constexpr std::size_t k_cap = 5;

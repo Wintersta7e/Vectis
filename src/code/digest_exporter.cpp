@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include "code/architecture_detector.h"
@@ -459,6 +460,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 [[nodiscard]] std::string build_markdown(const CodeIndex& index, const ExportOptions& options)
 {
     const std::vector<FileEntry> files = index.snapshot_files();
+    const FileIdToPath lookup = build_file_id_to_path(files);
     const std::vector<std::string> langs = distinct_language_names(files);
     const std::string proj_name = effective_project_name(options);
     const std::string timestamp = current_utc_rfc3339();
@@ -501,7 +503,6 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     else {
         out << "| Severity | File | Reason |\n";
         out << "|---|---|---|\n";
-        const FileIdToPath lookup = build_file_id_to_path(files);
         for (const auto& h : hotspots) {
             out << "| " << h.severity << " | `" << path_for(lookup, h.file_id) << "`" << " | "
                 << h.reason << " |\n";
@@ -539,7 +540,6 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     {
         const std::vector<PageRankResult> ranked = compute_pagerank(index);
         if (!ranked.empty()) {
-            const FileIdToPath lookup = build_file_id_to_path(files);
             out << "## Central Files\n\n";
             out << "_Top 10 by PageRank over the dependency graph._\n\n";
             const std::size_t cap = std::min<std::size_t>(10, ranked.size());
@@ -548,13 +548,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                 if (path.empty()) {
                     continue;
                 }
-                const double rounded = std::round(ranked[i].score * 1e6) / 1e6;
-                out << "- `" << path << "` (";
-                out << std::fixed;
-                out.precision(6);
-                out << rounded << ")\n";
-                out.unsetf(std::ios::fixed);
-                out.precision(6);
+                out << "- `" << path << "` (" << fmt::format("{:.6f}", ranked[i].score) << ")\n";
             }
             out << "\n";
         }
@@ -579,7 +573,6 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
             << external_count << " external)\n";
         out << "- Cycles: " << cycles.size() << "\n";
         if (!cycles.empty()) {
-            const FileIdToPath lookup = build_file_id_to_path(files);
             out << "\n**Detected cycles:**\n\n";
             for (std::size_t i = 0; i < cycles.size(); ++i) {
                 out << (i + 1) << ". ";

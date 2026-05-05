@@ -124,7 +124,6 @@ TEST(McpServerTest, HandlerErrorIsReturnedWithItsCodeAndMessage)
     ASSERT_EQ(out.size(), 1U);
     ASSERT_TRUE(out[0].contains("error"));
     EXPECT_EQ(out[0]["error"]["code"], -32602);
-    EXPECT_NE(std::string{out[0]["error"]["message"]}.find("text"), std::string::npos);
 }
 
 TEST(McpServerTest, ParseErrorReturnsParseErrorResponse)

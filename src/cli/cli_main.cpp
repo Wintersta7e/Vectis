@@ -26,6 +26,7 @@
 #include "code/parser.h"
 #include "code/scanner.h"
 #include "core/log.h"
+#include "core/result.h"
 #include "core/task_queue.h"
 #include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
@@ -336,114 +337,94 @@ bool parse_explain_args(int argc, char** argv, ExplainArgs& out)
     return true;
 }
 
-/// Run the explain pipeline and return the narrative body. `error_out`
-/// is set to a one-line message on failure (for callers that don't have
-/// stderr available, e.g. the MCP server). Return code matches CLI
-/// conventions: 0 on success, 1 on usage / argument error, 2 on scan
-/// or I/O failure.
-int compute_explain_body(const ExplainArgs& args, std::string& body, std::string& error_out)
+struct ScanInputs
+{
+    std::filesystem::path abs_root;
+    vectis::code::ScanConfig scan_config;
+};
+
+[[nodiscard]] vectis::core::Result<ScanInputs>
+prepare_and_run_scan(const std::filesystem::path& project_root, bool use_cache,
+                     const std::filesystem::path& cache_dir, bool quiet,
+                     vectis::code::TreeSitterParser& parser, vectis::code::CodeIndex& index)
 {
     namespace fs = std::filesystem;
-    body.clear();
-    error_out.clear();
 
     std::error_code ec;
-    if (!fs::exists(args.project_root, ec) || !fs::is_directory(args.project_root, ec)) {
-        error_out = "not a directory: " + args.project_root.string();
-        return 1;
+    if (!fs::is_directory(project_root, ec) || ec) {
+        return vectis::core::make_error(vectis::core::ErrorKind::IoError,
+                                        "not a directory", project_root.string());
     }
-    const fs::path abs_root = fs::absolute(args.project_root, ec);
+    const fs::path abs_root = fs::absolute(project_root, ec);
     if (ec) {
-        error_out = std::string{"cannot resolve absolute path: "} + ec.message();
-        return 1;
+        return vectis::core::make_error(vectis::core::ErrorKind::IoError,
+                                        "cannot resolve absolute path", ec.message());
     }
 
-    vectis::code::TreeSitterParser parser;
     parser.register_builtin_languages();
-    vectis::code::CodeIndex index;
+    auto scan_config = make_scan_config(abs_root);
 
-    const auto scan_config = make_scan_config(abs_root);
     int scan_rc = 0;
-    if (args.use_cache) {
-        const fs::path cache_dir =
-            args.cache_dir.empty() ? abs_root / "vectis-data" : fs::absolute(args.cache_dir, ec);
-        scan_rc = run_cached(scan_config, cache_dir, parser, index, args.quiet);
+    if (use_cache) {
+        const fs::path resolved_cache_dir =
+            cache_dir.empty() ? abs_root / "vectis-data" : fs::absolute(cache_dir, ec);
+        scan_rc = run_cached(scan_config, resolved_cache_dir, parser, index, quiet);
     }
     else {
         scan_rc = run_uncached(scan_config, parser, index);
     }
     if (scan_rc != 0) {
-        error_out = "scan failed";
-        return scan_rc;
+        // run_cached / run_uncached already log to stderr; surface the failure
+        // through the Result so non-CLI callers (e.g. the MCP server) see it.
+        return vectis::core::make_error(vectis::core::ErrorKind::IoError, "scan failed");
+    }
+
+    return ScanInputs{.abs_root = std::move(abs_root), .scan_config = std::move(scan_config)};
+}
+
+[[nodiscard]] vectis::core::Result<std::string> compute_explain_body(const ExplainArgs& args)
+{
+    vectis::code::TreeSitterParser parser;
+    vectis::code::CodeIndex index;
+    auto scan = prepare_and_run_scan(args.project_root, args.use_cache, args.cache_dir, args.quiet,
+                                     parser, index);
+    if (!scan) {
+        return tl::unexpected{scan.error()};
     }
 
     vectis::code::ExplainOptions explain_opts;
-    explain_opts.project_root = abs_root;
-    explain_opts.project_name = abs_root.filename().string();
-    explain_opts.exclude_dir_names = scan_config.exclude_dir_names;
-    body = vectis::code::build_explanation(index, explain_opts);
-    return 0;
+    explain_opts.project_root = scan->abs_root;
+    explain_opts.project_name = scan->abs_root.filename().string();
+    explain_opts.exclude_dir_names = scan->scan_config.exclude_dir_names;
+    return vectis::code::build_explanation(index, explain_opts);
 }
 
 int run_explain(const ExplainArgs& args)
 {
-    std::string body;
-    std::string error_out;
-    const int rc = compute_explain_body(args, body, error_out);
-    if (rc != 0) {
-        std::fprintf(stderr, "error: %s\n", error_out.c_str());
-        return rc;
+    auto body = compute_explain_body(args);
+    if (!body) {
+        const auto& err = body.error();
+        std::fprintf(stderr, "error: %s%s%s\n", err.message.c_str(),
+                     err.context.empty() ? "" : ": ", err.context.c_str());
+        return err.kind == vectis::core::ErrorKind::IoError ? 2 : 1;
     }
-    std::fwrite(body.data(), 1, body.size(), stdout);
-    if (!body.empty() && body.back() != '\n') {
+    std::fwrite(body->data(), 1, body->size(), stdout);
+    if (!body->empty() && body->back() != '\n') {
         std::fputc('\n', stdout);
     }
     return 0;
 }
 
-/// Run the digest pipeline and return the body. `error_out` is set to
-/// a one-line message on failure (for callers without a stderr — e.g.
-/// the MCP server). Same exit-code convention as `compute_explain_body`.
-int compute_digest_body(const DigestArgs& args, std::string& body, std::string& error_out)
+[[nodiscard]] vectis::core::Result<std::string> compute_digest_body(const DigestArgs& args)
 {
-    namespace fs = std::filesystem;
-    body.clear();
-    error_out.clear();
-
-    std::error_code ec;
-    if (!fs::exists(args.project_root, ec) || !fs::is_directory(args.project_root, ec)) {
-        error_out = "not a directory: " + args.project_root.string();
-        return 1;
-    }
-    const fs::path abs_root = fs::absolute(args.project_root, ec);
-    if (ec) {
-        error_out = std::string{"cannot resolve absolute path: "} + ec.message();
-        return 1;
-    }
-
     vectis::code::TreeSitterParser parser;
-    parser.register_builtin_languages();
     vectis::code::CodeIndex index;
 
     const auto t_start = std::chrono::steady_clock::now();
-
-    // Build the scan config once: the same exclude set seeds the
-    // scanner walk and (via ExportOptions) the architecture detector's
-    // disk walk further down.
-    const auto scan_config = make_scan_config(abs_root);
-
-    int scan_rc = 0;
-    if (args.use_cache) {
-        const fs::path cache_dir =
-            args.cache_dir.empty() ? abs_root / "vectis-data" : fs::absolute(args.cache_dir, ec);
-        scan_rc = run_cached(scan_config, cache_dir, parser, index, args.quiet);
-    }
-    else {
-        scan_rc = run_uncached(scan_config, parser, index);
-    }
-    if (scan_rc != 0) {
-        error_out = "scan failed";
-        return scan_rc;
+    auto scan = prepare_and_run_scan(args.project_root, args.use_cache, args.cache_dir, args.quiet,
+                                     parser, index);
+    if (!scan) {
+        return tl::unexpected{scan.error()};
     }
 
     if (args.verbose && !args.quiet) {
@@ -457,46 +438,75 @@ int compute_digest_body(const DigestArgs& args, std::string& body, std::string& 
 
     vectis::code::ExportOptions export_opts;
     export_opts.format = args.format;
-    export_opts.project_root = abs_root;
-    export_opts.project_name = abs_root.filename().string();
-    export_opts.exclude_dir_names = scan_config.exclude_dir_names;
+    export_opts.project_root = scan->abs_root;
+    export_opts.project_name = scan->abs_root.filename().string();
+    export_opts.exclude_dir_names = scan->scan_config.exclude_dir_names;
 
-    body = vectis::code::build_digest_string(index, export_opts);
-    return 0;
+    return vectis::code::build_digest_string(index, export_opts);
 }
 
 int run_digest(const DigestArgs& args)
 {
-    std::string body;
-    std::string error_out;
-    const int rc = compute_digest_body(args, body, error_out);
-    if (rc != 0) {
-        std::fprintf(stderr, "error: %s\n", error_out.c_str());
-        return rc;
+    auto body = compute_digest_body(args);
+    if (!body) {
+        const auto& err = body.error();
+        std::fprintf(stderr, "error: %s%s%s\n", err.message.c_str(),
+                     err.context.empty() ? "" : ": ", err.context.c_str());
+        return err.kind == vectis::core::ErrorKind::IoError ? 2 : 1;
     }
 
-    // Output: stdout if --output missing or '-', else the named file.
     if (args.output_path.empty() || args.output_path == "-") {
-        std::fwrite(body.data(), 1, body.size(), stdout);
-        if (!body.empty() && body.back() != '\n') {
+        std::fwrite(body->data(), 1, body->size(), stdout);
+        if (!body->empty() && body->back() != '\n') {
             std::fputc('\n', stdout);
         }
+        return 0;
     }
-    else {
-        std::ofstream out(args.output_path, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            std::fprintf(stderr, "error: cannot write to %s\n", args.output_path.c_str());
-            return 2;
-        }
-        out.write(body.data(), static_cast<std::streamsize>(body.size()));
+    std::ofstream out(args.output_path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        std::fprintf(stderr, "error: cannot write to %s\n", args.output_path.c_str());
+        return 2;
     }
+    out.write(body->data(), static_cast<std::streamsize>(body->size()));
     return 0;
 }
 
-/// Build the digest tool's MCP handler. Captures nothing — the lambda
-/// re-runs the full scan on each call. Most clients invoke `digest`
-/// once per session, so caching across calls would just complicate the
-/// memory model without helping.
+// MCP handlers re-run the full scan on each call. Most clients invoke
+// `digest` once per session, so caching across calls would just complicate
+// the memory model without helping.
+
+[[nodiscard]] nlohmann::json parse_mcp_arguments(const std::string& arguments_json)
+{
+    try {
+        return nlohmann::json::parse(arguments_json);
+    }
+    catch (const nlohmann::json::parse_error& e) {
+        throw McpHandlerError{-32602, std::string{"arguments not valid JSON: "} + e.what()};
+    }
+}
+
+[[nodiscard]] std::string require_string_arg(const nlohmann::json& args, const char* key)
+{
+    const auto it = args.find(key);
+    if (it == args.end() || !it->is_string()) {
+        throw McpHandlerError{-32602, std::string{"missing required string argument `"} + key + "`"};
+    }
+    return it->get<std::string>();
+}
+
+/// Map a Result error to McpHandlerError. IoError maps to JSON-RPC's
+/// "Invalid params" since the caller-supplied path is the usual root
+/// cause; everything else is "Internal error".
+[[noreturn]] void throw_handler_error(const vectis::core::Error& err)
+{
+    const int code = err.kind == vectis::core::ErrorKind::IoError ? -32602 : -32603;
+    std::string msg = err.message;
+    if (!err.context.empty()) {
+        msg += ": " + err.context;
+    }
+    throw McpHandlerError{code, std::move(msg)};
+}
+
 [[nodiscard]] McpTool make_digest_tool()
 {
     return McpTool{
@@ -524,37 +534,24 @@ int run_digest(const DigestArgs& args)
         })",
         .handler =
             [](const std::string& arguments_json) -> std::string {
-            nlohmann::json args;
-            try {
-                args = nlohmann::json::parse(arguments_json);
-            }
-            catch (const nlohmann::json::parse_error& e) {
-                throw McpHandlerError{-32602,
-                                      std::string{"arguments not valid JSON: "} + e.what()};
-            }
-            if (!args.contains("path") || !args["path"].is_string()) {
-                throw McpHandlerError{-32602, "missing required string argument `path`"};
-            }
+            const nlohmann::json args = parse_mcp_arguments(arguments_json);
             DigestArgs cli_args;
-            cli_args.project_root = args["path"].get<std::string>();
-            cli_args.format = vectis::code::DigestFormat::SlimJson; // default
-            cli_args.quiet = true; // suppress the scan progress to stderr
-            if (args.contains("format")) {
-                if (!args["format"].is_string()) {
+            cli_args.project_root = require_string_arg(args, "path");
+            cli_args.format = vectis::code::DigestFormat::SlimJson;
+            cli_args.quiet = true;
+            if (const auto fmt_it = args.find("format"); fmt_it != args.end()) {
+                if (!fmt_it->is_string()) {
                     throw McpHandlerError{-32602, "`format` must be a string"};
                 }
-                if (!parse_format(args["format"].get<std::string>(), cli_args.format)) {
-                    throw McpHandlerError{-32602,
-                                          "unknown format (expected slim|json|md)"};
+                if (!parse_format(fmt_it->get<std::string>(), cli_args.format)) {
+                    throw McpHandlerError{-32602, "unknown format (expected slim|json|md)"};
                 }
             }
-            std::string body;
-            std::string error_out;
-            const int rc = compute_digest_body(cli_args, body, error_out);
-            if (rc != 0) {
-                throw McpHandlerError{-32603, std::move(error_out)};
+            auto body = compute_digest_body(cli_args);
+            if (!body) {
+                throw_handler_error(body.error());
             }
-            return body;
+            return std::move(*body);
         },
     };
 }
@@ -580,27 +577,15 @@ int run_digest(const DigestArgs& args)
         })",
         .handler =
             [](const std::string& arguments_json) -> std::string {
-            nlohmann::json args;
-            try {
-                args = nlohmann::json::parse(arguments_json);
-            }
-            catch (const nlohmann::json::parse_error& e) {
-                throw McpHandlerError{-32602,
-                                      std::string{"arguments not valid JSON: "} + e.what()};
-            }
-            if (!args.contains("path") || !args["path"].is_string()) {
-                throw McpHandlerError{-32602, "missing required string argument `path`"};
-            }
+            const nlohmann::json args = parse_mcp_arguments(arguments_json);
             ExplainArgs cli_args;
-            cli_args.project_root = args["path"].get<std::string>();
+            cli_args.project_root = require_string_arg(args, "path");
             cli_args.quiet = true;
-            std::string body;
-            std::string error_out;
-            const int rc = compute_explain_body(cli_args, body, error_out);
-            if (rc != 0) {
-                throw McpHandlerError{-32603, std::move(error_out)};
+            auto body = compute_explain_body(cli_args);
+            if (!body) {
+                throw_handler_error(body.error());
             }
-            return body;
+            return std::move(*body);
         },
     };
 }
