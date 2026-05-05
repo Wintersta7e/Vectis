@@ -49,8 +49,7 @@ struct GitignorePatterns
 /// shouldn't) would silently drop legitimate code from the digest.
 ///
 /// Returns empty patterns if `<root>/.gitignore` is absent or unreadable.
-[[nodiscard]] GitignorePatterns
-read_gitignore_dir_patterns(const std::filesystem::path& root);
+[[nodiscard]] GitignorePatterns read_gitignore_dir_patterns(const std::filesystem::path& root);
 
 /// Match `name` against a glob `pattern` containing `*` (any run of
 /// chars) and `?` (single char) metacharacters. No bracket expressions

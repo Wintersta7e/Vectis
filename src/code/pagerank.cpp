@@ -94,18 +94,16 @@ std::vector<PageRankResult> compute_pagerank(std::span<const FileEntry> files,
     for (std::size_t i = 0; i < n; ++i) {
         result.push_back(PageRankResult{.file_id = files[i].id, .score = rank[i]});
     }
-    std::sort(result.begin(), result.end(),
-              [](const PageRankResult& a, const PageRankResult& b) {
-                  if (a.score != b.score) {
-                      return a.score > b.score;
-                  }
-                  return a.file_id < b.file_id;
-              });
+    std::sort(result.begin(), result.end(), [](const PageRankResult& a, const PageRankResult& b) {
+        if (a.score != b.score) {
+            return a.score > b.score;
+        }
+        return a.file_id < b.file_id;
+    });
     return result;
 }
 
-std::vector<PageRankResult> compute_pagerank(const CodeIndex& index,
-                                             const PageRankOptions& options)
+std::vector<PageRankResult> compute_pagerank(const CodeIndex& index, const PageRankOptions& options)
 {
     const std::vector<FileEntry> files = index.snapshot_files();
     const std::vector<Dependency> deps = index.all_dependencies();

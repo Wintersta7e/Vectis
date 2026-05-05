@@ -46,14 +46,14 @@ struct PageRankOptions
 /// Returned vector is sorted by `score` descending; ties resolved by
 /// `file_id` ascending so output is reproducible across runs. Returns
 /// empty if `index` has no files.
-[[nodiscard]] std::vector<PageRankResult>
-compute_pagerank(const CodeIndex& index, const PageRankOptions& options = {});
+[[nodiscard]] std::vector<PageRankResult> compute_pagerank(const CodeIndex& index,
+                                                           const PageRankOptions& options = {});
 
 /// Lower-level overload for callers that already hold `files` and the
 /// dep list — saves the two `CodeIndex` snapshots that the
 /// index-taking overload would otherwise re-do under shared lock.
-[[nodiscard]] std::vector<PageRankResult>
-compute_pagerank(std::span<const FileEntry> files, std::span<const Dependency> deps,
-                 const PageRankOptions& options = {});
+[[nodiscard]] std::vector<PageRankResult> compute_pagerank(std::span<const FileEntry> files,
+                                                           std::span<const Dependency> deps,
+                                                           const PageRankOptions& options = {});
 
 } // namespace vectis::code

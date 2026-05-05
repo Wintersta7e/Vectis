@@ -133,10 +133,9 @@ void write_message(std::ostream& out, const json& msg)
     // explain narrative — which is enough for clients that just want
     // the raw answer back.
     json result = json{
-        {"content",
-         json::array({
-             json{{"type", "text"}, {"text", std::move(output)}},
-         })},
+        {"content", json::array({
+                        json{{"type", "text"}, {"text", std::move(output)}},
+                    })},
         {"isError", false},
     };
     return make_result(id, std::move(result));
@@ -146,8 +145,7 @@ void process_message(std::ostream& out, const json& msg, const std::vector<McpTo
                      const McpServerInfo& info)
 {
     if (!msg.is_object()) {
-        write_message(out, make_error(json{}, k_invalid_request,
-                                      "request must be a JSON object"));
+        write_message(out, make_error(json{}, k_invalid_request, "request must be a JSON object"));
         return;
     }
 
@@ -225,8 +223,8 @@ int run_mcp_server(std::istream& in, std::ostream& out, const McpServerInfo& inf
             parsed = json::parse(line);
         }
         catch (const json::parse_error& e) {
-            write_message(out, make_error(json{}, k_parse_error,
-                                          std::string{"parse error: "} + e.what()));
+            write_message(
+                out, make_error(json{}, k_parse_error, std::string{"parse error: "} + e.what()));
             continue;
         }
 

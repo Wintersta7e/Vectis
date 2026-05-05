@@ -27,8 +27,7 @@ McpTool echo_tool()
         .description = "Echo back the input.",
         .input_schema_json = R"({"type":"object","properties":{"text":{"type":"string"}},
                                  "required":["text"]})",
-        .handler =
-            [](const std::string& arguments_json) -> std::string {
+        .handler = [](const std::string& arguments_json) -> std::string {
             const auto args = json::parse(arguments_json);
             if (!args.contains("text") || !args["text"].is_string()) {
                 throw McpHandlerError{-32602, "missing `text`"};
@@ -59,10 +58,9 @@ std::vector<json> run_and_collect(const std::string& input, const std::vector<Mc
 
 TEST(McpServerTest, InitializeReturnsServerInfoAndProtocolVersion)
 {
-    const auto out = run_and_collect(
-        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})"
-        "\n",
-        {echo_tool()});
+    const auto out = run_and_collect(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})"
+                                     "\n",
+                                     {echo_tool()});
     ASSERT_EQ(out.size(), 1U);
     EXPECT_EQ(out[0]["jsonrpc"], "2.0");
     EXPECT_EQ(out[0]["id"], 1);
@@ -75,10 +73,9 @@ TEST(McpServerTest, InitializeReturnsServerInfoAndProtocolVersion)
 
 TEST(McpServerTest, ToolsListReturnsAllRegisteredTools)
 {
-    const auto out = run_and_collect(
-        R"({"jsonrpc":"2.0","id":2,"method":"tools/list"})"
-        "\n",
-        {echo_tool()});
+    const auto out = run_and_collect(R"({"jsonrpc":"2.0","id":2,"method":"tools/list"})"
+                                     "\n",
+                                     {echo_tool()});
     ASSERT_EQ(out.size(), 1U);
     ASSERT_TRUE(out[0].contains("result"));
     const auto& tools = out[0]["result"]["tools"];
@@ -137,19 +134,17 @@ TEST(McpServerTest, ParseErrorReturnsParseErrorResponse)
 TEST(McpServerTest, NotificationsProduceNoResponse)
 {
     // No `id` field → notification per JSON-RPC 2.0 → no reply expected.
-    const auto out = run_and_collect(
-        R"({"jsonrpc":"2.0","method":"notifications/initialized"})"
-        "\n",
-        {echo_tool()});
+    const auto out = run_and_collect(R"({"jsonrpc":"2.0","method":"notifications/initialized"})"
+                                     "\n",
+                                     {echo_tool()});
     EXPECT_TRUE(out.empty());
 }
 
 TEST(McpServerTest, UnknownMethodReturnsMethodNotFound)
 {
-    const auto out = run_and_collect(
-        R"({"jsonrpc":"2.0","id":6,"method":"telepathy/transmit"})"
-        "\n",
-        {echo_tool()});
+    const auto out = run_and_collect(R"({"jsonrpc":"2.0","id":6,"method":"telepathy/transmit"})"
+                                     "\n",
+                                     {echo_tool()});
     ASSERT_EQ(out.size(), 1U);
     ASSERT_TRUE(out[0].contains("error"));
     EXPECT_EQ(out[0]["error"]["code"], -32601);
@@ -157,11 +152,10 @@ TEST(McpServerTest, UnknownMethodReturnsMethodNotFound)
 
 TEST(McpServerTest, BlankLinesBetweenMessagesAreTolerated)
 {
-    const auto out = run_and_collect(
-        "\n   \n"
-        R"({"jsonrpc":"2.0","id":7,"method":"tools/list"})"
-        "\n\n",
-        {echo_tool()});
+    const auto out = run_and_collect("\n   \n"
+                                     R"({"jsonrpc":"2.0","id":7,"method":"tools/list"})"
+                                     "\n\n",
+                                     {echo_tool()});
     ASSERT_EQ(out.size(), 1U);
     EXPECT_EQ(out[0]["id"], 7);
 }
@@ -182,10 +176,9 @@ TEST(McpServerTest, BatchRequestsAreDispatchedIndependently)
 
 TEST(McpServerTest, PingReturnsEmptyResult)
 {
-    const auto out = run_and_collect(
-        R"({"jsonrpc":"2.0","id":10,"method":"ping"})"
-        "\n",
-        {echo_tool()});
+    const auto out = run_and_collect(R"({"jsonrpc":"2.0","id":10,"method":"ping"})"
+                                     "\n",
+                                     {echo_tool()});
     ASSERT_EQ(out.size(), 1U);
     EXPECT_TRUE(out[0]["result"].is_object());
 }

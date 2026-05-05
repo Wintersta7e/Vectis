@@ -25,8 +25,8 @@
 #include "code/dependency.h"
 #include "code/dependency_graph.h"
 #include "code/hotspot_detector.h"
-#include "code/pagerank.h"
 #include "code/language.h"
+#include "code/pagerank.h"
 #include "code/symbol.h"
 #include "core/log.h"
 #include "core/result.h"
@@ -449,8 +449,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         root["hotspots"] = build_hotspots_json(index, lookup, options.project_root,
                                                /*include_excerpts=*/false,
                                                /*max_entries=*/k_slim_hotspot_cap);
-        root["central_files"] = build_central_files_json(index, lookup,
-                                                         k_slim_central_files_cap);
+        root["central_files"] = build_central_files_json(index, lookup, k_slim_central_files_cap);
     }
 
     return root;

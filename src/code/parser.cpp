@@ -336,7 +336,7 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
     return Visibility::Unknown;
 }
 
-[[nodiscard]]Visibility extract_visibility(TSNode node, Language language, std::string_view name)
+[[nodiscard]] Visibility extract_visibility(TSNode node, Language language, std::string_view name)
 {
     switch (language) {
     case Language::Go:
@@ -347,7 +347,7 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
             return Visibility::Unknown;
         }
         return std::isupper(static_cast<unsigned char>(name[0])) != 0 ? Visibility::Public
-                                                                     : Visibility::Private;
+                                                                      : Visibility::Private;
 
     case Language::Python: {
         // Leading underscore = internal; dunder names (`__init__`,
@@ -426,8 +426,7 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
 /// attributes, both empty for C# attribute children that already lack
 /// the `[ ]`. Returns an empty string if the byte range is invalid.
 [[nodiscard]] std::string extract_marker_text(TSNode marker, std::string_view leading,
-                                              std::string_view trailing,
-                                              std::string_view content)
+                                              std::string_view trailing, std::string_view content)
 {
     const std::uint32_t start = ts_node_start_byte(marker);
     const std::uint32_t end = ts_node_end_byte(marker);
@@ -454,9 +453,9 @@ void collect_struct_fields(TSNode struct_node, std::string_view content,
 /// Append every named child of `parent` whose type matches `child_type`
 /// to `out` after running it through `extract_marker_text`. Empty
 /// results are skipped so callers don't have to filter.
-void collect_marker_children(TSNode parent, std::string_view child_type,
-                             std::string_view leading, std::string_view trailing,
-                             std::string_view content, std::vector<std::string>& out)
+void collect_marker_children(TSNode parent, std::string_view child_type, std::string_view leading,
+                             std::string_view trailing, std::string_view content,
+                             std::vector<std::string>& out)
 {
     for_each_named_child_of_type(parent, child_type, [&](TSNode child) {
         std::string text = extract_marker_text(child, leading, trailing, content);
@@ -473,9 +472,8 @@ void collect_marker_children(TSNode parent, std::string_view child_type,
 /// (`#[...]` placed before a declaration) and TypeScript decorators
 /// attached as siblings of `class_declaration`.
 [[nodiscard]] std::vector<std::string>
-collect_marker_siblings_back(TSNode start, std::string_view sibling_type,
-                             std::string_view leading, std::string_view trailing,
-                             std::string_view content)
+collect_marker_siblings_back(TSNode start, std::string_view sibling_type, std::string_view leading,
+                             std::string_view trailing, std::string_view content)
 {
     std::vector<std::string> out;
     TSNode cur = ts_node_prev_named_sibling(start);
@@ -493,8 +491,8 @@ collect_marker_siblings_back(TSNode start, std::string_view sibling_type,
 /// Java annotations: `marker_annotation` and `annotation` nodes inside
 /// a `modifiers` child. Source order across the two types matters so we
 /// walk the list once and filter both kinds.
-[[nodiscard]] std::vector<std::string>
-extract_java_annotations(TSNode node, std::string_view content)
+[[nodiscard]] std::vector<std::string> extract_java_annotations(TSNode node,
+                                                                std::string_view content)
 {
     std::vector<std::string> out;
     const TSNode modifiers = first_named_child_of_type(node, "modifiers");
@@ -521,8 +519,8 @@ extract_java_annotations(TSNode node, std::string_view content)
 /// abstract_method_signature) or as preceding siblings (class_declaration,
 /// abstract_class_declaration). Try children first; fall back to
 /// walking siblings.
-[[nodiscard]] std::vector<std::string>
-extract_typescript_decorators(TSNode node, std::string_view content)
+[[nodiscard]] std::vector<std::string> extract_typescript_decorators(TSNode node,
+                                                                     std::string_view content)
 {
     std::vector<std::string> out;
     collect_marker_children(node, "decorator", "@", {}, content, out);
@@ -532,7 +530,7 @@ extract_typescript_decorators(TSNode node, std::string_view content)
     return collect_marker_siblings_back(node, "decorator", "@", {}, content);
 }
 
-[[nodiscard]]std::vector<std::string> extract_decorators(TSNode node, Language language,
+[[nodiscard]] std::vector<std::string> extract_decorators(TSNode node, Language language,
                                                           std::string_view content)
 {
     switch (language) {

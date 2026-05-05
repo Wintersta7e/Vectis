@@ -359,8 +359,8 @@ prepare_and_run_scan(const std::filesystem::path& project_root, bool use_cache,
 
     std::error_code ec;
     if (!fs::is_directory(project_root, ec) || ec) {
-        return vectis::core::make_error(vectis::core::ErrorKind::IoError,
-                                        "not a directory", project_root.string());
+        return vectis::core::make_error(vectis::core::ErrorKind::IoError, "not a directory",
+                                        project_root.string());
     }
     fs::path abs_root = fs::absolute(project_root, ec);
     if (ec) {
@@ -496,7 +496,8 @@ int run_digest(const DigestArgs& args)
 {
     const auto it = args.find(key);
     if (it == args.end() || !it->is_string()) {
-        throw McpHandlerError{-32602, std::string{"missing required string argument `"} + key + "`"};
+        throw McpHandlerError{-32602,
+                              std::string{"missing required string argument `"} + key + "`"};
     }
     return it->get<std::string>();
 }
@@ -539,8 +540,7 @@ int run_digest(const DigestArgs& args)
             },
             "required": ["path"]
         })",
-        .handler =
-            [](const std::string& arguments_json) -> std::string {
+        .handler = [](const std::string& arguments_json) -> std::string {
             const nlohmann::json args = parse_mcp_arguments(arguments_json);
             DigestArgs cli_args;
             cli_args.project_root = require_string_arg(args, "path");
@@ -567,11 +567,10 @@ int run_digest(const DigestArgs& args)
 {
     return McpTool{
         .name = "explain",
-        .description =
-            "Plain-text narrative summary of a source tree (~20 lines). Architecture "
-            "label, scale, languages, top hotspots, most central files (PageRank), "
-            "decorators, and dependency-graph stats. Designed for direct agent reading "
-            "without JSON parsing.",
+        .description = "Plain-text narrative summary of a source tree (~20 lines). Architecture "
+                       "label, scale, languages, top hotspots, most central files (PageRank), "
+                       "decorators, and dependency-graph stats. Designed for direct agent reading "
+                       "without JSON parsing.",
         .input_schema_json = R"({
             "type": "object",
             "properties": {
@@ -582,8 +581,7 @@ int run_digest(const DigestArgs& args)
             },
             "required": ["path"]
         })",
-        .handler =
-            [](const std::string& arguments_json) -> std::string {
+        .handler = [](const std::string& arguments_json) -> std::string {
             const nlohmann::json args = parse_mcp_arguments(arguments_json);
             ExplainArgs cli_args;
             cli_args.project_root = require_string_arg(args, "path");
