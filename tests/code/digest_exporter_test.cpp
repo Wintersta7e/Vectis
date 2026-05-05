@@ -27,6 +27,7 @@ using vectis::code::FileEntry;
 using vectis::code::Language;
 using vectis::code::Symbol;
 using vectis::code::SymbolKind;
+using vectis::code::Visibility;
 
 /// Populate a small synthetic index with two files and four symbols.
 /// Used by every test in this file so the assertions share a fixture.
@@ -257,6 +258,71 @@ TEST(DigestExporterTest, Markdown_RendersSignaturesAndMembers)
     // Struct fields rendered similarly.
     EXPECT_NE(content.find("`Point` (struct)"), std::string::npos);
     EXPECT_NE(content.find("`x`, `y`"), std::string::npos);
+}
+
+TEST(DigestExporterTest, Markdown_RendersVisibilityAndDecorators)
+{
+    CodeIndex index;
+
+    FileEntry file;
+    file.path_relative = "src/api/routes.py";
+    file.language = Language::Python;
+    file.size = 800;
+    file.line_count = 30;
+    const std::int64_t fid = index.add_file(std::move(file));
+
+    const std::array<Symbol, 4> batch = {
+        Symbol{.file_id = fid,
+               .name = "index",
+               .kind = SymbolKind::Function,
+               .line_start = 5,
+               .line_end = 8,
+               .signature = "def index() -> str",
+               .visibility = Visibility::Public,
+               .decorators = {"app.route('/')", "login_required"}},
+        Symbol{.file_id = fid,
+               .name = "_helper",
+               .kind = SymbolKind::Function,
+               .line_start = 12,
+               .line_end = 14,
+               .signature = "def _helper(x)",
+               .visibility = Visibility::Private},
+        Symbol{.file_id = fid,
+               .name = "Inner",
+               .kind = SymbolKind::Class,
+               .line_start = 18,
+               .line_end = 25,
+               .visibility = Visibility::Internal},
+        // No visibility set — should render with the bare `(class)` form
+        // and emit no decorators sub-bullet.
+        Symbol{.file_id = fid,
+               .name = "Bare",
+               .kind = SymbolKind::Class,
+               .line_start = 27,
+               .line_end = 29},
+    };
+    index.add_symbols(batch);
+
+    const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+
+    // Visibility surfaces inside the kind-parens when set.
+    EXPECT_NE(content.find("`def index() -> str` (function, public)"), std::string::npos);
+    EXPECT_NE(content.find("`def _helper(x)` (function, private)"), std::string::npos);
+    EXPECT_NE(content.find("`Inner` (class, internal)"), std::string::npos);
+
+    // Unknown visibility leaves the parens untouched (no trailing comma).
+    EXPECT_NE(content.find("`Bare` (class) — line 27"), std::string::npos);
+    EXPECT_EQ(content.find("`Bare` (class, "), std::string::npos);
+
+    // Decorators land in their own indented sub-bullet, with the @
+    // re-attached so the rendering matches source idiom.
+    EXPECT_NE(content.find("    - decorators: `@app.route('/')`, `@login_required`"),
+              std::string::npos);
+
+    // Symbols without decorators must not emit the sub-bullet.
+    EXPECT_EQ(content.find("`def _helper(x)` (function, private)\n    - decorators:"),
+              std::string::npos);
 }
 
 TEST(DigestExporterTest, Export_WritesFileAtDefaultLocation)

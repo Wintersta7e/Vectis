@@ -556,8 +556,11 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
             // or reader than the bare name. Everything else uses the
             // plain name.
             const std::string& label = sym.signature.empty() ? sym.name : sym.signature;
-            out << "- `" << label << "` (" << symbol_kind_name(sym.kind) << ") — line "
-                << sym.line_start << "\n";
+            out << "- `" << label << "` (" << symbol_kind_name(sym.kind);
+            if (sym.visibility != Visibility::Unknown) {
+                out << ", " << visibility_name(sym.visibility);
+            }
+            out << ") — line " << sym.line_start << "\n";
 
             // Indented sub-bullet for enum values / struct fields,
             // comma-separated and inline-code-formatted.
@@ -568,6 +571,21 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                         out << ", ";
                     }
                     out << "`" << sym.members[i] << "`";
+                }
+                out << "\n";
+            }
+
+            // Decorator / annotation list as a separate sub-bullet so a
+            // reader (and the JSON↔MD round-trip) sees them adjacent to
+            // the symbol they decorate. Stored without the leading `@`;
+            // re-attached here for parity with the source idiom.
+            if (!sym.decorators.empty()) {
+                out << "    - decorators: ";
+                for (std::size_t i = 0; i < sym.decorators.size(); ++i) {
+                    if (i > 0) {
+                        out << ", ";
+                    }
+                    out << "`@" << sym.decorators[i] << "`";
                 }
                 out << "\n";
             }
