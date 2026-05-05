@@ -493,7 +493,10 @@ detect_root_manifest(const std::filesystem::path& project_root)
 
     // Cargo.toml gets here only if the earlier workspace check didn't
     // fire — i.e. it's a single-crate Rust project.
-    static constexpr std::array<std::pair<std::string_view, Runtime>, 11> k_manifests = {{
+    // Order matters: the first match wins. Native build manifests
+    // (Makefile, configure.ac, meson.build) are the fallback for C/C++
+    // projects without CMakeLists.txt — redis-style codebases.
+    static constexpr std::array<std::pair<std::string_view, Runtime>, 14> k_manifests = {{
         {"go.mod", Runtime::Go},
         {"composer.json", Runtime::Php},
         {"Gemfile", Runtime::Ruby},
@@ -505,6 +508,9 @@ detect_root_manifest(const std::filesystem::path& project_root)
         {"package.json", Runtime::NodeJs},
         {"CMakeLists.txt", Runtime::CCpp},
         {"setup.py", Runtime::Python},
+        {"meson.build", Runtime::CCpp},
+        {"configure.ac", Runtime::CCpp},
+        {"Makefile", Runtime::CCpp},
     }};
     for (const auto& [filename, runtime] : k_manifests) {
         if (std::filesystem::exists(project_root / filename, ec) && !ec) {
@@ -546,12 +552,12 @@ struct LibraryHit
 
 /// Confidence for an unambiguous declaration (gemspec at root,
 /// composer.json with `"type": "library"`).
-constexpr std::uint8_t k_library_explicit_confidence = 80;
+constexpr std::uint8_t k_library_explicit_confidence = 85;
 
 /// Confidence for a layout-inferred library (Node `main`/`index.*`
 /// entry, Python `<pkg>/__init__.py` shape, PHP autoload without
 /// `index.php`).
-constexpr std::uint8_t k_library_inferred_confidence = 75;
+constexpr std::uint8_t k_library_inferred_confidence = 80;
 
 /// Node.js library: substring-match `package.json` for `main`/`exports`/
 /// `module` (avoids dragging in a JSON parser; the 64 KB cap is plenty),
@@ -1234,23 +1240,23 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         if (layered_matches > 0) {
             out.reasoning = "single entry point with partial layering (" + layered_reason + ")" +
                             manifest_suffix + coherence_suffix;
-            int conf = 50;
+            int conf = 55;
             if (coherent) {
-                conf = 70;
+                conf = 80;
             }
             else if (manifest) {
-                conf = 60;
+                conf = 70;
             }
             out.confidence = conf;
         }
         else if (manifest) {
             out.reasoning = lbl + " project (" + manifest->filename + ")" + coherence_suffix +
                             ", no distinctive layout";
-            out.confidence = coherent ? 65 : 55;
+            out.confidence = coherent ? 75 : 60;
         }
         else {
             out.reasoning = "single entry point, no distinctive layout";
-            out.confidence = 40;
+            out.confidence = 45;
         }
         return out;
     }
