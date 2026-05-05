@@ -1007,7 +1007,11 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         // Hexagonal / clean architecture
         "adapters", "ports", "infrastructure", "infra", "engine",
         // Go Clean Architecture (bxcodec pattern)
-        "usecase", "usecases", "delivery"};
+        "usecase", "usecases", "delivery",
+        // Mature C/C++ codebases (postgres has src/backend/+src/bin/+
+        // src/include/+src/interfaces/; openssl has crypto/+ssl/+apps/
+        // +engines/; sqlite has src/+tool/+ext/).
+        "backend", "interfaces", "subsystems"};
     // NOTE: `apis` is intentionally NOT here — it's an ApiBackend
     // trigger, and ApiBackend takes precedence over the Layered
     // fallback below.
