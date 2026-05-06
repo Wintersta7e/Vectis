@@ -237,6 +237,54 @@ TEST_F(CodeIndexStoreTest, ClearCache_RemovesAllData)
     EXPECT_FALSE(load_r); // should fail — no cache
 }
 
+TEST_F(CodeIndexStoreTest, RoundTripsExternalDependencies)
+{
+    // Regression for the FK violation that aborted save() whenever a
+    // file imported anything outside the project tree (target_file_id
+    // == 0 — `<vector>`, `java.util.List`, …). The whole transaction
+    // rolled back, leaving the cache empty and every subsequent run
+    // doing a fresh scan with no speedup.
+    populate_index();
+
+    Dependency external;
+    external.source_file_id = m_file1_id;
+    external.target_file_id = 0;
+    external.kind = "include";
+    external.import_string = "vector";
+    m_index.add_dependency(std::move(external));
+
+    Dependency external2;
+    external2.source_file_id = m_file1_id;
+    external2.target_file_id = 0;
+    external2.kind = "include";
+    external2.import_string = "string";
+    m_index.add_dependency(std::move(external2));
+
+    CacheMetadata meta;
+    meta.project_root = "/some/project";
+    meta.scan_timestamp = "2026-05-06T12:00:00Z";
+
+    auto save_result = save_index(m_storage, m_index, meta);
+    ASSERT_TRUE(save_result) << save_result.error().message;
+
+    CodeIndex loaded;
+    auto load_result = load_index(m_storage, loaded);
+    ASSERT_TRUE(load_result) << load_result.error().message;
+
+    // Internal + 2 externals all survived the round-trip.
+    EXPECT_EQ(loaded.dependency_count(), 3U);
+    const auto deps = loaded.all_dependencies();
+    ASSERT_EQ(deps.size(), 3U);
+
+    std::size_t external_count = 0;
+    for (const auto& d : deps) {
+        if (d.target_file_id == 0) {
+            ++external_count;
+        }
+    }
+    EXPECT_EQ(external_count, 2U);
+}
+
 TEST_F(CodeIndexStoreTest, LoadFromEmptyDB_ReturnsError)
 {
     CodeIndex loaded;

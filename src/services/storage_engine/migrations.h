@@ -77,6 +77,30 @@ inline constexpr std::array k_migrations = {
     Migration{3, "symbol_decorators", R"(
         ALTER TABLE symbols ADD COLUMN decorators TEXT DEFAULT '';
     )"},
+    Migration{4, "drop_target_file_id_fk", R"(
+        -- v1's `dependencies` table declared
+        -- `target_file_id INTEGER REFERENCES files(id) ON DELETE CASCADE`,
+        -- but the dependency model uses `target_file_id = 0` for
+        -- external / unresolved imports (`<vector>`, `java.util.List`,
+        -- etc.). With `PRAGMA foreign_keys=ON` every external import
+        -- failed the FK check on save, which rolled the whole
+        -- transaction back and left the cache empty. Source-side FK
+        -- stays — every dep does originate in a real scanned file.
+        CREATE TABLE dependencies_new (
+            source_file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            target_file_id INTEGER,
+            kind           TEXT,
+            import_string  TEXT,
+            PRIMARY KEY (source_file_id, target_file_id, kind, import_string)
+        );
+        INSERT OR IGNORE INTO dependencies_new
+            SELECT source_file_id, target_file_id, kind, import_string
+            FROM dependencies;
+        DROP TABLE dependencies;
+        ALTER TABLE dependencies_new RENAME TO dependencies;
+        CREATE INDEX IF NOT EXISTS idx_deps_source ON dependencies(source_file_id);
+        CREATE INDEX IF NOT EXISTS idx_deps_target ON dependencies(target_file_id);
+    )"},
 };
 // clang-format on
 
