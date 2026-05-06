@@ -316,6 +316,7 @@ struct ExplainArgs
     bool use_cache = false;
     std::filesystem::path cache_dir;
     bool quiet = false;
+    bool verbose = false;
 };
 
 bool parse_explain_args(int argc, char** argv, ExplainArgs& out)
@@ -339,6 +340,12 @@ bool parse_explain_args(int argc, char** argv, ExplainArgs& out)
         }
         else if (arg == "--quiet" || arg == "-q") {
             out.quiet = true;
+            out.verbose = false;
+            ++i;
+        }
+        else if (arg == "--verbose" || arg == "-v") {
+            out.verbose = true;
+            out.quiet = false;
             ++i;
         }
         else {
@@ -398,10 +405,21 @@ prepare_and_run_scan(const std::filesystem::path& project_root, bool use_cache,
 {
     vectis::code::TreeSitterParser parser;
     vectis::code::CodeIndex index;
+
+    const auto t_start = std::chrono::steady_clock::now();
     auto scan = prepare_and_run_scan(args.project_root, args.use_cache, args.cache_dir, args.quiet,
                                      parser, index);
     if (!scan) {
         return tl::unexpected{scan.error()};
+    }
+
+    if (args.verbose && !args.quiet) {
+        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - t_start)
+                                    .count();
+        std::fprintf(stderr, "vectis: scanned %zu files, %zu symbols, %zu deps in %lld ms\n",
+                     index.file_count(), index.symbol_count(), index.dependency_count(),
+                     static_cast<long long>(elapsed_ms));
     }
 
     vectis::code::ExplainOptions explain_opts;
