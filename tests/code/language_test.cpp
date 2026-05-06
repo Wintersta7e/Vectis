@@ -84,38 +84,33 @@ TEST(LanguageTest, RefineKeepsCppForRealHeaders)
                                         "namespace foo {\n"
                                         "class Bar { public: void baz(); };\n"
                                         "}\n";
-    EXPECT_EQ(refine_language(Language::Cpp, ".h", header), Language::Cpp);
+    EXPECT_EQ(refine_language(Language::Cpp, "/p/foo.h", header), Language::Cpp);
 
     constexpr std::string_view c_header = "#ifndef FOO_H\n#define FOO_H\nint foo(void);\n#endif\n";
-    EXPECT_EQ(refine_language(Language::Cpp, ".h", c_header), Language::Cpp);
+    EXPECT_EQ(refine_language(Language::Cpp, "/p/foo.h", c_header), Language::Cpp);
 }
 
 TEST(LanguageTest, RefineReclassifiesJsAliasHeaderAsJavaScript)
 {
-    // Mimics the legacy "alias.h" file from the FEEDBACK-2026-05-06
-    // case study: an HTML help system using .h to host JS aliases.
-    constexpr std::string_view js_alias = "// Help-system JS aliases.\n"
-                                          "var navAliases = {};\n"
+    constexpr std::string_view js_alias = "var navAliases = {};\n"
                                           "function regAlias(name, target) {\n"
                                           "  navAliases[name] = target;\n"
                                           "}\n";
-    EXPECT_EQ(refine_language(Language::Cpp, ".h", js_alias), Language::JavaScript);
+    EXPECT_EQ(refine_language(Language::Cpp, "/p/alias.h", js_alias), Language::JavaScript);
 }
 
 TEST(LanguageTest, RefineLeavesUnambiguousExtensionsAlone)
 {
-    // Refinement only touches .h. .cpp / .js stay put no matter what.
-    EXPECT_EQ(refine_language(Language::Cpp, ".cpp", "function noop() {}"), Language::Cpp);
-    EXPECT_EQ(refine_language(Language::JavaScript, ".js", "#include <vector>"),
+    EXPECT_EQ(refine_language(Language::Cpp, "/p/foo.cpp", "function noop() {}"), Language::Cpp);
+    EXPECT_EQ(refine_language(Language::JavaScript, "/p/foo.js", "#include <vector>"),
               Language::JavaScript);
 }
 
 TEST(LanguageTest, RefineKeepsCppForAmbiguousContent)
 {
-    // No C/C++ markers and no JS markers — keep the original guess so
-    // the file is still indexed (rather than dropped to Unknown).
+    // No C nor JS markers — keep the .h-as-C++ default rather than drop the file entirely.
     constexpr std::string_view ambiguous = "// just a comment\n";
-    EXPECT_EQ(refine_language(Language::Cpp, ".h", ambiguous), Language::Cpp);
+    EXPECT_EQ(refine_language(Language::Cpp, "/p/foo.h", ambiguous), Language::Cpp);
 }
 
 } // namespace

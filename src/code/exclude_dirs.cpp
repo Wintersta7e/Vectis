@@ -2,32 +2,17 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <ranges>
 #include <string>
 #include <string_view>
 
+#include "core/string_util.h"
+
 namespace vectis::code {
-
-namespace {
-
-[[nodiscard]] std::string ascii_lower(std::string_view in)
-{
-    std::string out;
-    out.reserve(in.size());
-    for (const char c : in) {
-        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-    }
-    return out;
-}
-
-} // namespace
 
 bool looks_like_vendored_js(std::string_view filename) noexcept
 {
-    // Anything with a .min.js extension is by convention a built /
-    // minified bundle, not source the user authored.
-    const std::string lower = ascii_lower(filename);
+    const std::string lower = vectis::core::to_lower_ascii(filename);
     if (lower.size() > 7 && lower.ends_with(".min.js")) {
         return true;
     }

@@ -842,12 +842,9 @@ namespace {
     return text;
 }
 
-/// Reject `import_string` values that obviously aren't module
-/// specifiers — jQuery-style `$('<div>')`, `$('#id')`, `$('.cls')`,
-/// CSS pseudo-selectors, attribute selectors, and any string with
-/// whitespace. The tree-sitter JS query's `(#eq? @_func "require")`
-/// predicate doesn't always discriminate `$()` from `require()`, so
-/// we filter the survivors here.
+/// Filter `$('<div>')`-style strings out of JS/TS imports: tree-sitter's
+/// `(#eq? @_func "require")` predicate sometimes lets `$()` calls match
+/// the `require()` rule, so the survivors get a textual check.
 [[nodiscard]] bool looks_like_css_selector(std::string_view s) noexcept
 {
     if (s.empty()) {
@@ -869,11 +866,9 @@ namespace {
         }
     }
 
-    // Bare HTML element names — `$('body')`, `$('head')` — pass every
-    // other heuristic. Match a small list of tags too common to be
-    // npm package names. Conservative on purpose: real packages like
-    // `body-parser`, `html2canvas`, `head-of-x` do not match because
-    // they contain `-` or other characters.
+    // Bare HTML tag names with no `-` or `.` — packages like
+    // `body-parser` or `html2canvas` are not on the list since they
+    // would not equal a tag.
     static constexpr std::array<std::string_view, 24> k_html_tags = {
         "html", "head", "body",   "div",    "span",    "a",       "p",     "img",
         "tr",   "td",   "th",     "ul",     "ol",      "li",      "form",  "input",

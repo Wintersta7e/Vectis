@@ -63,13 +63,11 @@ namespace {
         out.pop_back();
     }
     if (out.size() > k_max_len) {
-        // Truncate at k_max_len-1 to leave room for the ellipsis (3
-        // bytes in UTF-8). Trim trailing space so we don't get "foo …".
         out.resize(k_max_len - 1);
         while (!out.empty() && out.back() == ' ') {
             out.pop_back();
         }
-        out += "\xE2\x80\xA6"; // U+2026 HORIZONTAL ELLIPSIS
+        out += "\xE2\x80\xA6"; // U+2026 HORIZONTAL ELLIPSIS (3 bytes UTF-8)
     }
     return out;
 }

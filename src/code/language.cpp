@@ -1,11 +1,12 @@
 #include "code/language.h"
 
 #include <array>
-#include <cctype>
 #include <filesystem>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include "core/string_util.h"
 
 namespace vectis::code {
 
@@ -53,18 +54,6 @@ constexpr std::array<ExtensionEntry, 27> k_extension_map = {{
     {".pkb", Language::Sql}, // Oracle PL/SQL package body
 }};
 
-/// Lowercase an extension string in-place for case-insensitive lookup.
-/// ASCII-only is fine — file extensions that matter are all ASCII.
-[[nodiscard]] std::string to_lower_ascii(std::string_view input)
-{
-    std::string out;
-    out.reserve(input.size());
-    for (const char ch : input) {
-        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    return out;
-}
-
 /// Cheap substring presence check on the head of a content sample.
 [[nodiscard]] bool head_contains(std::string_view head, std::string_view needle) noexcept
 {
@@ -73,21 +62,21 @@ constexpr std::array<ExtensionEntry, 27> k_extension_map = {{
 
 } // namespace
 
-Language refine_language(Language tentative, std::string_view extension,
+Language refine_language(Language tentative, const std::filesystem::path& path,
                          std::string_view content) noexcept
 {
-    // Only `.h` is path-ambiguous in our extension table — `.hpp` /
-    // `.hh` / `.hxx` are unambiguously C++, and every other extension
-    // we map is single-language. A `.h` file in a directory without a
-    // single C/C++ sibling, e.g. an HTML help system that ships its
-    // JS includes with `.h` extensions, otherwise inflates the C++
-    // language count and drags non-C++ symbols into the digest.
-    if (extension != ".h" || tentative != Language::Cpp) {
+    // `.h` is the only path-ambiguous extension in our table; every
+    // other mapping is single-language. Bail before any string work
+    // when we don't need it. `.H` (Objective-C++ convention on some
+    // old codebases) matches too; mixed case like `.Hh` is not.
+    if (tentative != Language::Cpp) {
+        return tentative;
+    }
+    const auto ext = path.extension();
+    if (ext != ".h" && ext != ".H") {
         return tentative;
     }
 
-    // Sniff the first 4 KiB — enough to spot include guards, license
-    // banners, leading function/var declarations.
     constexpr std::size_t k_sniff_bytes = 4096;
     const std::string_view head = content.substr(0, std::min(content.size(), k_sniff_bytes));
 
@@ -117,7 +106,7 @@ Language refine_language(Language tentative, std::string_view extension,
 Language detect_language(const std::filesystem::path& path) noexcept
 {
     try {
-        const std::string ext = to_lower_ascii(path.extension().string());
+        const std::string ext = vectis::core::to_lower_ascii(path.extension().string());
         if (ext.empty()) {
             return Language::Unknown;
         }

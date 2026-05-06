@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <bit>
-#include <cctype>
 #include <cstdint>
 #include <mutex>
 #include <shared_mutex>
@@ -12,22 +11,11 @@
 #include <unordered_set>
 #include <utility>
 
+#include "core/string_util.h"
+
 namespace vectis::code {
 
 namespace {
-
-/// ASCII lowercase in place. Good enough for symbol-name matching —
-/// identifiers in supported languages are overwhelmingly ASCII, and
-/// false misses on non-ASCII identifiers are acceptable for Step 2.
-[[nodiscard]] std::string to_lower_ascii(std::string_view input)
-{
-    std::string out;
-    out.reserve(input.size());
-    for (const char ch : input) {
-        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    return out;
-}
 
 /// Bit position in `m_language_bits` for a given language. Kept
 /// outside the enum so we can increment without renumbering.
@@ -313,7 +301,7 @@ std::vector<Symbol> CodeIndex::snapshot_all_symbols() const
 std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_t limit) const
 {
     std::vector<Symbol> matches;
-    const std::string needle = to_lower_ascii(query);
+    const std::string needle = vectis::core::to_lower_ascii(query);
 
     {
         const std::shared_lock lock(m_mutex);
@@ -337,7 +325,7 @@ std::vector<Symbol> CodeIndex::search_symbols(std::string_view query, std::size_
                 if (sym.file_id == 0) {
                     continue; // skip removed
                 }
-                const std::string lower_name = to_lower_ascii(sym.name);
+                const std::string lower_name = vectis::core::to_lower_ascii(sym.name);
                 if (lower_name.find(needle) != std::string::npos) {
                     matches.push_back(sym);
                 }

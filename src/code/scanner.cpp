@@ -188,11 +188,6 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
         const std::filesystem::path& path = entry.path();
         const Language language = detect_language(path);
         if (language == Language::JavaScript && looks_like_vendored_js(path.filename().string())) {
-            // Vendored bundles (jquery-1.6.1.js, prototype.js, *.min.js)
-            // dominate symbol counts and skew architecture detection
-            // toward "JavaScript-heavy SPA" on backends that just ship
-            // a help-system overlay. Counted as skipped, not Unknown,
-            // so progress reporting still mentions them.
             ++files_skipped;
             try {
                 it.increment(ec);
@@ -262,14 +257,7 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
             continue;
         }
 
-        // Refine the path-only language guess against the actual file
-        // contents — handles `.h` files that turn out to be JS aliases
-        // and similar legacy ambiguity.
-        std::string ext = path.extension().string();
-        for (char& c : ext) {
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        }
-        const Language refined = refine_language(language, ext, content);
+        const Language refined = refine_language(language, path, content);
 
         FileEntry file_entry;
         file_entry.path_relative = std::filesystem::relative(path, config.root, ec);
@@ -496,10 +484,6 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         const std::filesystem::path& path = entry.path();
         const Language language = detect_language(path);
         if (language == Language::JavaScript && looks_like_vendored_js(path.filename().string())) {
-            // Skip vendored JS bundles in incremental scans for the
-            // same reason as the full-scan path. The incremental
-            // counters don't track "skipped" separately, so the file
-            // simply does not get added or updated.
             try {
                 it.increment(ec);
             }
@@ -557,12 +541,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
             continue;
         }
 
-        // Same content-aware refinement as the full-scan path.
-        std::string ext = path.extension().string();
-        for (char& c : ext) {
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        }
-        const Language refined = refine_language(language, ext, content);
+        const Language refined = refine_language(language, path, content);
 
         const auto rel = std::filesystem::relative(path, config.root, ec);
         if (ec) {
