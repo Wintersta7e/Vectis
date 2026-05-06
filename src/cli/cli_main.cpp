@@ -210,15 +210,17 @@ vectis::code::ScanConfig make_scan_config(const std::filesystem::path& abs_root)
 /// Run a scan without touching disk. Every invocation starts with an
 /// empty in-memory CodeIndex and does a full tree walk.
 int run_uncached(const vectis::code::ScanConfig& config, vectis::code::TreeSitterParser& parser,
-                 vectis::code::CodeIndex& index)
+                 vectis::code::CodeIndex& index, std::uint64_t& files_skipped_out)
 {
     std::atomic<std::int64_t> epoch{1};
     vectis::core::CancellationToken token;
     const auto noop_progress = [](const auto&) {};
-    const auto noop_completion = [](const auto&) {};
+    const auto on_complete = [&files_skipped_out](const vectis::code::ScanSummary& s) {
+        files_skipped_out = s.files_skipped;
+    };
 
-    const auto r = vectis::code::Scanner::run(config, index, parser, noop_progress, noop_completion,
-                                              token, epoch);
+    const auto r =
+        vectis::code::Scanner::run(config, index, parser, noop_progress, on_complete, token, epoch);
     if (!r) {
         std::fprintf(stderr, "error: scan failed: %s\n", r.error().message.c_str());
         return 2;
@@ -229,7 +231,8 @@ int run_uncached(const vectis::code::ScanConfig& config, vectis::code::TreeSitte
 /// Cached path: open the SQLite state, load any existing index, do a
 /// hash-based incremental scan, persist the updated state.
 int run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& cache_dir,
-               vectis::code::TreeSitterParser& parser, vectis::code::CodeIndex& index, bool quiet)
+               vectis::code::TreeSitterParser& parser, vectis::code::CodeIndex& index, bool quiet,
+               std::uint64_t& files_skipped_out)
 {
     namespace fs = std::filesystem;
 
@@ -278,9 +281,11 @@ int run_cached(const vectis::code::ScanConfig& config, const std::filesystem::pa
 
     if (index.file_count() == 0) {
         // Cold cache: full scan + save.
-        const auto noop_completion = [](const auto&) {};
-        const auto r = vectis::code::Scanner::run(config, index, parser, noop_progress,
-                                                  noop_completion, token, epoch);
+        const auto on_complete = [&files_skipped_out](const vectis::code::ScanSummary& s) {
+            files_skipped_out = s.files_skipped;
+        };
+        const auto r = vectis::code::Scanner::run(config, index, parser, noop_progress, on_complete,
+                                                  token, epoch);
         if (!r) {
             std::fprintf(stderr, "error: scan failed: %s\n", r.error().message.c_str());
             return 2;
@@ -294,6 +299,7 @@ int run_cached(const vectis::code::ScanConfig& config, const std::filesystem::pa
             std::fprintf(stderr, "error: incremental scan failed: %s\n", r.error().message.c_str());
             return 2;
         }
+        files_skipped_out = r->files_skipped;
     }
 
     vectis::code::CacheMetadata meta;
@@ -360,6 +366,7 @@ struct ScanInputs
 {
     std::filesystem::path abs_root;
     vectis::code::ScanConfig scan_config;
+    std::uint64_t files_skipped = 0;
 };
 
 [[nodiscard]] vectis::core::Result<ScanInputs>
@@ -384,13 +391,14 @@ prepare_and_run_scan(const std::filesystem::path& project_root, bool use_cache,
     auto scan_config = make_scan_config(abs_root);
 
     int scan_rc = 0;
+    std::uint64_t files_skipped = 0;
     if (use_cache) {
         const fs::path resolved_cache_dir =
             cache_dir.empty() ? abs_root / "vectis-data" : fs::absolute(cache_dir, ec);
-        scan_rc = run_cached(scan_config, resolved_cache_dir, parser, index, quiet);
+        scan_rc = run_cached(scan_config, resolved_cache_dir, parser, index, quiet, files_skipped);
     }
     else {
-        scan_rc = run_uncached(scan_config, parser, index);
+        scan_rc = run_uncached(scan_config, parser, index, files_skipped);
     }
     if (scan_rc != 0) {
         // run_cached / run_uncached already log to stderr; surface the failure
@@ -398,7 +406,11 @@ prepare_and_run_scan(const std::filesystem::path& project_root, bool use_cache,
         return vectis::core::make_error(vectis::core::ErrorKind::IoError, "scan failed");
     }
 
-    return ScanInputs{.abs_root = std::move(abs_root), .scan_config = std::move(scan_config)};
+    return ScanInputs{
+        .abs_root = std::move(abs_root),
+        .scan_config = std::move(scan_config),
+        .files_skipped = files_skipped,
+    };
 }
 
 [[nodiscard]] vectis::core::Result<std::string> compute_explain_body(const ExplainArgs& args)
@@ -417,9 +429,10 @@ prepare_and_run_scan(const std::filesystem::path& project_root, bool use_cache,
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - t_start)
                                     .count();
-        std::fprintf(stderr, "vectis: scanned %zu files, %zu symbols, %zu deps in %lld ms\n",
-                     index.file_count(), index.symbol_count(), index.dependency_count(),
-                     static_cast<long long>(elapsed_ms));
+        std::fprintf(
+            stderr, "vectis: scanned %zu files (%llu skipped), %zu symbols, %zu deps in %lld ms\n",
+            index.file_count(), static_cast<unsigned long long>(scan->files_skipped),
+            index.symbol_count(), index.dependency_count(), static_cast<long long>(elapsed_ms));
     }
 
     vectis::code::ExplainOptions explain_opts;
@@ -461,9 +474,10 @@ int run_explain(const ExplainArgs& args)
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - t_start)
                                     .count();
-        std::fprintf(stderr, "vectis: scanned %zu files, %zu symbols, %zu deps in %lld ms\n",
-                     index.file_count(), index.symbol_count(), index.dependency_count(),
-                     static_cast<long long>(elapsed_ms));
+        std::fprintf(
+            stderr, "vectis: scanned %zu files (%llu skipped), %zu symbols, %zu deps in %lld ms\n",
+            index.file_count(), static_cast<unsigned long long>(scan->files_skipped),
+            index.symbol_count(), index.dependency_count(), static_cast<long long>(elapsed_ms));
     }
 
     vectis::code::ExportOptions export_opts;

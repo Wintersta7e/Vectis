@@ -34,6 +34,7 @@ struct ScanSummary
     std::size_t file_count = 0;
     std::size_t symbol_count = 0;
     std::size_t language_count = 0;
+    std::uint64_t files_skipped = 0;
 };
 
 /// Configuration for one scan run.
@@ -58,6 +59,7 @@ struct IncrementalScanResult
     std::size_t files_updated = 0;
     std::size_t files_deleted = 0;
     std::size_t files_unchanged = 0;
+    std::uint64_t files_skipped = 0;
 };
 
 /// Runs a recursive directory walk on a background thread, detecting

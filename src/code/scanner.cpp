@@ -354,6 +354,7 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
     summary.file_count = index.file_count();
     summary.symbol_count = index.symbol_count();
     summary.language_count = index.language_count();
+    summary.files_skipped = files_skipped;
 
     VECTIS_LOG_INFO(
         "Scanner: scan complete — {} files, {} symbols, {} languages, {} deps ({} skipped)",
@@ -484,6 +485,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         const std::filesystem::path& path = entry.path();
         const Language language = detect_language(path);
         if (language == Language::JavaScript && looks_like_vendored_js(path.filename().string())) {
+            ++result.files_skipped;
             try {
                 it.increment(ec);
             }
@@ -494,6 +496,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
             continue;
         }
         if (language == Language::Unknown) {
+            ++result.files_skipped;
             try {
                 it.increment(ec);
             }
@@ -507,6 +510,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         const std::uint64_t size = entry.file_size(ec);
         if (ec || size > k_max_file_size_bytes) {
             ec.clear();
+            ++result.files_skipped;
             try {
                 it.increment(ec);
             }
@@ -519,6 +523,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
 
         auto read_result = vectis::platform::read_file(path);
         if (!read_result) {
+            ++result.files_skipped;
             try {
                 it.increment(ec);
             }
@@ -531,6 +536,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
 
         const std::string& content = *read_result;
         if (looks_binary(content)) {
+            ++result.files_skipped;
             try {
                 it.increment(ec);
             }
