@@ -118,6 +118,55 @@ TEST(ExplainTest, IncludesHotspotsForHighComplexity)
     EXPECT_NE(out.find("src/app.py:30"), std::string::npos);
 }
 
+TEST(ExplainTest, NormalisesMultiLineDecoratorWhitespace)
+{
+    // Real-world annotations from Java enterprise code arrive with
+    // newlines and column-alignment whitespace. Before normalisation
+    // a single @WebService annotation could span 5 lines of the
+    // 20-line explain budget.
+    CodeIndex idx;
+    FileEntry f;
+    f.path_relative = "src/Service.java";
+    f.language = Language::Java;
+    f.size = 1024;
+    f.line_count = 50;
+    const auto fid = idx.add_file(std::move(f));
+
+    Symbol sym{
+        .file_id = fid,
+        .name = "Service",
+        .kind = SymbolKind::Class,
+        .line_start = 1,
+        .line_end = 50,
+        .visibility = Visibility::Public,
+    };
+    sym.decorators = {std::string{"WebService(serviceName       = \"VapiWSService\",\n"
+                                  "           portName          = \"VapiWSServiceSoap\",\n"
+                                  "           targetNamespace   = \"http://tempuri.org/\")"}};
+    idx.add_symbols(std::array<Symbol, 1>{sym});
+
+    ExplainOptions opts;
+    opts.project_root = "/fake";
+    opts.project_name = "p";
+    const std::string out = build_explanation(idx, opts);
+
+    const auto dec_pos = out.find("Decorators");
+    ASSERT_NE(dec_pos, std::string::npos);
+    const auto line_end = out.find('\n', dec_pos);
+    ASSERT_NE(line_end, std::string::npos);
+    const std::string dec_line = out.substr(dec_pos, line_end - dec_pos);
+
+    // No literal newline before the line ends, no runs of multiple
+    // spaces inside the rendered annotation.
+    EXPECT_EQ(dec_line.find('\n'), std::string::npos);
+    EXPECT_EQ(dec_line.find("  "), std::string::npos);
+    // Annotation name still readable.
+    EXPECT_NE(dec_line.find("@WebService"), std::string::npos);
+    // 80-char-per-entry budget plus the "Decorators (top N over … ): "
+    // prefix still keeps the line well under 200 chars.
+    EXPECT_LT(dec_line.size(), 200U);
+}
+
 TEST(ExplainTest, EmptyIndexProducesGracefulOutput)
 {
     CodeIndex idx;

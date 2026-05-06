@@ -35,6 +35,45 @@ namespace {
     return "project";
 }
 
+/// Collapse runs of whitespace inside a decorator/annotation string to
+/// a single space, strip leading/trailing whitespace, and truncate to
+/// `max_len` chars (with a trailing `…`) so a multi-line `@WebService(
+/// serviceName = "x", portName = "y", …)` does not eat the explain
+/// output's line budget.
+[[nodiscard]] std::string normalise_decorator(std::string_view in)
+{
+    constexpr std::size_t k_max_len = 80;
+    std::string out;
+    out.reserve(in.size());
+    bool prev_ws = false;
+    for (const char c : in) {
+        const bool is_ws = (c == ' ' || c == '\t' || c == '\r' || c == '\n');
+        if (is_ws) {
+            if (!prev_ws && !out.empty()) {
+                out.push_back(' ');
+            }
+            prev_ws = true;
+        }
+        else {
+            out.push_back(c);
+            prev_ws = false;
+        }
+    }
+    if (!out.empty() && out.back() == ' ') {
+        out.pop_back();
+    }
+    if (out.size() > k_max_len) {
+        // Truncate at k_max_len-1 to leave room for the ellipsis (3
+        // bytes in UTF-8). Trim trailing space so we don't get "foo …".
+        out.resize(k_max_len - 1);
+        while (!out.empty() && out.back() == ' ') {
+            out.pop_back();
+        }
+        out += "\xE2\x80\xA6"; // U+2026 HORIZONTAL ELLIPSIS
+    }
+    return out;
+}
+
 /// Top N (name, count) pairs from a map, sorted by count descending.
 template <typename K, typename V>
 [[nodiscard]] std::vector<std::pair<K, V>> top_n(const std::unordered_map<K, V>& m, std::size_t n)
@@ -271,7 +310,7 @@ std::string build_explanation(const CodeIndex& index, const ExplainOptions& opti
             }
             ++decorated_symbols;
             for (const auto& d : s.decorators) {
-                ++dec_count[d];
+                ++dec_count[normalise_decorator(d)];
             }
         }
         if (!dec_count.empty()) {
