@@ -111,7 +111,7 @@ TEST_F(StorageEngineTest, MigrateIsIdempotent)
     ASSERT_TRUE(stmt);
     auto rows = stmt->query();
     ASSERT_TRUE(rows);
-    EXPECT_EQ((*rows)[0].get_int(0), 3);
+    EXPECT_EQ((*rows)[0].get_int(0), 4);
 }
 
 // ---- Raw execute + query ---------------------------------------------------
