@@ -287,12 +287,8 @@ TEST_F(CodeIndexStoreTest, RoundTripsExternalDependencies)
 
 TEST_F(CodeIndexStoreTest, ColdAndWarmDependencyCountsMatch)
 {
-    // Reproduces FEEDBACK-2026-05-06 §1: explain reported 84019 deps
-    // while a cached digest reported 84017. The 2-edge delta came
-    // from duplicate edges that the in-memory index kept but the
-    // cache PK silently dropped via INSERT OR IGNORE. After dedup
-    // at add_dependency, the in-memory count must equal the cache
-    // round-trip count.
+    // In-memory edge count must equal the cache round-trip count
+    // even when the resolver feeds duplicate edges.
     populate_index();
 
     // Inject duplicate edges that an over-eager resolver might emit.

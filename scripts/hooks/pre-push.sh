@@ -7,7 +7,9 @@
 # or copy it into .git/hooks/pre-push and chmod +x.
 #
 # Override the binary location with VECTIS=… (defaults to PATH lookup).
-set -u
+# `set -e` would defeat the "advisory, never block" contract; we still
+# want `pipefail` so a failing producer in a piped chain is not masked.
+set -uo pipefail
 
 VECTIS="${VECTIS:-vectis}"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -21,13 +23,8 @@ GITIGNORE=".gitignore"
 
 mkdir -p "$VECTIS_DIR/cache"
 
-# Add the artefact dir to .gitignore on first run so the user does not
-# accidentally commit it. Idempotent.
-if [[ -f "$GITIGNORE" ]] && ! grep -qxF "$VECTIS_DIR/" "$GITIGNORE" &&
-	! grep -qxF "$VECTIS_DIR" "$GITIGNORE"; then
+if ! { [[ -f $GITIGNORE ]] && grep -qxF -e "$VECTIS_DIR/" -e "$VECTIS_DIR" "$GITIGNORE"; }; then
 	printf '\n# vectis pre-push hook artefacts\n%s/\n' "$VECTIS_DIR" >>"$GITIGNORE"
-elif [[ ! -f "$GITIGNORE" ]]; then
-	printf '# vectis pre-push hook artefacts\n%s/\n' "$VECTIS_DIR" >"$GITIGNORE"
 fi
 
 if ! command -v "$VECTIS" >/dev/null 2>&1; then
@@ -35,9 +32,6 @@ if ! command -v "$VECTIS" >/dev/null 2>&1; then
 	exit 0
 fi
 
-# `--cache` keeps the second push and beyond fast (warm scans were
-# ~3x faster than cold on the smartclient case study). Errors go to a
-# log file; the hook never propagates them.
 "$VECTIS" explain "$ROOT" --cache --cache-dir "$VECTIS_DIR/cache" \
 	>"$EXPLAIN_FILE" 2>"$ERR_FILE" || true
 
@@ -47,11 +41,8 @@ if [[ ! -s "$EXPLAIN_FILE" ]]; then
 fi
 
 echo "[vectis] advisory snapshot:"
-# First block of explain is architecture + scale + languages + API
-# surface; cap defensively in case the format grows.
 head -n 8 "$EXPLAIN_FILE"
 
-# Hotspots block, when present.
 HOTS=$(awk '/^Top hotspots/{flag=1; next} /^$/{flag=0} flag' "$EXPLAIN_FILE")
 if [[ -n "$HOTS" ]]; then
 	echo

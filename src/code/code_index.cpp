@@ -95,12 +95,13 @@ void CodeIndex::add_symbols(std::span<const Symbol> symbols)
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
-void CodeIndex::add_dependency(Dependency dep)
-{
-    const std::unique_lock lock(m_mutex);
+namespace {
 
-    // Match the cache table PK (source, target, kind, import_string).
-    // `\x1f` (US) is a byte that can't appear in any of the four fields.
+/// Cache table PK as a single string: (source_file_id, target_file_id,
+/// kind, import_string) joined with U+001F (US), the only ASCII byte
+/// that cannot legitimately appear in any of the four fields.
+[[nodiscard]] std::string make_dep_key(const Dependency& dep)
+{
     std::string key;
     key.reserve(dep.kind.size() + dep.import_string.size() + 24);
     key.append(std::to_string(dep.source_file_id));
@@ -110,7 +111,16 @@ void CodeIndex::add_dependency(Dependency dep)
     key.append(dep.kind);
     key.push_back('\x1f');
     key.append(dep.import_string);
-    if (!m_dep_keys.insert(std::move(key)).second) {
+    return key;
+}
+
+} // namespace
+
+void CodeIndex::add_dependency(Dependency dep)
+{
+    const std::unique_lock lock(m_mutex);
+
+    if (!m_dep_keys.insert(make_dep_key(dep)).second) {
         return;
     }
 
@@ -160,20 +170,9 @@ void CodeIndex::remove_file(std::int64_t file_id)
         if (it != index.end()) {
             for (const std::size_t dep_idx : it->second) {
                 Dependency& d = m_dependencies[dep_idx];
-                // Drop the dedup key while we still have the live
-                // fields; otherwise a re-resolve of the same edge
-                // after this remove would be silently swallowed.
-                std::string key_str;
-                key_str.reserve(d.kind.size() + d.import_string.size() + 24);
-                key_str.append(std::to_string(d.source_file_id));
-                key_str.push_back('\x1f');
-                key_str.append(std::to_string(d.target_file_id));
-                key_str.push_back('\x1f');
-                key_str.append(d.kind);
-                key_str.push_back('\x1f');
-                key_str.append(d.import_string);
-                m_dep_keys.erase(key_str);
-
+                // Erase before tombstoning so a re-resolve of the
+                // same edge after this remove is not swallowed.
+                m_dep_keys.erase(make_dep_key(d));
                 d.source_file_id = 0;
                 d.target_file_id = 0;
                 removed_dep_indices.insert(dep_idx);

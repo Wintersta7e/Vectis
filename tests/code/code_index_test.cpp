@@ -155,12 +155,9 @@ TEST(CodeIndexTest, Clear_ResetsEverything)
 
 TEST(CodeIndexTest, Dependencies_DedupesIdenticalEdges)
 {
-    // Real-world repro: a C# file with `using System;` listed twice
-    // (or two `import x` lines for the same module) caused the
-    // resolver to emit two identical edges. Cold scan reported
-    // count N; the cache save's INSERT OR IGNORE (PK matches the
-    // four key fields) silently dropped the dup; warm scan
-    // reported N-1. Dedup at insertion makes cold == warm.
+    // Cold-scan-in-memory edge count must equal the cache round-trip
+    // count, which is what ColdAndWarmDependencyCountsMatch verifies
+    // at the storage layer.
     CodeIndex idx;
     const auto fa = idx.add_file(make_file("a.cpp", Language::Cpp));
     const auto fb = idx.add_file(make_file("b.cpp", Language::Cpp));

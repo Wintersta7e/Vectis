@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-# vectis-diff — print a human-readable delta between two slim digests.
-#
-# Usage: vectis-diff <baseline.slim.json> <current.slim.json>
-#        vectis-diff --json <baseline> <current>
-#
-# Designed as a shell wrapper so the output shape can iterate without
-# committing to a CLI surface. Promote to a binary subcommand only
-# after the format has stabilised in real use.
+# vectis-diff — human-readable delta between two slim digests.
+# Usage: vectis-diff [--json] <baseline.slim.json> <current.slim.json>
 set -euo pipefail
 
 usage() {
@@ -43,8 +37,6 @@ for f in "$BASE" "$CUR"; do
     fi
 done
 
-# One jq invocation produces the structured delta; the bash side just
-# decides whether to pretty-print it or emit it raw.
 DELTA=$(jq -n \
     --slurpfile b "$BASE" \
     --slurpfile c "$CUR" \
@@ -106,8 +98,6 @@ if (( EMIT_JSON )); then
     exit 0
 fi
 
-# Plain-text rendering. Reads back the JSON we just produced — keeps
-# the bash side tiny.
 jq -r '
     def fmt_signed(n): if n > 0 then "+\(n)" elif n < 0 then "\(n)" else "0" end;
     def cap(arr; n): if (arr | length) > n then arr[0:n] + ["… +\(arr|length - n) more"] else arr end;
