@@ -65,7 +65,54 @@ constexpr std::array<ExtensionEntry, 27> k_extension_map = {{
     return out;
 }
 
+/// Cheap substring presence check on the head of a content sample.
+[[nodiscard]] bool head_contains(std::string_view head, std::string_view needle) noexcept
+{
+    return head.find(needle) != std::string_view::npos;
+}
+
 } // namespace
+
+Language refine_language(Language tentative, std::string_view extension,
+                         std::string_view content) noexcept
+{
+    // Only `.h` is path-ambiguous in our extension table — `.hpp` /
+    // `.hh` / `.hxx` are unambiguously C++, and every other extension
+    // we map is single-language. A `.h` file in a directory without a
+    // single C/C++ sibling, e.g. an HTML help system that ships its
+    // JS includes with `.h` extensions, otherwise inflates the C++
+    // language count and drags non-C++ symbols into the digest.
+    if (extension != ".h" || tentative != Language::Cpp) {
+        return tentative;
+    }
+
+    // Sniff the first 4 KiB — enough to spot include guards, license
+    // banners, leading function/var declarations.
+    constexpr std::size_t k_sniff_bytes = 4096;
+    const std::string_view head = content.substr(0, std::min(content.size(), k_sniff_bytes));
+
+    // Any of these strongly imply a real C/C++ header.
+    const bool looks_c = head_contains(head, "#include") || head_contains(head, "#define") ||
+                         head_contains(head, "#pragma") || head_contains(head, "#ifndef") ||
+                         head_contains(head, "extern \"C\"") || head_contains(head, "\nclass ") ||
+                         head_contains(head, "\nnamespace ") || head_contains(head, "\ntypedef ") ||
+                         head_contains(head, "\ntemplate<") || head_contains(head, "\ntemplate <");
+    if (looks_c) {
+        return tentative;
+    }
+
+    // No C-ish markers — does it actually look like JavaScript?
+    const bool looks_js = head_contains(head, "function ") || head_contains(head, "var ") ||
+                          head_contains(head, "\nlet ") || head_contains(head, "\nconst ") ||
+                          head_contains(head, " => ") || head_contains(head, "=>");
+    if (looks_js) {
+        return Language::JavaScript;
+    }
+
+    // Genuinely ambiguous — keep the .h-as-C++ default rather than drop
+    // the file entirely.
+    return tentative;
+}
 
 Language detect_language(const std::filesystem::path& path) noexcept
 {

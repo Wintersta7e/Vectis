@@ -245,13 +245,22 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
             continue;
         }
 
+        // Refine the path-only language guess against the actual file
+        // contents — handles `.h` files that turn out to be JS aliases
+        // and similar legacy ambiguity.
+        std::string ext = path.extension().string();
+        for (char& c : ext) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        const Language refined = refine_language(language, ext, content);
+
         FileEntry file_entry;
         file_entry.path_relative = std::filesystem::relative(path, config.root, ec);
         if (ec) {
             file_entry.path_relative = path;
             ec.clear();
         }
-        file_entry.language = language;
+        file_entry.language = refined;
         file_entry.size = size;
         file_entry.line_count = count_lines(content);
         file_entry.content_hash = vectis::core::fnv1a_hex(content);
@@ -266,7 +275,7 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
         std::filesystem::path relative_path = file_entry.path_relative;
         const std::int64_t file_id = index.add_file(std::move(file_entry));
 
-        auto parse_result = parser.parse_file(language, content);
+        auto parse_result = parser.parse_file(refined, content);
         if (!parse_result.symbols.empty()) {
             for (Symbol& sym : parse_result.symbols) {
                 sym.file_id = file_id;
@@ -281,12 +290,12 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
         // namespace → file-ids map across the whole batch, so a C#
         // `Models/User.cs` file that only declares `namespace
         // SampleApp.Models` (no `using`) must be visible to it.
-        auto raw_imports = parser.extract_imports(language, content);
-        auto declared_ns = parser.extract_namespaces(language, content);
+        auto raw_imports = parser.extract_imports(refined, content);
+        auto declared_ns = parser.extract_namespaces(refined, content);
         if (!raw_imports.empty() || !declared_ns.empty()) {
             FileImports fi;
             fi.file_id = file_id;
-            fi.language = language;
+            fi.language = refined;
             fi.relative_path = std::move(relative_path);
             fi.imports = std::move(raw_imports);
             fi.declared_namespaces = std::move(declared_ns);
@@ -517,6 +526,13 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
             continue;
         }
 
+        // Same content-aware refinement as the full-scan path.
+        std::string ext = path.extension().string();
+        for (char& c : ext) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        const Language refined = refine_language(language, ext, content);
+
         const auto rel = std::filesystem::relative(path, config.root, ec);
         if (ec) {
             ec.clear();
@@ -547,7 +563,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
 
                 FileEntry file_entry;
                 file_entry.path_relative = rel;
-                file_entry.language = language;
+                file_entry.language = refined;
                 file_entry.size = size;
                 file_entry.line_count = count_lines(content);
                 file_entry.content_hash = new_hash;
@@ -559,7 +575,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
 
                 const std::int64_t file_id = index.add_file(std::move(file_entry));
 
-                auto parse_result = parser.parse_file(language, content);
+                auto parse_result = parser.parse_file(refined, content);
                 if (!parse_result.symbols.empty()) {
                     for (Symbol& sym : parse_result.symbols) {
                         sym.file_id = file_id;
@@ -567,12 +583,12 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
                     index.add_symbols(parse_result.symbols);
                 }
 
-                auto raw_imports = parser.extract_imports(language, content);
-                auto declared_ns = parser.extract_namespaces(language, content);
+                auto raw_imports = parser.extract_imports(refined, content);
+                auto declared_ns = parser.extract_namespaces(refined, content);
                 if (!raw_imports.empty() || !declared_ns.empty()) {
                     FileImports fi;
                     fi.file_id = file_id;
-                    fi.language = language;
+                    fi.language = refined;
                     fi.relative_path = rel;
                     fi.imports = std::move(raw_imports);
                     fi.declared_namespaces = std::move(declared_ns);
@@ -586,7 +602,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
             // New file — add.
             FileEntry file_entry;
             file_entry.path_relative = rel;
-            file_entry.language = language;
+            file_entry.language = refined;
             file_entry.size = size;
             file_entry.line_count = count_lines(content);
             file_entry.content_hash = new_hash;
@@ -598,7 +614,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
 
             const std::int64_t file_id = index.add_file(std::move(file_entry));
 
-            auto parse_result = parser.parse_file(language, content);
+            auto parse_result = parser.parse_file(refined, content);
             if (!parse_result.symbols.empty()) {
                 for (Symbol& sym : parse_result.symbols) {
                     sym.file_id = file_id;
@@ -606,12 +622,12 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
                 index.add_symbols(parse_result.symbols);
             }
 
-            auto raw_imports = parser.extract_imports(language, content);
-            auto declared_ns = parser.extract_namespaces(language, content);
+            auto raw_imports = parser.extract_imports(refined, content);
+            auto declared_ns = parser.extract_namespaces(refined, content);
             if (!raw_imports.empty() || !declared_ns.empty()) {
                 FileImports fi;
                 fi.file_id = file_id;
-                fi.language = language;
+                fi.language = refined;
                 fi.relative_path = rel;
                 fi.imports = std::move(raw_imports);
                 fi.declared_namespaces = std::move(declared_ns);

@@ -42,6 +42,14 @@ inline constexpr std::size_t k_language_count = 12;
 /// Step 2.
 [[nodiscard]] Language detect_language(const std::filesystem::path& path) noexcept;
 
+/// Refine a tentative language classification by sniffing file content.
+/// Currently only acts on `.h` files: if the header contains no C/C++
+/// preprocessor or declaration markers but does contain JavaScript
+/// markers (e.g. legacy "JS aliases" includes pulled in by HTML help
+/// systems), reclassify as JavaScript so the grammar matches.
+[[nodiscard]] Language refine_language(Language tentative, std::string_view extension,
+                                       std::string_view content) noexcept;
+
 /// Short human-readable name for a language, e.g. "TypeScript".
 [[nodiscard]] std::string_view language_name(Language language) noexcept;
 

@@ -9,6 +9,7 @@ namespace {
 using vectis::code::detect_language;
 using vectis::code::Language;
 using vectis::code::language_name;
+using vectis::code::refine_language;
 
 TEST(LanguageTest, DetectsKnownExtensions)
 {
@@ -74,6 +75,47 @@ TEST(LanguageTest, NameMatchesEnum)
     EXPECT_EQ(language_name(Language::Php), "PHP");
     EXPECT_EQ(language_name(Language::Sql), "SQL");
     EXPECT_EQ(language_name(Language::Unknown), "Unknown");
+}
+
+TEST(LanguageTest, RefineKeepsCppForRealHeaders)
+{
+    constexpr std::string_view header = "#pragma once\n"
+                                        "#include <vector>\n"
+                                        "namespace foo {\n"
+                                        "class Bar { public: void baz(); };\n"
+                                        "}\n";
+    EXPECT_EQ(refine_language(Language::Cpp, ".h", header), Language::Cpp);
+
+    constexpr std::string_view c_header = "#ifndef FOO_H\n#define FOO_H\nint foo(void);\n#endif\n";
+    EXPECT_EQ(refine_language(Language::Cpp, ".h", c_header), Language::Cpp);
+}
+
+TEST(LanguageTest, RefineReclassifiesJsAliasHeaderAsJavaScript)
+{
+    // Mimics the legacy "alias.h" file from the FEEDBACK-2026-05-06
+    // case study: an HTML help system using .h to host JS aliases.
+    constexpr std::string_view js_alias = "// Help-system JS aliases.\n"
+                                          "var navAliases = {};\n"
+                                          "function regAlias(name, target) {\n"
+                                          "  navAliases[name] = target;\n"
+                                          "}\n";
+    EXPECT_EQ(refine_language(Language::Cpp, ".h", js_alias), Language::JavaScript);
+}
+
+TEST(LanguageTest, RefineLeavesUnambiguousExtensionsAlone)
+{
+    // Refinement only touches .h. .cpp / .js stay put no matter what.
+    EXPECT_EQ(refine_language(Language::Cpp, ".cpp", "function noop() {}"), Language::Cpp);
+    EXPECT_EQ(refine_language(Language::JavaScript, ".js", "#include <vector>"),
+              Language::JavaScript);
+}
+
+TEST(LanguageTest, RefineKeepsCppForAmbiguousContent)
+{
+    // No C/C++ markers and no JS markers — keep the original guess so
+    // the file is still indexed (rather than dropped to Unknown).
+    constexpr std::string_view ambiguous = "// just a comment\n";
+    EXPECT_EQ(refine_language(Language::Cpp, ".h", ambiguous), Language::Cpp);
 }
 
 } // namespace
