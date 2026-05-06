@@ -285,6 +285,38 @@ TEST_F(CodeIndexStoreTest, RoundTripsExternalDependencies)
     EXPECT_EQ(external_count, 2U);
 }
 
+TEST_F(CodeIndexStoreTest, ColdAndWarmDependencyCountsMatch)
+{
+    // Reproduces FEEDBACK-2026-05-06 §1: explain reported 84019 deps
+    // while a cached digest reported 84017. The 2-edge delta came
+    // from duplicate edges that the in-memory index kept but the
+    // cache PK silently dropped via INSERT OR IGNORE. After dedup
+    // at add_dependency, the in-memory count must equal the cache
+    // round-trip count.
+    populate_index();
+
+    // Inject duplicate edges that an over-eager resolver might emit.
+    Dependency dup;
+    dup.source_file_id = m_file1_id;
+    dup.target_file_id = m_file2_id;
+    dup.kind = "include";
+    dup.import_string = "lib.rs";
+    m_index.add_dependency(dup);
+    m_index.add_dependency(dup);
+
+    const std::size_t cold_count = m_index.dependency_count();
+
+    CacheMetadata meta;
+    meta.project_root = "/some/project";
+    meta.scan_timestamp = "2026-05-06T12:00:00Z";
+    ASSERT_TRUE(save_index(m_storage, m_index, meta));
+
+    CodeIndex warm;
+    ASSERT_TRUE(load_index(m_storage, warm));
+
+    EXPECT_EQ(warm.dependency_count(), cold_count);
+}
+
 TEST_F(CodeIndexStoreTest, LoadFromEmptyDB_ReturnsError)
 {
     CodeIndex loaded;

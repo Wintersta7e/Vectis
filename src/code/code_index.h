@@ -7,6 +7,7 @@
 #include <span>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "code/dependency.h"
@@ -141,9 +142,14 @@ private:
 
     // Dependency graph — edges are stored once in `m_dependencies`
     // and indexed twice (by source and target) for O(1) lookup.
+    // `m_dep_keys` matches the cache PK so cold and warm scans
+    // produce the same edge counts: resolver emits the same
+    // (source,target,kind,import_string) tuple twice for repeated
+    // `using X;` lines, etc., and we keep only the first.
     std::vector<Dependency> m_dependencies;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_outgoing;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_incoming;
+    std::unordered_set<std::string> m_dep_keys;
 
     std::atomic<std::size_t> m_file_count{0};
     std::atomic<std::size_t> m_symbol_count{0};

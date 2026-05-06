@@ -153,6 +153,41 @@ TEST(CodeIndexTest, Clear_ResetsEverything)
     EXPECT_EQ(fid, 1);
 }
 
+TEST(CodeIndexTest, Dependencies_DedupesIdenticalEdges)
+{
+    // Real-world repro: a C# file with `using System;` listed twice
+    // (or two `import x` lines for the same module) caused the
+    // resolver to emit two identical edges. Cold scan reported
+    // count N; the cache save's INSERT OR IGNORE (PK matches the
+    // four key fields) silently dropped the dup; warm scan
+    // reported N-1. Dedup at insertion makes cold == warm.
+    CodeIndex idx;
+    const auto fa = idx.add_file(make_file("a.cpp", Language::Cpp));
+    const auto fb = idx.add_file(make_file("b.cpp", Language::Cpp));
+
+    idx.add_dependency(Dependency{fa, fb, "b.h", "include"});
+    idx.add_dependency(Dependency{fa, fb, "b.h", "include"}); // exact dup
+    EXPECT_EQ(idx.dependency_count(), 1U);
+
+    // Different `kind` is a distinct edge.
+    idx.add_dependency(Dependency{fa, fb, "b.h", "use"});
+    EXPECT_EQ(idx.dependency_count(), 2U);
+
+    // Different `import_string` is a distinct edge (same target,
+    // different surface text).
+    idx.add_dependency(Dependency{fa, fb, "B.H", "include"});
+    EXPECT_EQ(idx.dependency_count(), 3U);
+
+    // Two externals from the same source with different import_strings.
+    idx.add_dependency(Dependency{fa, 0, "<vector>", "include"});
+    idx.add_dependency(Dependency{fa, 0, "<string>", "include"});
+    EXPECT_EQ(idx.dependency_count(), 5U);
+
+    // Same external repeated — deduped.
+    idx.add_dependency(Dependency{fa, 0, "<vector>", "include"});
+    EXPECT_EQ(idx.dependency_count(), 5U);
+}
+
 TEST(CodeIndexTest, Dependencies_RoundTripOutgoingAndIncoming)
 {
     CodeIndex idx;
