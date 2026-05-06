@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# vectis-diff — print a human-readable delta between two slim digests.
+#
+# Usage: vectis-diff <baseline.slim.json> <current.slim.json>
+#        vectis-diff --json <baseline> <current>
+#
+# Designed as a shell wrapper so the output shape can iterate without
+# committing to a CLI surface. Promote to a binary subcommand only
+# after the format has stabilised in real use.
+set -euo pipefail
+
+usage() {
+    cat <<EOF
+Usage: vectis-diff [--json] <baseline.slim.json> <current.slim.json>
+
+Plain-text by default; --json emits a machine-readable object.
+Both inputs must be slim-format digests (\`vectis digest --format slim\`).
+EOF
+}
+
+EMIT_JSON=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json) EMIT_JSON=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) echo "vectis-diff: unknown option '$1'" >&2; usage >&2; exit 1 ;;
+        *) break ;;
+    esac
+done
+
+if [[ $# -ne 2 ]]; then
+    usage >&2
+    exit 1
+fi
+BASE="$1"
+CUR="$2"
+
+for f in "$BASE" "$CUR"; do
+    if [[ ! -f "$f" ]]; then
+        echo "vectis-diff: no such file: $f" >&2
+        exit 2
+    fi
+done
+
+# One jq invocation produces the structured delta; the bash side just
+# decides whether to pretty-print it or emit it raw.
+DELTA=$(jq -n \
+    --slurpfile b "$BASE" \
+    --slurpfile c "$CUR" \
+    '
+    def files_set(d): d.files | map(.path) | unique;
+    def hotspot_key: "\(.file)#\(.symbol_id // "")";
+    def hotspot_map(d): d.hotspots // [] | map({key: hotspot_key, value: .}) | from_entries;
+    def central_set(d): (d.central_files // []) | map(.path) | unique;
+
+    ($b[0]) as $base
+    | ($c[0]) as $cur
+    | files_set($base) as $bf
+    | files_set($cur) as $cf
+    | hotspot_map($base) as $bh
+    | hotspot_map($cur) as $ch
+    | central_set($base) as $bcent
+    | central_set($cur) as $ccent
+    | {
+        base: {
+            generated_at: $base.generated_at,
+            project: $base.project,
+            architecture: $base.architecture
+        },
+        current: {
+            generated_at: $cur.generated_at,
+            project: $cur.project,
+            architecture: $cur.architecture
+        },
+        scale: {
+            files:   { base: $base.project.file_count,       current: $cur.project.file_count,       delta: ($cur.project.file_count       - $base.project.file_count)       },
+            symbols: { base: $base.project.symbol_count,     current: $cur.project.symbol_count,     delta: ($cur.project.symbol_count     - $base.project.symbol_count)     },
+            deps:    { base: $base.project.dependency_count, current: $cur.project.dependency_count, delta: ($cur.project.dependency_count - $base.project.dependency_count) }
+        },
+        files: {
+            added:   ($cf - $bf),
+            removed: ($bf - $cf)
+        },
+        hotspots: {
+            entered: [ $ch | to_entries[] | select(.key as $k | ($bh | has($k)) | not) | .value ],
+            dropped: [ $bh | to_entries[] | select(.key as $k | ($ch | has($k)) | not) | .value ],
+            severity_changed: [
+                $ch | to_entries[]
+                | select(.key as $k | $bh | has($k))
+                | . as $e
+                | ($bh[$e.key].severity) as $bs
+                | select($e.value.severity != $bs)
+                | { file: $e.value.file, reason: $e.value.reason, severity_before: $bs, severity_after: $e.value.severity }
+            ]
+        },
+        central_files: {
+            entered: ($ccent - $bcent),
+            dropped: ($bcent - $ccent)
+        }
+    }
+    ')
+
+if (( EMIT_JSON )); then
+    printf '%s\n' "$DELTA"
+    exit 0
+fi
+
+# Plain-text rendering. Reads back the JSON we just produced — keeps
+# the bash side tiny.
+jq -r '
+    def fmt_signed(n): if n > 0 then "+\(n)" elif n < 0 then "\(n)" else "0" end;
+    def cap(arr; n): if (arr | length) > n then arr[0:n] + ["… +\(arr|length - n) more"] else arr end;
+
+    "vectis-diff",
+    "  baseline: \(.base.generated_at)  (\(.base.project.name))",
+    "  current:  \(.current.generated_at)  (\(.current.project.name))",
+    "",
+    "Architecture: \(.base.architecture.label) (\(.base.architecture.confidence)%) → \(.current.architecture.label) (\(.current.architecture.confidence)%)",
+    "Scale: \(.scale.files.base) → \(.scale.files.current) files (\(fmt_signed(.scale.files.delta))), " +
+        "\(.scale.symbols.base) → \(.scale.symbols.current) symbols (\(fmt_signed(.scale.symbols.delta))), " +
+        "\(.scale.deps.base) → \(.scale.deps.current) deps (\(fmt_signed(.scale.deps.delta)))",
+    "",
+    (if (.files.added | length) > 0 then
+        "Files added (\(.files.added | length)):",
+        (cap(.files.added; 20)[] | "  + \(.)")
+    else "Files added: none" end),
+    "",
+    (if (.files.removed | length) > 0 then
+        "Files removed (\(.files.removed | length)):",
+        (cap(.files.removed; 20)[] | "  - \(.)")
+    else "Files removed: none" end),
+    "",
+    (if (.hotspots.entered | length) > 0 then
+        "Hotspots — newly entered top 10 (\(.hotspots.entered | length)):",
+        (.hotspots.entered[] | "  + \(.file) (severity \(.severity)) — \(.reason)")
+    else empty end),
+    (if (.hotspots.dropped | length) > 0 then
+        "Hotspots — dropped from top 10 (\(.hotspots.dropped | length)):",
+        (.hotspots.dropped[] | "  - \(.file) (was severity \(.severity)) — \(.reason)")
+    else empty end),
+    (if (.hotspots.severity_changed | length) > 0 then
+        "Hotspots — severity changed (\(.hotspots.severity_changed | length)):",
+        (.hotspots.severity_changed[] | "  ~ \(.file): \(.severity_before) → \(.severity_after)  (\(.reason))")
+    else empty end),
+    (if (.central_files.entered | length) > 0 then
+        "",
+        "Central files — newly in top set (\(.central_files.entered | length)):",
+        (.central_files.entered[] | "  + \(.)")
+    else empty end),
+    (if (.central_files.dropped | length) > 0 then
+        "Central files — dropped (\(.central_files.dropped | length)):",
+        (.central_files.dropped[] | "  - \(.)")
+    else empty end)
+' <<< "$DELTA"
