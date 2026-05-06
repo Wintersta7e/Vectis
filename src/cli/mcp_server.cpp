@@ -52,7 +52,10 @@ void write_message(std::ostream& out, const json& msg)
     // Newline-delimited JSON: one object per line, MUST end with \n
     // and MUST NOT contain embedded newlines outside string values
     // (nlohmann::json::dump() guarantees this with default args).
-    out << msg.dump() << "\n";
+    // `replace` keeps a tool-result string with non-UTF-8 bytes from
+    // aborting the whole MCP session.
+    out << msg.dump(-1, ' ', /*ensure_ascii=*/false, nlohmann::json::error_handler_t::replace)
+        << "\n";
     out.flush();
 }
 

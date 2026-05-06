@@ -174,6 +174,44 @@ TEST(DigestExporterTest, Json_TopLevelSymbolsArrayMatchesCount)
     }
 }
 
+TEST(DigestExporterTest, Json_HandlesNonUtf8Bytes)
+{
+    // Legacy iso-8859-1 source files (German umlauts, Latin-1 strings)
+    // produce stray bytes like 0xFC that are not valid UTF-8 standalone.
+    // Before the error_handler_t::replace fix, nlohmann threw type_error.316
+    // and SIGABRTed the whole digest. Now the byte is replaced with U+FFFD.
+    CodeIndex index;
+    FileEntry file;
+    file.path_relative = "src/legacy.js";
+    file.language = Language::JavaScript;
+    file.size = 1024;
+    file.line_count = 10;
+    const std::int64_t file_id = index.add_file(std::move(file));
+
+    // 0xFC = 'ü' in iso-8859-1; not a valid UTF-8 sequence by itself.
+    Symbol sym{
+        .file_id = file_id,
+        .name = std::string{"M\xFCller"},
+        .kind = SymbolKind::Function,
+        .line_start = 1,
+        .line_end = 2,
+        .signature = std::string{"function M\xFCller()"},
+    };
+    index.add_symbols(std::array<Symbol, 1>{sym});
+
+    const ExportOptions options = make_options(DigestFormat::Json, "/fake");
+    std::string content;
+    ASSERT_NO_THROW({ content = build_digest_string(index, options); });
+    ASSERT_FALSE(content.empty());
+
+    // Output is parseable JSON despite the original bad byte.
+    auto parsed = nlohmann::json::parse(content);
+    EXPECT_EQ(parsed["project"]["symbol_count"], 1);
+
+    // U+FFFD encoded in UTF-8 is EF BF BD; appears where the invalid byte was.
+    EXPECT_NE(content.find("\xEF\xBF\xBD"), std::string::npos);
+}
+
 TEST(DigestExporterTest, SlimJson_OmitsSizeLinesAndSymbols)
 {
     CodeIndex index;

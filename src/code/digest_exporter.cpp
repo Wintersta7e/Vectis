@@ -667,14 +667,21 @@ std::filesystem::path default_output_path(const std::filesystem::path& project_r
 
 std::string build_digest_string(const CodeIndex& index, const ExportOptions& options)
 {
+    // Body excerpts are sourced verbatim from disk and may contain bytes that
+    // are not valid UTF-8 (legacy iso-8859-1 source files, non-UTF terminals,
+    // binary-ish blobs that slipped past the size cap). nlohmann's strict
+    // serialiser would throw type_error.316 and abort the whole digest;
+    // `error_handler_t::replace` substitutes invalid sequences with U+FFFD
+    // so a single bad byte can't kill a 100k-file scan.
+    constexpr auto k_handler = nlohmann::json::error_handler_t::replace;
     switch (options.format) {
     case DigestFormat::Json: {
         const nlohmann::json root = build_json(index, options, /*include_file_details=*/true);
-        return root.dump(2);
+        return root.dump(2, ' ', /*ensure_ascii=*/false, k_handler);
     }
     case DigestFormat::SlimJson: {
         const nlohmann::json root = build_json(index, options, /*include_file_details=*/false);
-        return root.dump(2);
+        return root.dump(2, ' ', /*ensure_ascii=*/false, k_handler);
     }
     case DigestFormat::Markdown: {
         return build_markdown(index, options);
