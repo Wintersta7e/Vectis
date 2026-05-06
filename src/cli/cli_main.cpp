@@ -48,7 +48,11 @@ USAGE
     vectis --help                 Show this text.
 
 DIGEST OPTIONS
-    --format json | slim | md     Output format (default: json).
+    --format json | slim | md     Output format (default: slim).
+                                  `slim` is structure-only and the
+                                  most token-efficient for agent
+                                  context. `json` adds hotspot body
+                                  excerpts; `md` is human-readable.
     --output <file>               Write to <file>. Use '-' for stdout
                                   (default: stdout).
     --cache                       Reuse SQLite state between runs at
@@ -68,7 +72,8 @@ EXIT CODES
     2   scan, export, or I/O failure
 
 EXAMPLES
-    vectis digest ./my-project                        # JSON to stdout, no cache
+    vectis digest ./my-project                        # Slim JSON to stdout
+    vectis digest ./my-project --format json          # Full JSON with excerpts
     vectis digest ./my-project --cache --format md    # Cached, markdown
     vectis digest . --cache-dir /tmp/vc --format slim # Custom cache dir
     vectis mcp                                        # MCP server on stdio
@@ -101,7 +106,7 @@ bool parse_format(std::string_view v, vectis::code::DigestFormat& out)
 struct DigestArgs
 {
     std::filesystem::path project_root;
-    vectis::code::DigestFormat format = vectis::code::DigestFormat::Json;
+    vectis::code::DigestFormat format = vectis::code::DigestFormat::SlimJson;
     /// Empty = stdout. Otherwise a filesystem path.
     std::string output_path;
     /// Enable SQLite cache reuse. Implied by a non-empty `cache_dir`.
