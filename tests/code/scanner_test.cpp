@@ -115,6 +115,26 @@ TEST_F(ScannerFixture, RespectsExcludeDirectoryNames)
     EXPECT_EQ(files[0].path_relative.filename().string(), "kept.py");
 }
 
+TEST_F(ScannerFixture, SkipsVendoredJavaScriptByFilename)
+{
+    // Even when not in a known vendored directory, a `jquery-1.6.1.js`
+    // or `prototype.js` filename signals "third-party bundle". Scanner
+    // skips these so they don't bloat symbol counts or hotspots.
+    write("src/app.js", "function userCode() {}\n");
+    write("static/jquery-1.6.1.js", "function jqInternal() {}\n");
+    write("static/prototype.js", "function pInternal() {}\n");
+    write("static/foo.min.js", "function minified() {}\n");
+
+    CodeIndex index;
+    const bool ok = run_scan(index);
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(index.file_count(), 1U);
+
+    const auto files = index.snapshot_files();
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0].path_relative.filename().string(), "app.js");
+}
+
 TEST_F(ScannerFixture, SkipsBinaryFiles)
 {
     // Put a NUL byte within the first 512 bytes of a file that has a

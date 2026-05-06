@@ -453,6 +453,43 @@ import * as path from "path";
     }
 }
 
+TEST(ParserTest, JavaScriptDropsCssSelectorsFromImports)
+{
+    // jQuery-style $('...') calls survive the tree-sitter `require`
+    // query in some grammar revisions. The post-extraction filter
+    // drops obviously-non-module strings (HTML tags, CSS ids, classes,
+    // pseudo-selectors) so they don't pollute external-import counts.
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+var l = require('lodash');
+var d = $('<div>');
+var b = $('body');
+var i = $('#input-receiver');
+var c = $('.menu');
+var p = $(':hover');
+var rel = require('./local');
+)";
+    const auto imports = parser->extract_imports(Language::JavaScript, source);
+
+    bool saw_lodash = false;
+    bool saw_local = false;
+    for (const auto& imp : imports) {
+        EXPECT_NE(imp.import_string, "<div>");
+        EXPECT_NE(imp.import_string, "body");
+        EXPECT_NE(imp.import_string, "#input-receiver");
+        EXPECT_NE(imp.import_string, ".menu");
+        EXPECT_NE(imp.import_string, ":hover");
+        if (imp.import_string == "lodash") {
+            saw_lodash = true;
+        }
+        if (imp.import_string == "./local") {
+            saw_local = true;
+        }
+    }
+    EXPECT_TRUE(saw_lodash);
+    EXPECT_TRUE(saw_local);
+}
+
 TEST(ParserTest, ExtractsRustUseDeclarations)
 {
     auto parser = make_parser();

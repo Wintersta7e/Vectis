@@ -1,9 +1,11 @@
 #include "code/parser.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -840,6 +842,46 @@ namespace {
     return text;
 }
 
+/// Reject `import_string` values that obviously aren't module
+/// specifiers — jQuery-style `$('<div>')`, `$('#id')`, `$('.cls')`,
+/// CSS pseudo-selectors, attribute selectors, and any string with
+/// whitespace. The tree-sitter JS query's `(#eq? @_func "require")`
+/// predicate doesn't always discriminate `$()` from `require()`, so
+/// we filter the survivors here.
+[[nodiscard]] bool looks_like_css_selector(std::string_view s) noexcept
+{
+    if (s.empty()) {
+        return false;
+    }
+    const char first = s.front();
+    if (first == '<' || first == '#' || first == ':' || first == '[' || first == '*' ||
+        first == '>' || first == '+' || first == '~') {
+        return true;
+    }
+    // `.foo` is a CSS class but `./foo` is a relative path. Distinguish
+    // by what follows the leading dot.
+    if (first == '.' && s.size() >= 2 && s[1] != '/' && s[1] != '.') {
+        return true;
+    }
+    for (const char c : s) {
+        if (c == ' ' || c == '\t' || c == '\n') {
+            return true;
+        }
+    }
+
+    // Bare HTML element names — `$('body')`, `$('head')` — pass every
+    // other heuristic. Match a small list of tags too common to be
+    // npm package names. Conservative on purpose: real packages like
+    // `body-parser`, `html2canvas`, `head-of-x` do not match because
+    // they contain `-` or other characters.
+    static constexpr std::array<std::string_view, 24> k_html_tags = {
+        "html", "head", "body",   "div",    "span",    "a",       "p",     "img",
+        "tr",   "td",   "th",     "ul",     "ol",      "li",      "form",  "input",
+        "nav",  "main", "header", "footer", "section", "article", "aside", "table",
+    };
+    return std::ranges::any_of(k_html_tags, [&](std::string_view tag) { return s == tag; });
+}
+
 } // namespace
 
 std::vector<RawImport> TreeSitterParser::extract_imports(Language language,
@@ -917,6 +959,12 @@ std::vector<RawImport> TreeSitterParser::extract_imports(Language language,
         }
 
         if (has_path && has_kind && !raw.import_string.empty()) {
+            // Drop CSS / DOM selectors masquerading as imports — see
+            // looks_like_css_selector for the precise filter.
+            if ((language == Language::JavaScript || language == Language::TypeScript) &&
+                looks_like_css_selector(raw.import_string)) {
+                continue;
+            }
             result.push_back(std::move(raw));
         }
     }

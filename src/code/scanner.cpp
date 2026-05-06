@@ -16,6 +16,7 @@
 
 #include "code/code_index.h"
 #include "code/dependency_resolver.h"
+#include "code/exclude_dirs.h"
 #include "code/gitignore.h"
 #include "code/language.h"
 #include "code/parser.h"
@@ -186,6 +187,22 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
 
         const std::filesystem::path& path = entry.path();
         const Language language = detect_language(path);
+        if (language == Language::JavaScript && looks_like_vendored_js(path.filename().string())) {
+            // Vendored bundles (jquery-1.6.1.js, prototype.js, *.min.js)
+            // dominate symbol counts and skew architecture detection
+            // toward "JavaScript-heavy SPA" on backends that just ship
+            // a help-system overlay. Counted as skipped, not Unknown,
+            // so progress reporting still mentions them.
+            ++files_skipped;
+            try {
+                it.increment(ec);
+            }
+            catch (...) {
+                ec.clear();
+                break;
+            }
+            continue;
+        }
         if (language == Language::Unknown) {
             ++files_skipped;
             try {
@@ -478,6 +495,20 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
 
         const std::filesystem::path& path = entry.path();
         const Language language = detect_language(path);
+        if (language == Language::JavaScript && looks_like_vendored_js(path.filename().string())) {
+            // Skip vendored JS bundles in incremental scans for the
+            // same reason as the full-scan path. The incremental
+            // counters don't track "skipped" separately, so the file
+            // simply does not get added or updated.
+            try {
+                it.increment(ec);
+            }
+            catch (...) {
+                ec.clear();
+                break;
+            }
+            continue;
+        }
         if (language == Language::Unknown) {
             try {
                 it.increment(ec);

@@ -119,8 +119,11 @@ template <typename K, typename V>
 }
 
 /// `47 public / 318 private` — collapse the visibility distribution
-/// into a one-line summary. Empty/unknown visibility is treated as
-/// `public` for the API-surface count.
+/// into a one-line summary. Languages without a real visibility
+/// concept (JavaScript, plain C, SQL) report `Visibility::Unknown`
+/// for every symbol; those are excluded so a vendored jQuery bundle
+/// doesn't claim 6000+ "public" symbols when it has no API surface
+/// at all in the Java sense.
 [[nodiscard]] std::string render_visibility(const std::vector<Symbol>& symbols)
 {
     std::size_t pub = 0;
@@ -129,7 +132,6 @@ template <typename K, typename V>
     std::size_t internal = 0;
     for (const auto& s : symbols) {
         switch (s.visibility) {
-        case Visibility::Unknown:
         case Visibility::Public:
             ++pub;
             break;
@@ -141,6 +143,9 @@ template <typename K, typename V>
             break;
         case Visibility::Internal:
             ++internal;
+            break;
+        case Visibility::Unknown:
+            // Languages without a visibility concept skip the count.
             break;
         }
     }

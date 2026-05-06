@@ -13,4 +13,11 @@ namespace vectis::code {
 /// detector via `ExportOptions`.
 [[nodiscard]] const std::unordered_set<std::string>& default_scanner_exclude_dir_names();
 
+/// Heuristic check for "this looks like a vendored / minified third-
+/// party JS bundle the user did not write". Skips files matching
+/// well-known names (jquery-1.x.js, prototype.js, require.js,
+/// dhtmlx*.js, bootstrap.bundle.js, …) and any `*.min.js` bundle.
+/// Filename comparison is ASCII-lowercased.
+[[nodiscard]] bool looks_like_vendored_js(std::string_view filename) noexcept;
+
 } // namespace vectis::code
