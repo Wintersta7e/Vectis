@@ -345,7 +345,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         detect_architecture(index, options.project_root, options.exclude_dir_names);
     nlohmann::json node;
     node["label"] = std::string{architecture_label_name(desc.label)};
-    node["reasoning"] = desc.reasoning;
+    // `reasoning` is human prose for `vectis explain`; agents read the
+    // structured `signals` array instead. Keep JSON machine-only.
+    node["signals"] = desc.signals;
     node["confidence"] = desc.confidence;
     return node;
 }

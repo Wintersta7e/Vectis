@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <vector>
 
 #include "code/exclude_dirs.h"
 
@@ -42,13 +43,27 @@ enum class ArchitectureLabel : std::uint8_t
     Library,
 };
 
-/// Human-readable description returned by `detect_architecture`.
+/// Description returned by `detect_architecture`.
+///
+/// The struct serves two consumers:
+///   * **Agents (JSON digest)** read `label`, `confidence`, and `signals` —
+///     all structured fields. `signals` is a flat list of short tokens
+///     (e.g. `"workspace:cargo"`, `"dir:controllers"`, `"runtime:Java"`)
+///     that explain *which* heuristics fired. Lowercase, hyphen-separated,
+///     `category:value` shape — agent-greppable, not prose.
+///   * **`vectis explain` (humans)** reads `reasoning` — a short English
+///     justification. Not emitted in JSON.
 struct ArchitectureDescription
 {
     ArchitectureLabel label = ArchitectureLabel::Unknown;
     /// Short English justification ("found src/controllers/ and
     /// src/services/" or "single main, no layered directories").
+    /// Human-only; consumed by `vectis explain`. Not emitted in JSON.
     std::string reasoning;
+    /// Flat list of `category:value` tokens describing the heuristic
+    /// matches that produced `label`. Empty for `Unknown` and the
+    /// "no source files" case. Emitted in JSON for agents.
+    std::vector<std::string> signals;
     /// 0-100 integer confidence. 0 = pure guess, 100 = unambiguous.
     std::uint8_t confidence = 0;
 };

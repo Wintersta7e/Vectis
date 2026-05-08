@@ -337,10 +337,15 @@ TEST(DigestExporterTest, Json_ContainsDependencyGraphAndHotspots)
     ASSERT_TRUE(parsed.contains("hotspots"));
     EXPECT_TRUE(parsed["hotspots"].is_array());
 
-    // architecture block exists.
+    // architecture block exists with structured (machine-readable)
+    // fields only — `reasoning` (prose) is human-only and lives on the
+    // struct, not in the JSON.
     ASSERT_TRUE(parsed.contains("architecture"));
     EXPECT_TRUE(parsed["architecture"].contains("label"));
     EXPECT_TRUE(parsed["architecture"].contains("confidence"));
+    EXPECT_TRUE(parsed["architecture"].contains("signals"));
+    EXPECT_TRUE(parsed["architecture"]["signals"].is_array());
+    EXPECT_FALSE(parsed["architecture"].contains("reasoning"));
 
     // project block grew a dependency_count.
     EXPECT_EQ(parsed["project"]["dependency_count"], 1);
@@ -362,6 +367,8 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
     ASSERT_TRUE(parsed.contains("architecture"));
     EXPECT_TRUE(parsed["architecture"].contains("label"));
     EXPECT_TRUE(parsed["architecture"].contains("confidence"));
+    EXPECT_TRUE(parsed["architecture"].contains("signals"));
+    EXPECT_FALSE(parsed["architecture"].contains("reasoning"));
 
     ASSERT_TRUE(parsed.contains("hotspots"));
     EXPECT_TRUE(parsed["hotspots"].is_array());
