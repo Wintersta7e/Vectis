@@ -278,10 +278,18 @@ void augment_signals_from_disk(PathSignals& signals, const std::filesystem::path
     return out;
 }
 
+/// Workspace-helper return shape: prose for `vectis explain`, plus a
+/// flat list of `category:value` tokens for the JSON `signals` array.
+struct WorkspaceHit
+{
+    std::string reasoning;
+    std::vector<std::string> signals;
+};
+
 /// Detect a Cargo workspace: `Cargo.toml` at the project root containing
 /// a `[workspace]` table header. Matches single-line `[workspace]` and
 /// the uncommon variant with trailing content on the same line.
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::optional<WorkspaceHit>
 detect_rust_workspace(const std::filesystem::path& project_root)
 {
     const std::string body = read_text_capped(project_root / "Cargo.toml");
@@ -300,7 +308,8 @@ detect_rust_workspace(const std::filesystem::path& project_root)
             ++i;
         }
         if (i + 11 <= line.size() && line.compare(i, 11, "[workspace]") == 0) {
-            return std::string{"Cargo workspace (Rust multi-crate layout)"};
+            return WorkspaceHit{"Cargo workspace (Rust multi-crate layout)",
+                                {"workspace:cargo", "manifest:Cargo.toml"}};
         }
     }
     return std::nullopt;
@@ -311,20 +320,23 @@ detect_rust_workspace(const std::filesystem::path& project_root)
 /// `pnpm-workspace.yaml`, `lerna.json`, or `turbo.json`. Each hint is
 /// reported with its own reasoning string so the digest tells you
 /// which tool configured the monorepo.
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::optional<WorkspaceHit>
 detect_npm_monorepo(const std::filesystem::path& project_root)
 {
     std::error_code ec;
     if (std::filesystem::exists(project_root / "pnpm-workspace.yaml", ec) && !ec) {
-        return std::string{"pnpm workspace (pnpm-workspace.yaml)"};
+        return WorkspaceHit{"pnpm workspace (pnpm-workspace.yaml)",
+                            {"workspace:pnpm", "manifest:pnpm-workspace.yaml"}};
     }
     ec.clear();
     if (std::filesystem::exists(project_root / "lerna.json", ec) && !ec) {
-        return std::string{"Lerna monorepo (lerna.json)"};
+        return WorkspaceHit{"Lerna monorepo (lerna.json)",
+                            {"workspace:lerna", "manifest:lerna.json"}};
     }
     ec.clear();
     if (std::filesystem::exists(project_root / "turbo.json", ec) && !ec) {
-        return std::string{"Turborepo (turbo.json)"};
+        return WorkspaceHit{"Turborepo (turbo.json)",
+                            {"workspace:turborepo", "manifest:turbo.json"}};
     }
 
     const std::string pkg = read_text_capped(project_root / "package.json");
@@ -332,7 +344,8 @@ detect_npm_monorepo(const std::filesystem::path& project_root)
     // or keyword containing the bare token doesn't trigger a false hit.
     if (!pkg.empty() && (pkg.find(R"("workspaces":)") != std::string::npos ||
                          pkg.find(R"("workspaces" :)") != std::string::npos)) {
-        return std::string{R"(npm workspaces (package.json "workspaces"))"};
+        return WorkspaceHit{R"(npm workspaces (package.json "workspaces"))",
+                            {"workspace:npm", "manifest:package.json"}};
     }
     return std::nullopt;
 }
@@ -342,7 +355,7 @@ detect_npm_monorepo(const std::filesystem::path& project_root)
 ///     subdirectories under `src/` that each contain `__init__.py`.
 ///   * Poetry / PEP 621 multi-package project (same, heuristically).
 /// Returns a reasoning string if the signal fires, nullopt otherwise.
-[[nodiscard]] std::optional<std::string>
+[[nodiscard]] std::optional<WorkspaceHit>
 detect_python_packages(const std::filesystem::path& project_root, const CodeIndex& index)
 {
     std::error_code ec;
@@ -371,8 +384,10 @@ detect_python_packages(const std::filesystem::path& project_root, const CodeInde
         src_packages.insert(it->string());
     }
     if (src_packages.size() >= 2) {
-        return std::string{"pyproject.toml + src-layout with " +
-                           std::to_string(src_packages.size()) + " packages"};
+        return WorkspaceHit{"pyproject.toml + src-layout with " +
+                                std::to_string(src_packages.size()) + " packages",
+                            {"workspace:python", "manifest:pyproject.toml",
+                             "package-count:" + std::to_string(src_packages.size())}};
     }
     return std::nullopt;
 }
@@ -543,10 +558,42 @@ detect_root_manifest(const std::filesystem::path& project_root)
     return std::nullopt;
 }
 
-/// Library-detection result — reasoning + confidence per ecosystem.
+/// `dir:<name>` token used in `ArchitectureDescription::signals`.
+[[nodiscard]] inline std::string dir_signal(std::string_view dir_name)
+{
+    return "dir:" + std::string{dir_name};
+}
+
+/// For each name in `names` that appears in `segments`, append a
+/// `dir:<name>` token to `signals`. Hides the `unordered_set::contains`
+/// + `emplace_back` pair that recurs across each layered-shape branch.
+template <typename Range>
+void push_matching_dir_signals(std::vector<std::string>& signals,
+                               const std::unordered_set<std::string>& segments, const Range& names)
+{
+    for (const std::string_view name : names) {
+        if (segments.contains(std::string{name})) {
+            signals.emplace_back(dir_signal(name));
+        }
+    }
+}
+
+/// Append `runtime:<label>` and `manifest:<filename>` tokens to
+/// `signals`. Every branch that surfaces a manifest needs both, so the
+/// pair lives in one place.
+inline void push_manifest_signals(std::vector<std::string>& signals, const ManifestInfo& manifest)
+{
+    signals.emplace_back("runtime:" + std::string{runtime_label(manifest.runtime)});
+    signals.emplace_back("manifest:" + manifest.filename);
+}
+
+/// Library-detection result — reasoning + confidence + structured
+/// signal tokens per ecosystem. Same prose-vs-tokens split as
+/// `WorkspaceHit` and `ArchitectureDescription`.
 struct LibraryHit
 {
     std::string reasoning;
+    std::vector<std::string> signals;
     std::uint8_t confidence = 0;
 };
 
@@ -576,10 +623,11 @@ detect_node_library(const std::filesystem::path& project_root)
         pkg.find(R"("private":true)") != std::string::npos) {
         return std::nullopt;
     }
-    const auto hit = [](std::string entry) {
-        return LibraryHit{"Node.js library (package.json with " + std::move(entry) +
-                              ", not marked private)",
-                          k_library_inferred_confidence};
+    const auto hit = [](std::string entry, std::string signal_value) {
+        return LibraryHit{
+            "Node.js library (package.json with " + std::move(entry) + ", not marked private)",
+            {"library:node", "manifest:package.json", "node-entry:" + std::move(signal_value)},
+            k_library_inferred_confidence};
     };
     // Match each entry field as a JSON key (followed by `:` with optional
     // whitespace) so a `"keywords": ["main", "module"]` array — common in
@@ -591,8 +639,14 @@ detect_node_library(const std::filesystem::path& project_root)
         return pkg.find(with_colon) != std::string::npos ||
                pkg.find(with_space) != std::string::npos;
     };
-    if (has_entry_key("main") || has_entry_key("exports") || has_entry_key("module")) {
-        return hit("`main`/`exports`/`module` entry");
+    if (has_entry_key("main")) {
+        return hit("`main`/`exports`/`module` entry", "main");
+    }
+    if (has_entry_key("exports")) {
+        return hit("`main`/`exports`/`module` entry", "exports");
+    }
+    if (has_entry_key("module")) {
+        return hit("`main`/`exports`/`module` entry", "module");
     }
     static constexpr std::array<std::string_view, 8> k_index_paths = {
         "index.js",     "index.mjs",     "index.cjs",     "index.ts",
@@ -602,7 +656,7 @@ detect_node_library(const std::filesystem::path& project_root)
     for (const std::string_view rel : k_index_paths) {
         ec.clear();
         if (std::filesystem::exists(project_root / rel, ec) && !ec) {
-            return hit(std::string{"`"} + std::string{rel} + "` entry");
+            return hit(std::string{"`"} + std::string{rel} + "` entry", std::string{rel});
         }
     }
     return std::nullopt;
@@ -621,6 +675,7 @@ detect_php_library(const std::filesystem::path& project_root)
     if (composer.find(R"("type": "library")") != std::string::npos ||
         composer.find(R"("type":"library")") != std::string::npos) {
         return LibraryHit{R"(PHP library (composer.json `"type": "library"`))",
+                          {"library:php", "manifest:composer.json", "composer-type:library"},
                           k_library_explicit_confidence};
     }
     std::error_code ec;
@@ -633,8 +688,10 @@ detect_php_library(const std::filesystem::path& project_root)
     const bool has_autoload_key = composer.find(R"("autoload":)") != std::string::npos ||
                                   composer.find(R"("autoload" :)") != std::string::npos;
     if (!has_index_php && !has_public_index && has_autoload_key) {
-        return LibraryHit{"PHP library (composer.json with autoload, no `index.php` entry)",
-                          k_library_inferred_confidence};
+        return LibraryHit{
+            "PHP library (composer.json with autoload, no `index.php` entry)",
+            {"library:php", "manifest:composer.json", "composer-autoload", "no-index-php"},
+            k_library_inferred_confidence};
     }
     return std::nullopt;
 }
@@ -660,6 +717,7 @@ detect_ruby_library(const std::filesystem::path& project_root)
         }
         if (entry.path().extension().string() == ".gemspec") {
             return LibraryHit{"Ruby gem (" + entry.path().filename().string() + ")",
+                              {"library:ruby", "manifest:" + entry.path().filename().string()},
                               k_library_explicit_confidence};
         }
     }
@@ -686,6 +744,8 @@ detect_python_library(const std::filesystem::path& project_root, const PathSigna
     const std::string manifest_name = has_pyproject ? "pyproject.toml" : "setup.py";
     return LibraryHit{"Python library (" + manifest_name + " + `" + signals.python_sample_pkg +
                           "/__init__.py`, no app entry)",
+                      {"library:python", "manifest:" + manifest_name,
+                       "python-package:" + signals.python_sample_pkg, "no-app-entry"},
                       k_library_inferred_confidence};
 }
 
@@ -846,6 +906,8 @@ detect_python_library(const std::filesystem::path& project_root, const PathSigna
     }
     return LibraryHit{"Go library (go.mod + root `package " + sample_pkg +
                           "`, no `main` package or `cmd/` binary)",
+                      {"library:go", "manifest:go.mod", "go-package:" + sample_pkg,
+                       "no-main-package", "no-cmd-binary"},
                       k_library_inferred_confidence};
 }
 
@@ -916,6 +978,7 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     if (file_count == 0) {
         out.label = ArchitectureLabel::Unknown;
         out.reasoning = "no source files found";
+        // Empty signals — nothing fired.
         out.confidence = 0;
         return out;
     }
@@ -928,19 +991,22 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     if (!project_root.empty()) {
         if (auto r = detect_rust_workspace(project_root); r) {
             out.label = ArchitectureLabel::Monorepo;
-            out.reasoning = std::move(*r);
+            out.reasoning = std::move(r->reasoning);
+            out.signals = std::move(r->signals);
             out.confidence = 92;
             return out;
         }
         if (auto r = detect_npm_monorepo(project_root); r) {
             out.label = ArchitectureLabel::Monorepo;
-            out.reasoning = std::move(*r);
+            out.reasoning = std::move(r->reasoning);
+            out.signals = std::move(r->signals);
             out.confidence = 90;
             return out;
         }
         if (auto r = detect_python_packages(project_root, index); r) {
             out.label = ArchitectureLabel::Monorepo;
-            out.reasoning = std::move(*r);
+            out.reasoning = std::move(r->reasoning);
+            out.signals = std::move(r->signals);
             out.confidence = 85;
             return out;
         }
@@ -979,6 +1045,7 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.label = ArchitectureLabel::Monorepo;
         out.reasoning = std::string{"top-level `"} + which + "/` plus " +
                         std::to_string(main_count) + " entry points suggests a monorepo layout";
+        out.signals = {dir_signal(which), "entry-points:" + std::to_string(main_count)};
         out.confidence = 85;
         return out;
     }
@@ -1044,6 +1111,10 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.label = ArchitectureLabel::CleanArchitecture;
         out.reasoning = "Domain/Application/Infrastructure/Presentation "
                         "layering (Clean / hexagonal architecture)";
+        out.signals = {"layout:clean-architecture"};
+        push_matching_dir_signals(out.signals, segments,
+                                  std::initializer_list<std::string_view>{
+                                      "Domain", "Application", "Infrastructure", "Presentation"});
         out.confidence = 85;
         return out;
     }
@@ -1063,6 +1134,11 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.label = ArchitectureLabel::CleanArchitecture;
         out.reasoning = "domain/repository/usecase/delivery layering "
                         "(Go-style Clean Architecture)";
+        out.signals = {"layout:clean-architecture-go"};
+        push_matching_dir_signals(out.signals, segments,
+                                  std::initializer_list<std::string_view>{
+                                      "domain", "repository", "repositories", "usecase", "usecases",
+                                      "application", "delivery", "rest", "handlers"});
         out.confidence = 80;
         return out;
     }
@@ -1075,6 +1151,7 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.label = ArchitectureLabel::Mvvm;
         out.reasoning = "`ViewModels/` and `Views/` directories "
                         "(MVVM UI layer)";
+        out.signals = {"layout:mvvm", "dir:ViewModels", "dir:Views"};
         out.confidence = 85;
         return out;
     }
@@ -1087,11 +1164,13 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.label = ArchitectureLabel::DotNetSolution;
         out.reasoning = "multiple sibling directories with dotted "
                         "names (typical .NET multi-project solution)";
+        out.signals = {"layout:dotnet-solution", "dotted-project-dirs"};
         out.confidence = 75;
         // A `.sln` at the project root corroborates the dotted-dir
         // signal — heuristic + manifest agreement is high-confidence.
         if (manifest && manifest->runtime == Runtime::DotNetSolution) {
             out.reasoning += " — confirmed by " + manifest->filename;
+            out.signals.emplace_back("manifest:" + manifest->filename);
             out.confidence = 90;
         }
         return out;
@@ -1105,6 +1184,7 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.label = ArchitectureLabel::Mvc;
         out.reasoning = "found `models/`, `views/`, and `controllers/` "
                         "directories (classic MVC layout)";
+        out.signals = {"layout:mvc", "dir:models", "dir:views", "dir:controllers"};
         out.confidence = 90;
         return out;
     }
@@ -1134,12 +1214,15 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.label = ArchitectureLabel::FrontendSpa;
         if (has_spa_config) {
             out.reasoning = "framework config file detected (next/vite/nuxt)";
+            out.signals = {"layout:frontend-spa", "spa-framework-config"};
         }
         else if (has_cra_marker) {
             out.reasoning = "react-scripts (Create React App) in package.json";
+            out.signals = {"layout:frontend-spa", "react-scripts", "manifest:package.json"};
         }
         else {
             out.reasoning = "found `components/` and `pages/` directories";
+            out.signals = {"layout:frontend-spa", "dir:components", "dir:pages"};
         }
         out.confidence = 80;
         return out;
@@ -1160,21 +1243,27 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     const bool has_apis = segments.contains("apis");
     if ((has_handlers || has_routes || has_routers || has_apis) && !has_pages && !has_spa_config) {
         out.label = ArchitectureLabel::ApiBackend;
+        out.signals = {"layout:api-backend"};
         if (has_apis) {
             out.reasoning = "found `apis/` directory, no frontend config";
+            out.signals.emplace_back("dir:apis");
         }
         else if (has_handlers) {
             out.reasoning = "found `handlers/` directory, no frontend config";
+            out.signals.emplace_back("dir:handlers");
         }
         else if (has_routes) {
             out.reasoning = "found `routes/` directory, no frontend config";
+            out.signals.emplace_back("dir:routes");
         }
         else {
             out.reasoning = "found `routers/` directory, no frontend config";
+            out.signals.emplace_back("dir:routers");
         }
         out.confidence = 60;
         if (manifest) {
             out.reasoning += " (" + std::string{runtime_label(manifest->runtime)} + " project)";
+            push_manifest_signals(out.signals, *manifest);
             out.confidence = 75;
         }
         return out;
@@ -1184,6 +1273,8 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     if (layered_matches >= 3) {
         out.label = ArchitectureLabel::Layered;
         out.reasoning = layered_reason;
+        out.signals = {"layout:layered"};
+        push_matching_dir_signals(out.signals, segments, layered_signals);
         out.confidence = 70;
         return out;
     }
@@ -1200,9 +1291,12 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         out.reasoning = has_top_include
                             ? "found `include/` + `src/` with no entry point — library layout"
                             : "found `lib/` + `src/` with no entry point — library layout";
+        out.signals = {"layout:library", "dir:src", "no-entry-point"};
+        out.signals.emplace_back(has_top_include ? "dir:include" : "dir:lib");
         out.confidence = 75;
         if (manifest) {
             out.reasoning += " (" + std::string{runtime_label(manifest->runtime)} + " project)";
+            push_manifest_signals(out.signals, *manifest);
             out.confidence = 85;
         }
         return out;
@@ -1215,6 +1309,7 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         if (auto hit = detect_ecosystem_library(project_root, *manifest, signals); hit) {
             out.label = ArchitectureLabel::Library;
             out.reasoning = std::move(hit->reasoning);
+            out.signals = std::move(hit->signals);
             out.confidence = hit->confidence;
             return out;
         }
@@ -1241,9 +1336,21 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         const std::string coherence_suffix =
             coherent ? ", " + std::to_string(runtime_pct) + "% " + lbl + "-dominant"
                      : std::string{};
+        out.signals = {"layout:monolith"};
+        if (main_count > 0) {
+            out.signals.emplace_back("entry-points:" + std::to_string(main_count));
+        }
+        if (manifest) {
+            push_manifest_signals(out.signals, *manifest);
+            if (coherent) {
+                out.signals.emplace_back("runtime-coherent:" + std::to_string(runtime_pct));
+            }
+        }
         if (layered_matches > 0) {
             out.reasoning = "single entry point with partial layering (" + layered_reason + ")" +
                             manifest_suffix + coherence_suffix;
+            out.signals.emplace_back("partial-layering");
+            push_matching_dir_signals(out.signals, segments, layered_signals);
             int conf = 55;
             if (coherent) {
                 conf = 80;
@@ -1268,6 +1375,7 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     // Fallback — nothing matched.
     out.label = ArchitectureLabel::Unknown;
     out.reasoning = "no distinctive architectural indicators found";
+    // Empty signals — by definition, nothing fired.
     out.confidence = 10;
     return out;
 }
