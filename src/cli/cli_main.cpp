@@ -84,6 +84,27 @@ void print_usage()
     std::fputs(k_usage, stdout);
 }
 
+/// Render a count with its singular or plural form, e.g. `1 file` vs
+/// `2 files`. Used to keep the `-v` summary line grammatical for the
+/// 1-file / 1-dep edge cases.
+[[nodiscard]] std::string count_word(std::size_t n, const char* singular, const char* plural)
+{
+    return std::to_string(n) + ' ' + (n == 1 ? singular : plural);
+}
+
+/// Format the `vectis: scanned …` verbose summary line written to
+/// stderr after a successful scan. Single source of truth so the two
+/// CLI entry points (digest, explain) emit identical text.
+[[nodiscard]] std::string scan_summary_line(std::size_t files, std::uint64_t files_skipped,
+                                            std::size_t symbols, std::size_t deps,
+                                            std::int64_t elapsed_ms)
+{
+    return "vectis: scanned " + count_word(files, "file", "files") + " (" +
+           std::to_string(files_skipped) + " skipped), " +
+           count_word(symbols, "symbol", "symbols") + ", " + count_word(deps, "dep", "deps") +
+           " in " + std::to_string(elapsed_ms) + " ms\n";
+}
+
 /// Parse `--format` value. Returns false on unknown value.
 bool parse_format(std::string_view v, vectis::code::DigestFormat& out)
 {
@@ -421,10 +442,10 @@ prepare_and_run_scan(const std::filesystem::path& project_root, bool use_cache,
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - t_start)
                                     .count();
-        std::fprintf(
-            stderr, "vectis: scanned %zu files (%llu skipped), %zu symbols, %zu deps in %lld ms\n",
-            index.file_count(), static_cast<unsigned long long>(scan->files_skipped),
-            index.symbol_count(), index.dependency_count(), static_cast<long long>(elapsed_ms));
+        const std::string line =
+            scan_summary_line(index.file_count(), scan->files_skipped, index.symbol_count(),
+                              index.dependency_count(), static_cast<std::int64_t>(elapsed_ms));
+        std::fputs(line.c_str(), stderr);
     }
 
     vectis::code::ExplainOptions explain_opts;
@@ -466,10 +487,10 @@ int run_explain(const ExplainArgs& args)
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - t_start)
                                     .count();
-        std::fprintf(
-            stderr, "vectis: scanned %zu files (%llu skipped), %zu symbols, %zu deps in %lld ms\n",
-            index.file_count(), static_cast<unsigned long long>(scan->files_skipped),
-            index.symbol_count(), index.dependency_count(), static_cast<long long>(elapsed_ms));
+        const std::string line =
+            scan_summary_line(index.file_count(), scan->files_skipped, index.symbol_count(),
+                              index.dependency_count(), static_cast<std::int64_t>(elapsed_ms));
+        std::fputs(line.c_str(), stderr);
     }
 
     vectis::code::ExportOptions export_opts;
