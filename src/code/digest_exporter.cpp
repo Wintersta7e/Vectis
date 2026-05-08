@@ -1,11 +1,8 @@
 #include "code/digest_exporter.h"
 
 #include <algorithm>
-#include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -37,30 +34,6 @@ namespace vectis::code {
 namespace {
 
 constexpr const char* k_vectis_version = "0.1.0";
-
-/// Current UTC timestamp formatted as RFC 3339, e.g. "2026-04-09T12:34:56Z".
-///
-/// Uses `std::gmtime` + `strftime` rather than `std::format` with
-/// chrono types — libstdc++'s chrono-format support is still patchy
-/// across the GCC versions Vectis targets.
-[[nodiscard]] std::string current_utc_rfc3339()
-{
-    const auto now = std::chrono::system_clock::now();
-    const auto time = std::chrono::system_clock::to_time_t(now);
-
-    std::tm utc{};
-#if defined(_WIN32)
-    gmtime_s(&utc, &time);
-#else
-    gmtime_r(&time, &utc);
-#endif
-
-    std::array<char, 32> buffer{};
-    // NOLINTNEXTLINE(concurrency-mt-unsafe) — we pass a thread-local tm
-    const std::size_t written =
-        std::strftime(buffer.data(), buffer.size(), "%Y-%m-%dT%H:%M:%SZ", &utc);
-    return std::string{buffer.data(), written};
-}
 
 /// Sorted unique list of language display names for every file in
 /// the index. `Unknown` is excluded.
@@ -387,7 +360,6 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
-    root["generated_at"] = current_utc_rfc3339();
 
     nlohmann::json project;
     project["name"] = effective_project_name(options);
