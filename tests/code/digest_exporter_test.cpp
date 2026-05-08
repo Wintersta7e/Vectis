@@ -380,7 +380,63 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
     // Symbols stay full-format-only to keep slim token-cheap.
     EXPECT_FALSE(parsed.contains("symbols"));
 
-    EXPECT_TRUE(parsed.contains("dependency_graph"));
+    // Cycles stay full-format-only (rarely useful for first-pass
+    // orientation) but external edges DO show up in slim — agents need
+    // the third-party dep landscape to reason about the project.
+    ASSERT_TRUE(parsed.contains("dependency_graph"));
+    EXPECT_FALSE(parsed["dependency_graph"].contains("cycles"));
+}
+
+TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
+{
+    // Earlier slim filtered externals out entirely. That left agents
+    // with `stats.external_edges = N` but `edges[]` shorter than N —
+    // an inconsistent schema. Slim now emits external edges with the
+    // same shape full does (target=null, target_external=<raw>).
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    Dependency internal_dep;
+    internal_dep.source_file_id = 1;
+    internal_dep.target_file_id = 2;
+    internal_dep.import_string = "scanner.h";
+    internal_dep.kind = "include";
+    index.add_dependency(std::move(internal_dep));
+
+    Dependency external_dep;
+    external_dep.source_file_id = 1;
+    external_dep.target_file_id = 0; // unresolved → external
+    external_dep.import_string = "<vector>";
+    external_dep.kind = "include";
+    index.add_dependency(std::move(external_dep));
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    const auto& edges = parsed["dependency_graph"]["edges"];
+    ASSERT_EQ(edges.size(), 2U) << "slim must emit both internal and external edges";
+
+    // Find the external edge — target=null, target_external=raw string.
+    bool saw_external = false;
+    bool saw_internal = false;
+    for (const auto& e : edges) {
+        if (e["target"].is_null()) {
+            saw_external = true;
+            EXPECT_EQ(e["target_external"], "<vector>");
+            EXPECT_EQ(e["kind"], "include");
+        }
+        else {
+            saw_internal = true;
+            EXPECT_FALSE(e.contains("target_external"));
+        }
+    }
+    EXPECT_TRUE(saw_external);
+    EXPECT_TRUE(saw_internal);
+
+    EXPECT_EQ(parsed["dependency_graph"]["stats"]["total_edges"], 2);
+    EXPECT_EQ(parsed["dependency_graph"]["stats"]["internal_edges"], 1);
+    EXPECT_EQ(parsed["dependency_graph"]["stats"]["external_edges"], 1);
 }
 
 } // namespace
