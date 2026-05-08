@@ -138,13 +138,14 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
 /// Build the dependency_graph JSON block.
 /// - `edges`: array of `{source, target, kind}` where source/target
-///   are relative paths. External (unresolved) edges use a target of
-///   null with the raw import_string carried on the edge.
+///   are relative paths. External (unresolved) edges set `target` to
+///   `null` and carry the raw import string in `target_external` so an
+///   agent can see what was imported without resolving it.
 /// - `cycles`: array of arrays of paths, one per detected cycle.
+///   Full format only — slim drops cycles to stay token-cheap.
 /// - `stats`: totals for quick scanning.
-[[nodiscard]] nlohmann::json build_dependency_graph_json(const CodeIndex& index,
-                                                         const FileIdToPath& lookup,
-                                                         bool include_externals)
+[[nodiscard]] nlohmann::json
+build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, bool include_cycles)
 {
     nlohmann::json graph;
     nlohmann::json edges_array = nlohmann::json::array();
@@ -153,31 +154,24 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     std::size_t external_count = 0;
 
     for (const Dependency& dep : index.all_dependencies()) {
+        nlohmann::json edge;
+        edge["source"] = path_for(lookup, dep.source_file_id);
         if (dep.target_file_id == 0) {
             ++external_count;
-            if (!include_externals) {
-                continue;
-            }
-            nlohmann::json edge;
-            edge["source"] = path_for(lookup, dep.source_file_id);
             edge["target"] = nullptr;
             edge["target_external"] = dep.import_string;
-            edge["kind"] = dep.kind;
-            edges_array.push_back(std::move(edge));
         }
         else {
             ++internal_count;
-            nlohmann::json edge;
-            edge["source"] = path_for(lookup, dep.source_file_id);
             edge["target"] = path_for(lookup, dep.target_file_id);
-            edge["kind"] = dep.kind;
-            edges_array.push_back(std::move(edge));
         }
+        edge["kind"] = dep.kind;
+        edges_array.push_back(std::move(edge));
     }
     graph["edges"] = std::move(edges_array);
 
-    // Cycles — only emitted in the full format.
-    if (include_externals) {
+    // Cycles — full format only; slim stays token-cheap.
+    if (include_cycles) {
         nlohmann::json cycles_array = nlohmann::json::array();
         for (const DependencyCycle& cycle : detect_cycles(index)) {
             nlohmann::json cycle_json = nlohmann::json::array();
