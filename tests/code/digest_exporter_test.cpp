@@ -108,7 +108,9 @@ TEST(DigestExporterTest, Json_WellFormed)
     auto parsed = nlohmann::json::parse(content);
 
     EXPECT_EQ(parsed["vectis_version"], "0.1.0");
-    EXPECT_TRUE(parsed.contains("generated_at"));
+    // Digest must be deterministic — no timestamps, no environment-derived
+    // fields. Same input + same binary → byte-identical JSON.
+    EXPECT_FALSE(parsed.contains("generated_at"));
     EXPECT_EQ(parsed["project"]["name"], "vectis-test");
     EXPECT_EQ(parsed["project"]["root"], "/fake/project");
     EXPECT_EQ(parsed["project"]["file_count"], 2);
