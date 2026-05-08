@@ -48,11 +48,11 @@ USAGE
     vectis --help                 Show this text.
 
 DIGEST OPTIONS
-    --format json | slim | md     Output format (default: slim).
-                                  `slim` is structure-only and the
-                                  most token-efficient for agent
-                                  context. `json` adds hotspot body
-                                  excerpts; `md` is human-readable.
+    --format json | slim          Output format (default: slim).
+                                  Both are JSON; `slim` is the
+                                  token-efficient agent default,
+                                  `json` adds per-file symbols and
+                                  hotspot body excerpts.
     --output <file>               Write to <file>. Use '-' for stdout
                                   (default: stdout).
     --cache                       Reuse SQLite state between runs at
@@ -74,7 +74,7 @@ EXIT CODES
 EXAMPLES
     vectis digest ./my-project                        # Slim JSON to stdout
     vectis digest ./my-project --format json          # Full JSON with excerpts
-    vectis digest ./my-project --cache --format md    # Cached, markdown
+    vectis digest ./my-project --cache                # Cached slim JSON
     vectis digest . --cache-dir /tmp/vc --format slim # Custom cache dir
     vectis mcp                                        # MCP server on stdio
 )";
@@ -94,10 +94,6 @@ bool parse_format(std::string_view v, vectis::code::DigestFormat& out)
     }
     if (v == "slim" || v == "slim-json") {
         out = DigestFormat::SlimJson;
-        return true;
-    }
-    if (v == "md" || v == "markdown") {
-        out = DigestFormat::Markdown;
         return true;
     }
     return false;

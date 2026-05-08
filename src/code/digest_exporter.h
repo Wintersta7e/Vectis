@@ -11,15 +11,16 @@
 namespace vectis::code {
 
 /// Which serialization variant the digest exporter should produce.
+///
+/// Both variants are JSON. Vectis is consumed by agents — slim is the
+/// default, full carries excerpts and per-file symbol arrays for the
+/// rare cases an agent needs the extra detail.
 enum class DigestFormat : std::uint8_t
 {
     /// Full structured JSON: project metadata + per-file size/lines +
-    /// per-file symbols array. Pretty-printed, UTF-8.
+    /// per-file symbols array + hotspot body excerpts. Pretty-printed,
+    /// UTF-8.
     Json,
-
-    /// Human-readable Markdown outline: H1 project title, overview
-    /// stats, per-file H3 sections with bullet-list symbols.
-    Markdown,
 
     /// Token-budget-conscious JSON: omits per-file size, lines, and
     /// the symbols array. Keeps project stats and the flat file list
@@ -49,7 +50,6 @@ struct ExportOptions
 /// `project_root`:
 ///
 ///     <project_root>/vectis-digest.json
-///     <project_root>/vectis-digest.md
 ///     <project_root>/vectis-digest-slim.json
 [[nodiscard]] std::filesystem::path default_output_path(const std::filesystem::path& project_root,
                                                         DigestFormat format);
