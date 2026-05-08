@@ -252,117 +252,6 @@ TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
         << "slim=" << slim.size() << " full=" << full.size();
 }
 
-TEST(DigestExporterTest, Markdown_ContainsHeadingsAndSymbolLines)
-{
-    CodeIndex index;
-    populate_synthetic_index(index);
-
-    const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-
-    EXPECT_NE(content.find("# vectis-test"), std::string::npos);
-    EXPECT_NE(content.find("## Overview"), std::string::npos);
-    EXPECT_NE(content.find("## Files"), std::string::npos);
-    EXPECT_NE(content.find("- Files: 2"), std::string::npos);
-    EXPECT_NE(content.find("- Symbols: 6"), std::string::npos);
-    EXPECT_NE(content.find("### src/core/app.cpp"), std::string::npos);
-    EXPECT_NE(content.find("### src/scan/scanner.cpp"), std::string::npos);
-    EXPECT_NE(content.find("`App`"), std::string::npos);
-    EXPECT_NE(content.find("`Scanner`"), std::string::npos);
-    EXPECT_NE(content.find("line 13"), std::string::npos);
-}
-
-TEST(DigestExporterTest, Markdown_RendersSignaturesAndMembers)
-{
-    CodeIndex index;
-    populate_synthetic_index(index);
-
-    const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-
-    // Methods with signatures should be rendered with the full
-    // signature as the bullet's code span instead of just the name.
-    EXPECT_NE(content.find("`bool App::initialize()` (method)"), std::string::npos);
-    EXPECT_NE(content.find("`int App::run()` (method)"), std::string::npos);
-
-    // Classes without signatures fall back to the bare name.
-    EXPECT_NE(content.find("`App` (class)"), std::string::npos);
-    EXPECT_NE(content.find("`Scanner` (class)"), std::string::npos);
-
-    // Enum values rendered as an indented comma-separated sub-bullet.
-    EXPECT_NE(content.find("`ErrorKind` (enum)"), std::string::npos);
-    EXPECT_NE(content.find("`IoError`, `ParseError`, `NetworkError`"), std::string::npos);
-
-    // Struct fields rendered similarly.
-    EXPECT_NE(content.find("`Point` (struct)"), std::string::npos);
-    EXPECT_NE(content.find("`x`, `y`"), std::string::npos);
-}
-
-TEST(DigestExporterTest, Markdown_RendersVisibilityAndDecorators)
-{
-    CodeIndex index;
-
-    FileEntry file;
-    file.path_relative = "src/api/routes.py";
-    file.language = Language::Python;
-    file.size = 800;
-    file.line_count = 30;
-    const std::int64_t fid = index.add_file(std::move(file));
-
-    const std::array<Symbol, 4> batch = {
-        Symbol{.file_id = fid,
-               .name = "index",
-               .kind = SymbolKind::Function,
-               .line_start = 5,
-               .line_end = 8,
-               .signature = "def index() -> str",
-               .visibility = Visibility::Public,
-               .decorators = {"app.route('/')", "login_required"}},
-        Symbol{.file_id = fid,
-               .name = "_helper",
-               .kind = SymbolKind::Function,
-               .line_start = 12,
-               .line_end = 14,
-               .signature = "def _helper(x)",
-               .visibility = Visibility::Private},
-        Symbol{.file_id = fid,
-               .name = "Inner",
-               .kind = SymbolKind::Class,
-               .line_start = 18,
-               .line_end = 25,
-               .visibility = Visibility::Internal},
-        // No visibility set — should render with the bare `(class)` form
-        // and emit no decorators sub-bullet.
-        Symbol{.file_id = fid,
-               .name = "Bare",
-               .kind = SymbolKind::Class,
-               .line_start = 27,
-               .line_end = 29},
-    };
-    index.add_symbols(batch);
-
-    const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-
-    // Visibility surfaces inside the kind-parens when set.
-    EXPECT_NE(content.find("`def index() -> str` (function, public)"), std::string::npos);
-    EXPECT_NE(content.find("`def _helper(x)` (function, private)"), std::string::npos);
-    EXPECT_NE(content.find("`Inner` (class, internal)"), std::string::npos);
-
-    // Unknown visibility leaves the parens untouched (no trailing comma).
-    EXPECT_NE(content.find("`Bare` (class) — line 27"), std::string::npos);
-    EXPECT_EQ(content.find("`Bare` (class, "), std::string::npos);
-
-    // Decorators land in their own indented sub-bullet, with the @
-    // re-attached so the rendering matches source idiom.
-    EXPECT_NE(content.find("    - decorators: `@app.route('/')`, `@login_required`"),
-              std::string::npos);
-
-    // Symbols without decorators must not emit the sub-bullet.
-    EXPECT_EQ(content.find("`def _helper(x)` (function, private)\n    - decorators:"),
-              std::string::npos);
-}
-
 TEST(DigestExporterTest, Export_WritesFileAtDefaultLocation)
 {
     CodeIndex index;
@@ -378,7 +267,7 @@ TEST(DigestExporterTest, Export_WritesFileAtDefaultLocation)
     const auto result = export_digest(index, options);
     ASSERT_TRUE(result.has_value());
 
-    const auto written_path = *result;
+    const auto& written_path = *result;
     EXPECT_EQ(written_path, root / "vectis-digest.json");
     ASSERT_TRUE(std::filesystem::exists(written_path));
 
@@ -397,18 +286,22 @@ TEST(DigestExporterTest, Export_ForwardSlashesInPaths)
     CodeIndex index;
     populate_synthetic_index(index);
 
-    // Markdown renders the relative paths inline — easiest place to
-    // verify no backslashes creep in on any platform.
-    const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
+    // Path values inside the JSON document must use forward slashes on
+    // every platform so an agent comparing across runs / OS doesn't
+    // see Windows-style separators.
+    const ExportOptions options = make_options(DigestFormat::Json, "/fake/project");
     const std::string content = build_digest_string(index, options);
-    EXPECT_EQ(content.find('\\'), std::string::npos) << "backslashes leaked into markdown output";
+    auto parsed = nlohmann::json::parse(content);
+    for (const auto& f : parsed["files"]) {
+        const std::string p = f["path"].get<std::string>();
+        EXPECT_EQ(p.find('\\'), std::string::npos) << "backslash in file path: " << p;
+    }
 }
 
 TEST(DigestExporterTest, DefaultOutputPath_ForEachFormat)
 {
     const std::filesystem::path root = "/tmp/vectis-project-x";
     EXPECT_EQ(default_output_path(root, DigestFormat::Json), root / "vectis-digest.json");
-    EXPECT_EQ(default_output_path(root, DigestFormat::Markdown), root / "vectis-digest.md");
     EXPECT_EQ(default_output_path(root, DigestFormat::SlimJson), root / "vectis-digest-slim.json");
 }
 
@@ -479,19 +372,6 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
     EXPECT_FALSE(parsed.contains("symbols"));
 
     EXPECT_TRUE(parsed.contains("dependency_graph"));
-}
-
-TEST(DigestExporterTest, Markdown_ContainsDependencyGraphAndHotspotSections)
-{
-    CodeIndex index;
-    populate_synthetic_index(index);
-
-    const ExportOptions options = make_options(DigestFormat::Markdown, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-
-    EXPECT_NE(content.find("## Architecture"), std::string::npos);
-    EXPECT_NE(content.find("## Hotspots"), std::string::npos);
-    EXPECT_NE(content.find("## Dependency Graph"), std::string::npos);
 }
 
 } // namespace
