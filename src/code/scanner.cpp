@@ -68,12 +68,11 @@ constexpr std::chrono::milliseconds k_progress_time_stride{100};
 
 } // namespace
 
-vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeIndex& index,
-                                               TreeSitterParser& parser,
-                                               const ProgressCallback& on_progress,
-                                               const CompletionCallback& on_complete,
-                                               const vectis::core::CancellationToken& cancel_token,
-                                               const std::atomic<std::int64_t>& current_epoch)
+vectis::core::Result<ScanResult>
+Scanner::run_collect(const ScanConfig& config, CodeIndex& index, TreeSitterParser& parser,
+                     const ProgressCallback& on_progress,
+                     const vectis::core::CancellationToken& cancel_token,
+                     const std::atomic<std::int64_t>& current_epoch)
 {
     using vectis::core::ErrorKind;
     using vectis::core::make_error;
@@ -343,39 +342,29 @@ vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeInd
                           config.root.string());
     }
 
-    // Second pass — resolve raw imports into Dependency edges now
-    // that the file table is stable. Only runs once per scan, so any
-    // O(N*M) worst case inside resolve_all is bounded.
-    if (!per_file_imports.empty()) {
-        resolve_all(index, config.root, per_file_imports);
-    }
+    ScanResult scan;
+    scan.summary.file_count = index.file_count();
+    scan.summary.symbol_count = index.symbol_count();
+    scan.summary.language_count = index.language_count();
+    scan.summary.files_skipped = files_skipped;
+    scan.per_file_imports = std::move(per_file_imports);
 
-    ScanSummary summary;
-    summary.file_count = index.file_count();
-    summary.symbol_count = index.symbol_count();
-    summary.language_count = index.language_count();
-    summary.files_skipped = files_skipped;
+    VECTIS_LOG_INFO("Scanner: collect done — {} files, {} symbols, {} languages ({} skipped)",
+                    scan.summary.file_count, scan.summary.symbol_count, scan.summary.language_count,
+                    files_skipped);
 
-    VECTIS_LOG_INFO(
-        "Scanner: scan complete — {} files, {} symbols, {} languages, {} deps ({} skipped)",
-        summary.file_count, summary.symbol_count, summary.language_count, index.dependency_count(),
-        files_skipped);
-
-    if (on_complete) {
-        on_complete(summary);
-    }
-    return summary;
+    return scan;
 }
 
 // ============================================================================
 // Incremental scan
 // ============================================================================
 
-vectis::core::Result<IncrementalScanResult>
-Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterParser& parser,
-                         const ProgressCallback& on_progress,
-                         const vectis::core::CancellationToken& cancel_token,
-                         const std::atomic<std::int64_t>& current_epoch)
+vectis::core::Result<ScanResult>
+Scanner::run_incremental_collect(const ScanConfig& config, CodeIndex& index,
+                                 TreeSitterParser& parser, const ProgressCallback& on_progress,
+                                 const vectis::core::CancellationToken& cancel_token,
+                                 const std::atomic<std::int64_t>& current_epoch)
 {
     using vectis::core::ErrorKind;
     using vectis::core::make_error;
@@ -390,11 +379,13 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         path_to_info[f.path_relative.string()] = {f.id, f.content_hash};
     }
 
-    // Track which existing paths were visited.
-    std::unordered_set<std::string> visited_paths;
-    visited_paths.reserve(existing_files.size());
-
-    IncrementalScanResult result;
+    // Track which existing paths were visited. Lives on the result so
+    // the caller can extend it during a manifest pass before calling
+    // `prune_missing`.
+    ScanResult scan;
+    scan.visited_paths.reserve(existing_files.size());
+    auto& visited_paths = scan.visited_paths;
+    std::uint64_t files_skipped_local = 0;
     std::size_t files_seen = 0;
     auto last_publish = std::chrono::steady_clock::now();
 
@@ -485,7 +476,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         const std::filesystem::path& path = entry.path();
         const Language language = detect_language(path);
         if (language == Language::JavaScript && looks_like_vendored_js(path.filename().string())) {
-            ++result.files_skipped;
+            ++files_skipped_local;
             try {
                 it.increment(ec);
             }
@@ -496,7 +487,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
             continue;
         }
         if (language == Language::Unknown) {
-            ++result.files_skipped;
+            ++files_skipped_local;
             try {
                 it.increment(ec);
             }
@@ -510,7 +501,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         const std::uint64_t size = entry.file_size(ec);
         if (ec || size > k_max_file_size_bytes) {
             ec.clear();
-            ++result.files_skipped;
+            ++files_skipped_local;
             try {
                 it.increment(ec);
             }
@@ -523,7 +514,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
 
         auto read_result = vectis::platform::read_file(path);
         if (!read_result) {
-            ++result.files_skipped;
+            ++files_skipped_local;
             try {
                 it.increment(ec);
             }
@@ -536,7 +527,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
 
         const std::string& content = *read_result;
         if (looks_binary(content)) {
-            ++result.files_skipped;
+            ++files_skipped_local;
             try {
                 it.increment(ec);
             }
@@ -571,7 +562,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
                 // Unchanged — skip. Existing dependency edges in the
                 // index are already correct; no need to re-extract
                 // imports or re-resolve.
-                ++result.files_unchanged;
+                ++scan.files_unchanged;
             }
             else {
                 // Modified — remove old, re-add.
@@ -611,7 +602,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
                     per_file_imports.push_back(std::move(fi));
                 }
 
-                ++result.files_updated;
+                ++scan.files_updated;
             }
         }
         else {
@@ -650,7 +641,7 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
                 per_file_imports.push_back(std::move(fi));
             }
 
-            ++result.files_added;
+            ++scan.files_added;
         }
 
         ++files_seen;
@@ -676,31 +667,107 @@ Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterP
         }
     }
 
-    // Detect deleted files.
-    for (const auto& [path_str, info] : path_to_info) {
-        if (visited_paths.find(path_str) == visited_paths.end()) {
-            index.remove_file(info.first);
-            ++result.files_deleted;
+    scan.summary.file_count = index.file_count();
+    scan.summary.symbol_count = index.symbol_count();
+    scan.summary.language_count = index.language_count();
+    scan.summary.files_skipped = files_skipped_local;
+    scan.per_file_imports = std::move(per_file_imports);
+
+    VECTIS_LOG_INFO("Scanner: incremental collect done — {} added, {} updated, {} unchanged",
+                    scan.files_added, scan.files_updated, scan.files_unchanged);
+
+    return scan;
+}
+
+// ============================================================================
+// Edge resolution + prune sweep + thin run / run_incremental wrappers
+// ============================================================================
+
+void Scanner::resolve(CodeIndex& index, const std::filesystem::path& project_root,
+                      const std::vector<FileImports>& per_file)
+{
+    if (per_file.empty()) {
+        return;
+    }
+    resolve_all(index, project_root, per_file);
+}
+
+std::size_t Scanner::prune_missing(CodeIndex& index,
+                                   const std::unordered_set<std::string>& visited_paths)
+{
+    std::size_t removed = 0;
+    // Snapshot current file table; mutating remove_file while iterating
+    // the live index would invalidate iterators / lookup maps.
+    const auto files = index.snapshot_files();
+    for (const auto& f : files) {
+        if (visited_paths.find(f.path_relative.generic_string()) == visited_paths.end()) {
+            index.remove_file(f.id);
+            ++removed;
         }
     }
+    return removed;
+}
 
-    // Re-resolve dependencies with the updated file table.
-    if (!per_file_imports.empty()) {
-        resolve_all(index, config.root, per_file_imports);
+vectis::core::Result<ScanSummary> Scanner::run(const ScanConfig& config, CodeIndex& index,
+                                               TreeSitterParser& parser,
+                                               const ProgressCallback& on_progress,
+                                               const CompletionCallback& on_complete,
+                                               const vectis::core::CancellationToken& cancel_token,
+                                               const std::atomic<std::int64_t>& current_epoch)
+{
+    auto scan = run_collect(config, index, parser, on_progress, cancel_token, current_epoch);
+    if (!scan) {
+        return tl::unexpected<vectis::core::Error>(scan.error());
     }
 
+    resolve(index, config.root, scan->per_file_imports);
+
+    ScanSummary summary = scan->summary;
+    VECTIS_LOG_INFO(
+        "Scanner: scan complete — {} files, {} symbols, {} languages, {} deps ({} skipped)",
+        summary.file_count, summary.symbol_count, summary.language_count, index.dependency_count(),
+        summary.files_skipped);
+
+    if (on_complete) {
+        on_complete(summary);
+    }
+    return summary;
+}
+
+vectis::core::Result<IncrementalScanResult>
+Scanner::run_incremental(const ScanConfig& config, CodeIndex& index, TreeSitterParser& parser,
+                         const ProgressCallback& on_progress,
+                         const vectis::core::CancellationToken& cancel_token,
+                         const std::atomic<std::int64_t>& current_epoch)
+{
+    auto scan =
+        run_incremental_collect(config, index, parser, on_progress, cancel_token, current_epoch);
+    if (!scan) {
+        return tl::unexpected<vectis::core::Error>(scan.error());
+    }
+
+    const std::size_t deleted = prune_missing(index, scan->visited_paths);
+    resolve(index, config.root, scan->per_file_imports);
+
     // Reclaim soft-delete tombstones once per scan — long-running
-    // incremental sessions would otherwise let the underlying
-    // vectors grow without bound.
-    if (result.files_deleted > 0 || result.files_updated > 0) {
+    // incremental sessions would otherwise let the underlying vectors
+    // grow without bound.
+    if (deleted > 0 || scan->files_updated > 0) {
         index.compact();
     }
 
+    IncrementalScanResult out;
+    out.files_added = scan->files_added;
+    out.files_updated = scan->files_updated;
+    out.files_deleted = deleted;
+    out.files_unchanged = scan->files_unchanged;
+    out.files_skipped = scan->summary.files_skipped;
+
     VECTIS_LOG_INFO(
         "Scanner: incremental scan done — {} added, {} updated, {} deleted, {} unchanged",
-        result.files_added, result.files_updated, result.files_deleted, result.files_unchanged);
+        out.files_added, out.files_updated, out.files_deleted, out.files_unchanged);
 
-    return result;
+    return out;
 }
 
 } // namespace vectis::code

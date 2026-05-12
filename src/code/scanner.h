@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "code/code_index.h"
+#include "code/dependency_resolver.h"
 #include "code/parser.h"
 #include "core/result.h"
 #include "core/task_queue.h"
@@ -60,6 +61,31 @@ struct IncrementalScanResult
     std::size_t files_deleted = 0;
     std::size_t files_unchanged = 0;
     std::uint64_t files_skipped = 0;
+};
+
+/// Output of the source-scanner *collect* phase — the new lower-level
+/// API that lets the CLI insert the manifest pass between source-walk
+/// and edge resolution. Combine `run_collect` (cold) or
+/// `run_incremental_collect` (warm) with `prune_missing` (warm only)
+/// and `resolve` to produce the same end state the legacy `run` and
+/// `run_incremental` wrappers do.
+struct ScanResult
+{
+    /// File / symbol / language counters captured at the end of the
+    /// walk. The dependency count is left zero because edges are
+    /// emitted later by `Scanner::resolve`.
+    ScanSummary summary;
+    /// Raw imports collected per file; consumed by `Scanner::resolve`.
+    std::vector<FileImports> per_file_imports;
+    /// Relative paths the scanner saw on disk during this run. Populated
+    /// by `run_incremental_collect`; empty on the cold full path. The
+    /// manifest scanner appends to this set before `prune_missing` runs
+    /// so registered manifest files survive the prune sweep.
+    std::unordered_set<std::string> visited_paths;
+    /// Incremental-only counters. Zero on the cold full path.
+    std::size_t files_added = 0;
+    std::size_t files_updated = 0;
+    std::size_t files_unchanged = 0;
 };
 
 /// Runs a recursive directory walk on a background thread, detecting
@@ -116,6 +142,59 @@ public:
                     const ProgressCallback& on_progress,
                     const vectis::core::CancellationToken& cancel_token,
                     const std::atomic<std::int64_t>& current_epoch);
+
+    // ----- Low-level collect / resolve / prune primitives ------------------
+    //
+    // Used by the CLI digest path to insert the manifest pass between
+    // the source-scan walk and dependency resolution:
+    //
+    //   auto scan = Scanner::run_collect(...);                          // cold
+    //   manifest_scanner::scan_manifests(..., scan->visited_paths);     // adds manifest paths
+    //   Scanner::resolve(index, root, scan->per_file_imports);
+    //
+    //   auto scan = Scanner::run_incremental_collect(...);              // warm
+    //   manifest_scanner::scan_manifests(..., scan->visited_paths);
+    //   Scanner::prune_missing(index, scan->visited_paths);
+    //   Scanner::resolve(index, root, scan->per_file_imports);
+    //
+    // The existing single-call `run` / `run_incremental` stay as thin
+    // wrappers that compose these primitives, so existing callers don't
+    // need to migrate.
+
+    /// Cold full scan — walks the tree, parses, adds files & symbols.
+    /// Does NOT resolve imports; the caller must follow up with
+    /// `resolve(...)` (typically after a manifest pass).
+    [[nodiscard]] static vectis::core::Result<ScanResult>
+    run_collect(const ScanConfig& config, CodeIndex& index, TreeSitterParser& parser,
+                const ProgressCallback& on_progress,
+                const vectis::core::CancellationToken& cancel_token,
+                const std::atomic<std::int64_t>& current_epoch);
+
+    /// Warm cached scan — same walk as `run_collect`, but compares
+    /// content hashes against the existing index to re-parse only
+    /// changed/new files. Modified files use `remove_file` + `add_file`
+    /// to refresh in place. Does NOT prune missing files and does NOT
+    /// resolve imports; the caller must invoke `prune_missing` (after
+    /// the manifest pass appends to `visited_paths`) and `resolve`.
+    [[nodiscard]] static vectis::core::Result<ScanResult>
+    run_incremental_collect(const ScanConfig& config, CodeIndex& index, TreeSitterParser& parser,
+                            const ProgressCallback& on_progress,
+                            const vectis::core::CancellationToken& cancel_token,
+                            const std::atomic<std::int64_t>& current_epoch);
+
+    /// Turn the per-file raw imports into `Dependency` edges on the
+    /// index. Thin wrapper around `resolve_all`; exposed as a Scanner
+    /// method so the digest path uses one symbol family for the whole
+    /// pipeline.
+    static void resolve(CodeIndex& index, const std::filesystem::path& project_root,
+                        const std::vector<FileImports>& per_file);
+
+    /// Remove every file in `index` whose `path_relative.generic_string()`
+    /// is NOT present in `visited_paths`. Returns the count removed.
+    /// Used by the warm-cache path after the source walk and manifest
+    /// pass have both contributed to `visited_paths`.
+    [[nodiscard]] static std::size_t
+    prune_missing(CodeIndex& index, const std::unordered_set<std::string>& visited_paths);
 };
 
 } // namespace vectis::code

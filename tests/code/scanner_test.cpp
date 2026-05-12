@@ -288,4 +288,70 @@ TEST_F(ScannerFixture, IncrementalScanRunsCompactWhenFilesAreDeleted)
     EXPECT_LT(syms.size(), symbols_before);
 }
 
+TEST_F(ScannerFixture, RunCollectAndResolveMatchesRunCombined)
+{
+    // Mixed-language tree exercising both symbol extraction and the
+    // dependency resolver (the C++ include and TS import resolve to
+    // sibling files inside the tree).
+    write("a/foo.cpp", "#include \"foo.h\"\nint Foo::run() { return 1; }\n");
+    write("a/foo.h", "class Foo { public: int run(); };\n");
+    write("b/main.ts", "import { greet } from './lib';\nexport function main() { greet(); }\n");
+    write("b/lib.ts", "export function greet() {}\n");
+
+    auto build_config = [&](std::int64_t epoch) {
+        ScanConfig cfg;
+        cfg.root = m_root;
+        cfg.epoch = epoch;
+        return cfg;
+    };
+
+    // Combined path — the existing thin wrapper.
+    CodeIndex combined;
+    {
+        std::atomic<std::int64_t> epoch{1};
+        const CancellationToken token{};
+        const auto result = Scanner::run(
+            build_config(1), combined, m_parser, [](const ScanProgress&) {},
+            [](const ScanSummary&) {}, token, epoch);
+        ASSERT_TRUE(result.has_value());
+    }
+
+    // Decomposed path — the new lower-level primitives.
+    CodeIndex split;
+    {
+        std::atomic<std::int64_t> epoch{1};
+        const CancellationToken token{};
+        auto collect = Scanner::run_collect(
+            build_config(1), split, m_parser, [](const ScanProgress&) {}, token, epoch);
+        ASSERT_TRUE(collect.has_value());
+        Scanner::resolve(split, m_root, collect->per_file_imports);
+    }
+
+    EXPECT_EQ(combined.file_count(), split.file_count());
+    EXPECT_EQ(combined.symbol_count(), split.symbol_count());
+    EXPECT_EQ(combined.dependency_count(), split.dependency_count());
+    EXPECT_GT(combined.dependency_count(), 0U)
+        << "test inputs must produce resolvable edges to make the comparison meaningful";
+}
+
+TEST_F(ScannerFixture, PruneMissingRemovesPathsAbsentFromVisitedSet)
+{
+    write("a.py", "def alpha(): pass\n");
+    write("b.py", "def beta(): pass\n");
+
+    CodeIndex index;
+    ASSERT_TRUE(run_scan(index));
+    ASSERT_EQ(index.file_count(), 2U);
+
+    // Build a visited set that omits b.py; prune must drop it.
+    std::unordered_set<std::string> visited;
+    visited.insert("a.py");
+    const std::size_t removed = Scanner::prune_missing(index, visited);
+    EXPECT_EQ(removed, 1U);
+    EXPECT_EQ(index.file_count(), 1U);
+    const auto files = index.snapshot_files();
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0].path_relative.filename().string(), "a.py");
+}
+
 } // namespace
