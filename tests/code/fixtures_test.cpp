@@ -204,25 +204,26 @@ TEST(FixturesTest, SamplePython_ScannerResolvesImports)
     EXPECT_GE(user_dependents.size(), 2U);
 }
 
-/// Optional smoke test against the calibration corpus (camel) when
-/// `VECTIS_RUN_CORPUS_SMOKE=1` is set. Camel ships 691 POMs and was
-/// the target the Phase 1 spec was calibrated against. Skipped by
-/// default — CI and laptop runs don't need ~minute-long corpus walks.
-TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
+/// Optional smoke test against a real multi-module Maven corpus.
+/// Activated when both `VECTIS_RUN_CORPUS_SMOKE=1` and
+/// `VECTIS_JAVA_CORPUS_DIR=<path>` are set; otherwise skipped so the
+/// suite stays sub-second on default runs. The corpus this was
+/// calibrated against is documented in `docs/plans/` (gitignored).
+TEST(FixturesTest, OptionalJavaCorpus_SmokesPomCountAndKinds)
 {
     const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
     if (enable == nullptr || std::string_view{enable} != "1") {
-        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run this corpus smoke test";
+        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests";
     }
 
-    const char* env_dir = std::getenv("VECTIS_CAMEL_DIR");
-    const std::filesystem::path camel_root =
-        env_dir != nullptr
-            ? std::filesystem::path{env_dir}
-            : std::filesystem::path{std::getenv("HOME") != nullptr ? std::getenv("HOME") : ""} /
-                  "corpus-issue07" / "camel";
-    if (!std::filesystem::is_directory(camel_root)) {
-        GTEST_SKIP() << "camel corpus not at '" << camel_root.string() << "'; set VECTIS_CAMEL_DIR";
+    const char* env_dir = std::getenv("VECTIS_JAVA_CORPUS_DIR");
+    if (env_dir == nullptr || *env_dir == '\0') {
+        GTEST_SKIP() << "set VECTIS_JAVA_CORPUS_DIR to point at a multi-module POM corpus";
+    }
+    const std::filesystem::path corpus_root{env_dir};
+    if (!std::filesystem::is_directory(corpus_root)) {
+        GTEST_SKIP() << "VECTIS_JAVA_CORPUS_DIR='" << corpus_root.string()
+                     << "' is not a directory";
     }
 
     // Manifest-only run — bypasses the source scanner entirely so the
@@ -232,7 +233,7 @@ TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
     CodeIndex index;
     std::unordered_set<std::string> visited;
     vectis::code::manifest_scanner::Config mc;
-    mc.root = camel_root;
+    mc.root = corpus_root;
     mc.epoch = 1;
     vectis::code::manifest_scanner::scan_manifests(
         mc, index, visited, vectis::code::manifest_scanner::default_handlers());
@@ -243,13 +244,13 @@ TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
             ++pom_files;
         }
     }
-    // camel ships 691 pom.xml files total, but 8 of them live under
+    // This corpus ships 691 pom.xml files total, but 8 live under
     // `archetypes/*/src/main/resources/archetype-resources/` — they're
     // Velocity templates (`## ...` comments, `${X}` outside of valid
-    // XML attribute contexts), not parseable POMs. The handler
-    // correctly skips them with a WARN. Expect 683.
-    EXPECT_EQ(pom_files, 683U) << "camel ships 691 pom.xml files but 8 are archetype templates "
-                                  "(Velocity syntax) that aren't valid XML";
+    // XML attribute contexts), not parseable POMs. The handler skips
+    // them with a WARN. Expect 683.
+    EXPECT_EQ(pom_files, 683U)
+        << "corpus ships 691 pom.xml files but 8 are Velocity archetype templates";
 
     std::size_t parent_internal = 0;
     std::size_t parent_external = 0;
@@ -274,48 +275,44 @@ TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
             ++module_count;
         }
     }
-    // Every camel POM except the root traces to the in-repo
-    // `camel/pom.xml`; the root POM itself parents to Apache's
-    // off-repo `org.apache:apache:37`. So exactly one external parent
-    // is expected.
-    EXPECT_EQ(parent_external, 1U) << "only the root POM's `org.apache:apache:37` parent should "
-                                      "be external; everything else resolves internally";
+    // Every POM except the root traces internally; the root POM's
+    // parent lives off-repo, so exactly one external parent expected.
+    EXPECT_EQ(parent_external, 1U) << "root POM's parent is the only off-repo parent reference";
     EXPECT_GT(parent_internal, 0U);
-    EXPECT_GT(managed_count, 0U) << "camel uses <dependencyManagement> heavily";
+    EXPECT_GT(managed_count, 0U) << "corpus uses <dependencyManagement> heavily";
     EXPECT_GT(maven_count, 0U);
     EXPECT_GT(module_count, 0U);
-    EXPECT_GT(bom_count, 0U) << "camel imports junit-bom and others";
+    EXPECT_GT(bom_count, 0U) << "corpus imports BOM-style dependencies";
     EXPECT_NE(maven_count, managed_count)
-        << "managed vs live dep counts diverge — the kinds must be distinct";
+        << "managed vs live dep counts must diverge — the kinds are distinct";
 }
 
-/// Optional .NET corpus smoke against PowerToys when
-/// `VECTIS_RUN_CORPUS_SMOKE=1` is set. PowerToys ships ~190 csproj
-/// files plus a root `Directory.Packages.props` with ~129 PackageVersion
-/// entries and ~488 PackageReference entries that depend on CPM
-/// resolution. Skipped by default; manifest-only run keeps it fast.
-TEST(FixturesTest, OptionalPowerToysCorpus_SmokesCsprojCountAndCpmResolution)
+/// Optional smoke test against a real .NET solution corpus with
+/// Central Package Management active. Activated when both
+/// `VECTIS_RUN_CORPUS_SMOKE=1` and `VECTIS_DOTNET_CORPUS_DIR=<path>`
+/// are set. The corpus this was calibrated against is documented in
+/// `docs/plans/` (gitignored).
+TEST(FixturesTest, OptionalDotnetCorpus_SmokesCsprojCountAndCpmResolution)
 {
     const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
     if (enable == nullptr || std::string_view{enable} != "1") {
-        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run this corpus smoke test";
+        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests";
     }
 
-    const char* env_dir = std::getenv("VECTIS_POWERTOYS_DIR");
-    const std::filesystem::path pt_root =
-        env_dir != nullptr
-            ? std::filesystem::path{env_dir}
-            : std::filesystem::path{std::getenv("HOME") != nullptr ? std::getenv("HOME") : ""} /
-                  "corpus-issue07" / "PowerToys";
-    if (!std::filesystem::is_directory(pt_root)) {
-        GTEST_SKIP() << "PowerToys corpus not at '" << pt_root.string()
-                     << "'; set VECTIS_POWERTOYS_DIR";
+    const char* env_dir = std::getenv("VECTIS_DOTNET_CORPUS_DIR");
+    if (env_dir == nullptr || *env_dir == '\0') {
+        GTEST_SKIP() << "set VECTIS_DOTNET_CORPUS_DIR to point at a .NET solution corpus";
+    }
+    const std::filesystem::path corpus_root{env_dir};
+    if (!std::filesystem::is_directory(corpus_root)) {
+        GTEST_SKIP() << "VECTIS_DOTNET_CORPUS_DIR='" << corpus_root.string()
+                     << "' is not a directory";
     }
 
     CodeIndex index;
     std::unordered_set<std::string> visited;
     vectis::code::manifest_scanner::Config mc;
-    mc.root = pt_root;
+    mc.root = corpus_root;
     mc.epoch = 1;
     vectis::code::manifest_scanner::scan_manifests(
         mc, index, visited, vectis::code::manifest_scanner::default_handlers());
@@ -337,7 +334,7 @@ TEST(FixturesTest, OptionalPowerToysCorpus_SmokesCsprojCountAndCpmResolution)
             }
         }
     }
-    EXPECT_EQ(csproj_files, 190U) << "PowerToys csproj count is pinned by the corpus snapshot";
+    EXPECT_EQ(csproj_files, 190U) << "csproj count is pinned by the corpus snapshot";
     EXPECT_EQ(sln_files, 10U);
     EXPECT_EQ(slnx_files, 3U);
 
@@ -355,8 +352,9 @@ TEST(FixturesTest, OptionalPowerToysCorpus_SmokesCsprojCountAndCpmResolution)
         else {
             ++pkg_resolved;
         }
-        // PowerToys's Directory.Build.targets uses Remove= to drop refs.
-        // None of those should have leaked into the csproj-package set.
+        // Directory.Build.targets uses <PackageReference Remove=> to
+        // drop refs; none of those should have leaked into the
+        // csproj-package set.
         if (d.import_string.find("Remove") != std::string::npos) {
             ++pkg_remove_leaked;
         }
@@ -381,7 +379,7 @@ TEST(FixturesTest, OptionalPowerToysCorpus_SmokesCsprojCountAndCpmResolution)
         }
     }
     EXPECT_GT(proj_internal, 300U) << "the bulk of <ProjectReference> must resolve to siblings";
-    EXPECT_GT(imp_internal, 100U) << "Common.Dotnet.* imports must resolve via $(RepoRoot)";
+    EXPECT_GT(imp_internal, 100U) << "shared .props imports must resolve via $(RepoRoot)";
     EXPECT_GT(sln_internal, 100U)
         << "Solution.sln + .slnx must produce many internal sln-project edges";
 }
