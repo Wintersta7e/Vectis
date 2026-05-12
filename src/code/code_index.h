@@ -66,6 +66,12 @@ public:
     /// incoming indexes for O(1) later lookup.
     void add_dependency(Dependency dep);
 
+    /// Batch variant of `add_dependency` — takes the write lock once
+    /// for the whole span. Manifest handlers emit edges in sorted
+    /// batches (per the determinism contract), so this collapses
+    /// hundreds of lock-acquire/release pairs into one.
+    void add_dependencies(std::span<const Dependency> deps);
+
     /// Remove a single file and all its symbols and dependencies.
     /// Used by incremental re-indexing when a file is deleted or updated.
     void remove_file(std::int64_t file_id);

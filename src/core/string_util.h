@@ -21,4 +21,18 @@ namespace vectis::core {
     return out;
 }
 
+/// Count source lines in `content`. Empty content has 0 lines; any
+/// non-empty content has at least 1, plus one per embedded `\n`. The
+/// last line need not end with a newline.
+[[nodiscard]] inline int count_lines(std::string_view content) noexcept
+{
+    int count = content.empty() ? 0 : 1;
+    for (const char ch : content) {
+        if (ch == '\n') {
+            ++count;
+        }
+    }
+    return count;
+}
+
 } // namespace vectis::core

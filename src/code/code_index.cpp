@@ -221,21 +221,58 @@ void CodeIndex::add_symbols(std::span<const Symbol> symbols)
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
+namespace {
+
+/// Insert one edge under the assumption that the caller holds the
+/// write lock. Returns true if the edge was new, false if a duplicate
+/// dedup-key was already present.
+bool insert_dependency_locked(Dependency dep, std::vector<Dependency>& dependencies,
+                              std::unordered_map<std::int64_t, std::vector<std::size_t>>& outgoing,
+                              std::unordered_map<std::int64_t, std::vector<std::size_t>>& incoming,
+                              std::unordered_set<std::string>& dep_keys)
+{
+    if (!dep_keys.insert(make_dep_key(dep)).second) {
+        return false;
+    }
+    const std::size_t index = dependencies.size();
+    const std::int64_t source = dep.source_file_id;
+    const std::int64_t target = dep.target_file_id;
+    dependencies.push_back(std::move(dep));
+    outgoing[source].push_back(index);
+    if (target != 0) {
+        incoming[target].push_back(index);
+    }
+    return true;
+}
+
+} // namespace
+
 void CodeIndex::add_dependency(Dependency dep)
 {
     const std::unique_lock lock(m_mutex);
-
-    if (!m_dep_keys.insert(make_dep_key(dep)).second) {
+    if (!insert_dependency_locked(std::move(dep), m_dependencies, m_deps_outgoing, m_deps_incoming,
+                                  m_dep_keys)) {
         return;
     }
+    m_dependency_count.store(m_dependencies.size(), std::memory_order_release);
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
+}
 
-    const std::size_t index = m_dependencies.size();
-    const std::int64_t source = dep.source_file_id;
-    const std::int64_t target = dep.target_file_id;
-    m_dependencies.push_back(std::move(dep));
-    m_deps_outgoing[source].push_back(index);
-    if (target != 0) {
-        m_deps_incoming[target].push_back(index);
+void CodeIndex::add_dependencies(std::span<const Dependency> deps)
+{
+    if (deps.empty()) {
+        return;
+    }
+    const std::unique_lock lock(m_mutex);
+    std::size_t inserted = 0;
+    for (const Dependency& dep : deps) {
+        if (insert_dependency_locked(dep, m_dependencies, m_deps_outgoing, m_deps_incoming,
+                                     m_dep_keys)) {
+            ++inserted;
+        }
+    }
+    if (inserted == 0) {
+        return;
     }
     m_dependency_count.store(m_dependencies.size(), std::memory_order_release);
     m_generation.fetch_add(1, std::memory_order_acq_rel);

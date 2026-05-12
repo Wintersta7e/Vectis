@@ -29,8 +29,7 @@ namespace vectis::code::maven {
 ///
 /// BOM imports (`<type>pom</type><scope>import</scope>`) are always
 /// external regardless of whether the coordinate matches an in-repo
-/// POM, per the spec — BOMs are catalogue references, not build
-/// dependencies.
+/// POM — BOMs are catalogue references, not build dependencies.
 class PomHandler final : public manifest_scanner::Handler
 {
 public:

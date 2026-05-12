@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -21,9 +22,11 @@ struct Coordinate
     std::string artifact_id;
     std::string version;
 
-    [[nodiscard]] bool empty() const noexcept
+    /// True iff both `group_id` and `artifact_id` are populated — the
+    /// minimum needed to enter the in-repo coordinate registry.
+    [[nodiscard]] bool has_artifact_id() const noexcept
     {
-        return group_id.empty() && artifact_id.empty() && version.empty();
+        return !group_id.empty() && !artifact_id.empty();
     }
 
     /// Concatenated `"g:a:v"` form — what JSON consumers see as
@@ -33,10 +36,16 @@ struct Coordinate
     bool operator==(const Coordinate&) const = default;
 };
 
+/// Transparent-comparator property map. `find(string_view)` lands
+/// without constructing a `std::string`, which matters because
+/// substitution looks up every `${X}` placeholder across (own,
+/// parent) maps on every dependency.
+using PropertyMap = std::map<std::string, std::string, std::less<>>;
+
 /// One `<dependency>` entry from a POM. Coordinate fields keep any
 /// `${X}` placeholders; substitution happens later when the importer's
 /// own + parent properties are known.
-struct Dependency
+struct PomDependency
 {
     /// Where the entry was found. The handler dispatches the emitted
     /// edge kind by combining this with `is_bom`.
@@ -49,7 +58,7 @@ struct Dependency
     Coordinate coord;
     Location location = Location::TopLevel;
     /// `<type>pom</type><scope>import</scope>` — wins over `Location`
-    /// when assigning the `maven-bom` kind, per the Phase 1 spec.
+    /// when assigning the `maven-bom` kind.
     bool is_bom = false;
 };
 
@@ -63,18 +72,22 @@ struct ParsedPom
     std::string packaging = "jar";
     /// `<parent>` block, if present.
     std::optional<Coordinate> parent;
-    /// `<relativePath>` as written; defaults to `"../pom.xml"` when
-    /// `<parent>` is present but `<relativePath>` is omitted (Maven's
-    /// documented behaviour). Empty optional when there is no parent.
+    /// `<relativePath>` as written. When `<parent>` is present and
+    /// `<relativePath>` is omitted, defaults to `"../pom.xml"` (Maven
+    /// semantics). When `<parent>` is present but `<relativePath>` is
+    /// *explicitly empty*, the value is an empty string — Maven treats
+    /// that as "look up the parent in the repository, not on disk",
+    /// and the handler emits the parent edge as external. `nullopt`
+    /// when there is no `<parent>` at all.
     std::optional<std::string> parent_relative_path;
     /// Own `<properties>` block.
-    std::map<std::string, std::string> properties;
+    PropertyMap properties;
     /// `<modules>` child names (NOT resolved to paths).
     std::vector<std::string> modules;
     /// Every `<dependency>` entry found at top-level or under
     /// `<dependencyManagement>`. Entries nested inside `<plugins>` are
     /// filtered out at parse time.
-    std::vector<Dependency> dependencies;
+    std::vector<PomDependency> dependencies;
 };
 
 /// Parse a POM XML tree into `ParsedPom`. Applies one hop of parent
@@ -93,10 +106,9 @@ struct ParsedPom
 ///
 /// Substitution is single-pass — values from `own_props` or
 /// `parent_props` are NOT recursively substituted. Maven's full
-/// recursive rules are out of scope for Phase 1.
-[[nodiscard]] std::string
-substitute_properties(std::string_view input, const Coordinate& own_coord,
-                      const std::map<std::string, std::string>& own_props,
-                      const std::map<std::string, std::string>& parent_props);
+/// recursive rules are out of scope today.
+[[nodiscard]] std::string substitute_properties(std::string_view input, const Coordinate& own_coord,
+                                                const PropertyMap& own_props,
+                                                const PropertyMap& parent_props);
 
 } // namespace vectis::code::maven

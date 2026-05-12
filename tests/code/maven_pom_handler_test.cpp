@@ -112,6 +112,44 @@ TEST_F(PomHandlerFixture, ModulesEdgesPointToChildPoms)
     EXPECT_EQ(module_edges, 2);
 }
 
+TEST_F(PomHandlerFixture, ExplicitEmptyRelativePathSkipsLocalLookupEvenWhenSiblingExists)
+{
+    // <relativePath/> tells Maven "this parent lives in the repo, not
+    // next door". Even though we have a sibling parent on disk, we
+    // must NOT resolve to it; the maven-parent edge stays external.
+    write_pom("pom.xml",
+              R"(<project>
+  <groupId>com.example</groupId>
+  <artifactId>root</artifactId>
+  <version>1.0</version>
+  <packaging>pom</packaging>
+</project>)");
+    write_pom("app/pom.xml",
+              R"(<project>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>root</artifactId>
+    <version>1.0</version>
+    <relativePath/>
+  </parent>
+  <artifactId>app</artifactId>
+</project>)");
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto app_deps = deps_of(index, "app/pom.xml");
+    bool found = false;
+    for (const auto& d : app_deps) {
+        if (d.kind == "maven-parent") {
+            EXPECT_EQ(d.target_file_id, 0) << "<relativePath/> must skip the on-disk parent lookup";
+            EXPECT_EQ(d.import_string, "com.example:root:1.0");
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
 TEST_F(PomHandlerFixture, ParentResolvesInternallyViaDefaultRelativePath)
 {
     write_pom("pom.xml",

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <tuple>
 
 namespace vectis::code {
 
@@ -78,6 +79,18 @@ struct Dependency
 [[nodiscard]] inline bool is_resolved(const Dependency& dep) noexcept
 {
     return dep.target_file_id != 0;
+}
+
+/// Strict-weak ordering used by every manifest handler before it calls
+/// `CodeIndex::add_dependency` / `add_dependencies`. Sorting by
+/// `(source_file_id, kind, target_file_id, import_string)` makes
+/// cold and warm runs emit edges in the same order, which feeds into
+/// the byte-identical digest contract.
+[[nodiscard]] inline bool dependency_emission_less(const Dependency& a,
+                                                   const Dependency& b) noexcept
+{
+    return std::tie(a.source_file_id, a.kind, a.target_file_id, a.import_string) <
+           std::tie(b.source_file_id, b.kind, b.target_file_id, b.import_string);
 }
 
 } // namespace vectis::code

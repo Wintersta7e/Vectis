@@ -23,6 +23,7 @@
 #include "code/symbol.h"
 #include "core/hash.h"
 #include "core/log.h"
+#include "core/string_util.h"
 #include "platform/file_io.h"
 
 namespace vectis::code {
@@ -52,18 +53,6 @@ constexpr std::chrono::milliseconds k_progress_time_stride{100};
         }
     }
     return false;
-}
-
-/// Count newlines once — cheaper than computing it again in CodeIndex.
-[[nodiscard]] int count_lines(std::string_view content) noexcept
-{
-    int count = content.empty() ? 0 : 1;
-    for (const char ch : content) {
-        if (ch == '\n') {
-            ++count;
-        }
-    }
-    return count;
 }
 
 /// Reason the current scan should stop, or an empty view to keep
@@ -261,7 +250,7 @@ Scanner::run_collect(const ScanConfig& config, CodeIndex& index, TreeSitterParse
         }
         file_entry.language = refined;
         file_entry.size = size;
-        file_entry.line_count = count_lines(content);
+        file_entry.line_count = vectis::core::count_lines(content);
         file_entry.content_hash = vectis::core::fnv1a_hex(content);
         const auto last_write = entry.last_write_time(ec);
         if (!ec) {
@@ -552,7 +541,7 @@ Scanner::run_incremental_collect(const ScanConfig& config, CodeIndex& index,
                 file_entry.path_relative = rel;
                 file_entry.language = refined;
                 file_entry.size = size;
-                file_entry.line_count = count_lines(content);
+                file_entry.line_count = vectis::core::count_lines(content);
                 file_entry.content_hash = new_hash;
                 const auto last_write = entry.last_write_time(ec);
                 if (!ec) {
@@ -591,7 +580,7 @@ Scanner::run_incremental_collect(const ScanConfig& config, CodeIndex& index,
             file_entry.path_relative = rel;
             file_entry.language = refined;
             file_entry.size = size;
-            file_entry.line_count = count_lines(content);
+            file_entry.line_count = vectis::core::count_lines(content);
             file_entry.content_hash = new_hash;
             const auto last_write = entry.last_write_time(ec);
             if (!ec) {

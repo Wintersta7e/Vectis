@@ -11,9 +11,10 @@
 namespace {
 
 using vectis::code::maven::Coordinate;
-using vectis::code::maven::Dependency;
 using vectis::code::maven::parse_pom;
 using vectis::code::maven::ParsedPom;
+using vectis::code::maven::PomDependency;
+using vectis::code::maven::PropertyMap;
 using vectis::code::maven::substitute_properties;
 using vectis::code::xml::Document;
 using vectis::code::xml::parse;
@@ -36,14 +37,12 @@ TEST(MavenCoordinateTest, GavConcatenatesGroupArtifactVersion)
     EXPECT_EQ(c.gav(), "com.example:lib:1.0");
 }
 
-TEST(MavenCoordinateTest, EmptyCoordinateRendersWithColonsForVisibility)
+TEST(MavenCoordinateTest, HasArtifactIdRequiresBothGroupAndArtifact)
 {
-    // gav() is for agent display; an empty coordinate shouldn't pretend
-    // to be a real coordinate, but it also shouldn't crash. The format
-    // pins the shape so the handler can recognise unresolved coords by
-    // their `${` prefix or by emptiness.
-    const Coordinate empty;
-    EXPECT_TRUE(empty.empty());
+    EXPECT_FALSE(Coordinate{}.has_artifact_id());
+    EXPECT_FALSE((Coordinate{"com.example", "", "1.0"}.has_artifact_id()));
+    EXPECT_FALSE((Coordinate{"", "lib", "1.0"}.has_artifact_id()));
+    EXPECT_TRUE((Coordinate{"com.example", "lib", "1.0"}.has_artifact_id()));
 }
 
 // ----- parse_pom -----------------------------------------------------
@@ -174,6 +173,26 @@ TEST(ParsePomTest, ParentRelativePathHonoursExplicitValue)
     EXPECT_EQ(*pom.parent_relative_path, "../../shared/pom.xml");
 }
 
+TEST(ParsePomTest, ExplicitEmptyRelativePathIsPreservedAsEmptyString)
+{
+    // Maven treats `<relativePath/>` (or empty text) as "don't look on
+    // disk; resolve via the repository". Distinct from omitting the
+    // element entirely, which defaults to "../pom.xml".
+    constexpr std::string_view input = R"(<project>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>parent</artifactId>
+    <version>1.0.0</version>
+    <relativePath/>
+  </parent>
+  <artifactId>child</artifactId>
+</project>)";
+    const auto pom = parse_pom_or_die(input);
+    ASSERT_TRUE(pom.parent_relative_path.has_value());
+    EXPECT_TRUE(pom.parent_relative_path->empty())
+        << "<relativePath/> must round-trip as empty string, NOT as the default ../pom.xml";
+}
+
 TEST(ParsePomTest, NoParentMeansNoParentRelativePath)
 {
     constexpr std::string_view input = R"(<project>
@@ -203,7 +222,7 @@ TEST(ParsePomTest, ExtractsTopLevelDependencies)
 </project>)";
     const auto pom = parse_pom_or_die(input);
     ASSERT_EQ(pom.dependencies.size(), 2U);
-    EXPECT_EQ(pom.dependencies[0].location, Dependency::Location::TopLevel);
+    EXPECT_EQ(pom.dependencies[0].location, PomDependency::Location::TopLevel);
     EXPECT_FALSE(pom.dependencies[0].is_bom);
     EXPECT_EQ(pom.dependencies[0].coord.artifact_id, "lib");
     EXPECT_EQ(pom.dependencies[1].coord.artifact_id, "junit-jupiter");
@@ -225,7 +244,7 @@ TEST(ParsePomTest, ExtractsManagedDependencies)
 </project>)";
     const auto pom = parse_pom_or_die(input);
     ASSERT_EQ(pom.dependencies.size(), 1U);
-    EXPECT_EQ(pom.dependencies[0].location, Dependency::Location::Managed);
+    EXPECT_EQ(pom.dependencies[0].location, PomDependency::Location::Managed);
     EXPECT_FALSE(pom.dependencies[0].is_bom);
 }
 
@@ -249,7 +268,7 @@ TEST(ParsePomTest, BomMarkersInsideDependencyManagementSetIsBom)
     ASSERT_EQ(pom.dependencies.size(), 1U);
     EXPECT_TRUE(pom.dependencies[0].is_bom) << "<type>pom</type> + <scope>import</scope> markers "
                                                "must set is_bom regardless of location";
-    EXPECT_EQ(pom.dependencies[0].location, Dependency::Location::Managed);
+    EXPECT_EQ(pom.dependencies[0].location, PomDependency::Location::Managed);
 }
 
 TEST(ParsePomTest, BomMarkersAtTopLevelStillSetIsBom)
@@ -271,7 +290,7 @@ TEST(ParsePomTest, BomMarkersAtTopLevelStillSetIsBom)
     const auto pom = parse_pom_or_die(input);
     ASSERT_EQ(pom.dependencies.size(), 1U);
     EXPECT_TRUE(pom.dependencies[0].is_bom);
-    EXPECT_EQ(pom.dependencies[0].location, Dependency::Location::TopLevel);
+    EXPECT_EQ(pom.dependencies[0].location, PomDependency::Location::TopLevel);
 }
 
 TEST(ParsePomTest, DependenciesInsidePluginsAreIgnored)
@@ -313,53 +332,53 @@ TEST(ParsePomTest, DependenciesInsidePluginsAreIgnored)
 TEST(SubstitutePropertiesTest, ResolvesProjectVersion)
 {
     const Coordinate own{"com.example", "app", "1.0.0"};
-    const std::map<std::string, std::string> empty;
+    const PropertyMap empty;
     EXPECT_EQ(substitute_properties("${project.version}", own, empty, empty), "1.0.0");
 }
 
 TEST(SubstitutePropertiesTest, ResolvesProjectGroupId)
 {
     const Coordinate own{"com.example", "app", "1.0.0"};
-    const std::map<std::string, std::string> empty;
+    const PropertyMap empty;
     EXPECT_EQ(substitute_properties("${project.groupId}", own, empty, empty), "com.example");
 }
 
 TEST(SubstitutePropertiesTest, ResolvesFromOwnProperties)
 {
     const Coordinate own;
-    const std::map<std::string, std::string> own_props{{"junit.version", "5.10.0"}};
-    const std::map<std::string, std::string> empty;
+    const PropertyMap own_props{{"junit.version", "5.10.0"}};
+    const PropertyMap empty;
     EXPECT_EQ(substitute_properties("${junit.version}", own, own_props, empty), "5.10.0");
 }
 
 TEST(SubstitutePropertiesTest, FallsBackToParentProperties)
 {
     const Coordinate own;
-    const std::map<std::string, std::string> empty;
-    const std::map<std::string, std::string> parent_props{{"slf4j.version", "2.0.7"}};
+    const PropertyMap empty;
+    const PropertyMap parent_props{{"slf4j.version", "2.0.7"}};
     EXPECT_EQ(substitute_properties("${slf4j.version}", own, empty, parent_props), "2.0.7");
 }
 
 TEST(SubstitutePropertiesTest, OwnPropertyShadowsParent)
 {
     const Coordinate own;
-    const std::map<std::string, std::string> own_props{{"v", "OWN"}};
-    const std::map<std::string, std::string> parent_props{{"v", "PARENT"}};
+    const PropertyMap own_props{{"v", "OWN"}};
+    const PropertyMap parent_props{{"v", "PARENT"}};
     EXPECT_EQ(substitute_properties("${v}", own, own_props, parent_props), "OWN");
 }
 
 TEST(SubstitutePropertiesTest, LeavesUnknownPlaceholderAsLiteral)
 {
     const Coordinate own;
-    const std::map<std::string, std::string> empty;
+    const PropertyMap empty;
     EXPECT_EQ(substitute_properties("${missing.thing}", own, empty, empty), "${missing.thing}");
 }
 
 TEST(SubstitutePropertiesTest, ResolvesMultiplePlaceholdersInSameString)
 {
     const Coordinate own{"com.example", "app", "1.0.0"};
-    const std::map<std::string, std::string> own_props{{"v", "9"}};
-    const std::map<std::string, std::string> empty;
+    const PropertyMap own_props{{"v", "9"}};
+    const PropertyMap empty;
     EXPECT_EQ(substitute_properties("${project.groupId}:lib:${v}-${project.version}", own,
                                     own_props, empty),
               "com.example:lib:9-1.0.0");
@@ -368,7 +387,7 @@ TEST(SubstitutePropertiesTest, ResolvesMultiplePlaceholdersInSameString)
 TEST(SubstitutePropertiesTest, LiteralStringWithoutPlaceholdersPassesThrough)
 {
     const Coordinate own;
-    const std::map<std::string, std::string> empty;
+    const PropertyMap empty;
     EXPECT_EQ(substitute_properties("plain-1.0.0", own, empty, empty), "plain-1.0.0");
 }
 

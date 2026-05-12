@@ -37,9 +37,10 @@ namespace {
 /// Read one `<dependency>` block. `type` and `scope` decide BOM
 /// classification — Maven recognises an entry as a BOM import when
 /// `<type>pom</type>` AND `<scope>import</scope>` are both present.
-[[nodiscard]] Dependency read_dependency(const xml::Element& elem, Dependency::Location location)
+[[nodiscard]] PomDependency read_dependency(const xml::Element& elem,
+                                            PomDependency::Location location)
 {
-    Dependency dep;
+    PomDependency dep;
     dep.coord = read_coordinate(elem);
     dep.location = location;
     dep.is_bom = (child_text(elem, "type") == "pom") && (child_text(elem, "scope") == "import");
@@ -48,8 +49,8 @@ namespace {
 
 /// Append every `<dependency>` direct child of `container` to `out`,
 /// tagging each with the given location.
-void collect_dependencies(const xml::Element& container, Dependency::Location location,
-                          std::vector<Dependency>& out)
+void collect_dependencies(const xml::Element& container, PomDependency::Location location,
+                          std::vector<PomDependency>& out)
 {
     for (const auto& dep_elem : container.children("dependency")) {
         out.push_back(read_dependency(dep_elem, location));
@@ -82,14 +83,22 @@ ParsedPom parse_pom(const xml::Element& root)
     }
 
     // `<parent>` — record raw coordinate and apply one-hop inheritance
-    // for group_id and version. `<relativePath>` defaults to
-    // `"../pom.xml"` when omitted (Maven semantics).
+    // for group_id and version. `<relativePath>` semantics:
+    //   omitted entirely        → default to "../pom.xml"
+    //   `<relativePath/>` empty → explicit "no local file; resolve via
+    //                              repository", preserved as empty
+    //                              string so the handler can emit the
+    //                              parent edge as external.
     if (const auto parent_elem = root.first_child("parent")) {
         const Coordinate parent_coord = read_coordinate(*parent_elem);
         pom.parent = parent_coord;
 
-        const auto rel_text = child_text(*parent_elem, "relativePath");
-        pom.parent_relative_path = rel_text.empty() ? std::string{"../pom.xml"} : rel_text;
+        if (const auto rel_elem = parent_elem->first_child("relativePath")) {
+            pom.parent_relative_path = rel_elem->text();
+        }
+        else {
+            pom.parent_relative_path = "../pom.xml";
+        }
 
         if (pom.coord.group_id.empty()) {
             pom.coord.group_id = parent_coord.group_id;
@@ -118,14 +127,14 @@ ParsedPom parse_pom(const xml::Element& root)
     // blocks live deeper and are never direct children of `<project>`,
     // so this lookup naturally excludes them.
     if (const auto deps_elem = root.first_child("dependencies")) {
-        collect_dependencies(*deps_elem, Dependency::Location::TopLevel, pom.dependencies);
+        collect_dependencies(*deps_elem, PomDependency::Location::TopLevel, pom.dependencies);
     }
 
     // `<dependencyManagement><dependencies><dependency>` — same shape
     // but tagged Managed for downstream kind dispatch.
     if (const auto dm_elem = root.first_child("dependencyManagement")) {
         if (const auto dm_deps = dm_elem->first_child("dependencies")) {
-            collect_dependencies(*dm_deps, Dependency::Location::Managed, pom.dependencies);
+            collect_dependencies(*dm_deps, PomDependency::Location::Managed, pom.dependencies);
         }
     }
 
@@ -136,11 +145,13 @@ namespace {
 
 /// Look up a placeholder name in own → parent → built-ins, in that
 /// order. Returns `std::nullopt` when the name resolves nowhere; the
-/// caller leaves the literal `${name}` in place.
-[[nodiscard]] std::optional<std::string_view>
-lookup_property(std::string_view name, const Coordinate& own_coord,
-                const std::map<std::string, std::string>& own_props,
-                const std::map<std::string, std::string>& parent_props)
+/// caller leaves the literal `${name}` in place. Transparent
+/// comparator on `PropertyMap` keeps the `find(string_view)` calls
+/// allocation-free.
+[[nodiscard]] std::optional<std::string_view> lookup_property(std::string_view name,
+                                                              const Coordinate& own_coord,
+                                                              const PropertyMap& own_props,
+                                                              const PropertyMap& parent_props)
 {
     if (name == "project.version") {
         return std::string_view{own_coord.version};
@@ -148,10 +159,10 @@ lookup_property(std::string_view name, const Coordinate& own_coord,
     if (name == "project.groupId") {
         return std::string_view{own_coord.group_id};
     }
-    if (const auto it = own_props.find(std::string{name}); it != own_props.end()) {
+    if (const auto it = own_props.find(name); it != own_props.end()) {
         return std::string_view{it->second};
     }
-    if (const auto it = parent_props.find(std::string{name}); it != parent_props.end()) {
+    if (const auto it = parent_props.find(name); it != parent_props.end()) {
         return std::string_view{it->second};
     }
     return std::nullopt;
@@ -160,8 +171,7 @@ lookup_property(std::string_view name, const Coordinate& own_coord,
 } // namespace
 
 std::string substitute_properties(std::string_view input, const Coordinate& own_coord,
-                                  const std::map<std::string, std::string>& own_props,
-                                  const std::map<std::string, std::string>& parent_props)
+                                  const PropertyMap& own_props, const PropertyMap& parent_props)
 {
     std::string out;
     out.reserve(input.size());
