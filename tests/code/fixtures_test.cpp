@@ -8,7 +8,9 @@
 #include <gtest/gtest.h>
 
 #include "code/code_index.h"
+#include "code/dependency.h"
 #include "code/language.h"
+#include "code/manifest_scanner.h"
 #include "code/parser.h"
 #include "code/scanner.h"
 #include "code/symbol.h"
@@ -42,9 +44,7 @@ bool index_has_symbol(const CodeIndex& index, std::string_view name)
                        [&](const Symbol& s) { return s.name == name; });
 }
 
-/// Run a scan of a fixture subdirectory into the given index. Caller
-/// owns `index` — we fill it in place because `CodeIndex` is
-/// deliberately non-movable (its shared_mutex is pinned).
+/// Run a source-only scan of a fixture subdirectory.
 void scan_fixture(std::string_view fixture_name, CodeIndex& index)
 {
     const std::filesystem::path fixture_root =
@@ -63,6 +63,39 @@ void scan_fixture(std::string_view fixture_name, CodeIndex& index)
     const auto result = Scanner::run(
         cfg, index, parser, [](const ScanProgress&) {}, [](const ScanSummary&) {}, token, epoch);
     EXPECT_TRUE(result.has_value()) << "scan of fixture '" << fixture_name << "' failed";
+}
+
+/// Run the full CLI digest path against a fixture: source scan, then
+/// manifest pass with the default handler set, then edge resolution.
+/// Mirrors what `run_uncached` does in `cli_main.cpp`, so any future
+/// pipeline tweak the CLI picks up flows into these fixture
+/// assertions automatically.
+void scan_fixture_full_digest(std::string_view fixture_name, CodeIndex& index)
+{
+    const std::filesystem::path fixture_root =
+        std::filesystem::path{VECTIS_FIXTURE_DIR} / "code" / std::string{fixture_name};
+
+    TreeSitterParser parser;
+    parser.register_builtin_languages();
+
+    ScanConfig cfg;
+    cfg.root = fixture_root;
+    cfg.epoch = 1;
+
+    std::atomic<std::int64_t> epoch{1};
+    const CancellationToken token{};
+
+    auto collect =
+        Scanner::run_collect(cfg, index, parser, [](const ScanProgress&) {}, token, epoch);
+    ASSERT_TRUE(collect.has_value()) << "collect of '" << fixture_name << "' failed";
+
+    vectis::code::manifest_scanner::Config mc;
+    mc.root = fixture_root;
+    mc.epoch = 1;
+    vectis::code::manifest_scanner::scan_manifests(
+        mc, index, collect->visited_paths, vectis::code::manifest_scanner::default_handlers());
+
+    Scanner::resolve(index, fixture_root, collect->per_file_imports);
 }
 
 TEST(FixturesTest, SamplePython_ScansAndExtractsSymbols)
@@ -169,6 +202,124 @@ TEST(FixturesTest, SamplePython_ScannerResolvesImports)
     const auto user_dependents = index.dependents_of(user_py_id);
     // Both main.py and helpers.py should depend on models/user.py.
     EXPECT_GE(user_dependents.size(), 2U);
+}
+
+/// Optional smoke test against the calibration corpus (camel) when
+/// `VECTIS_RUN_CORPUS_SMOKE=1` is set. Camel ships 691 POMs and was
+/// the target the Phase 1 spec was calibrated against. Skipped by
+/// default — CI and laptop runs don't need ~minute-long corpus walks.
+TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
+{
+    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
+    if (enable == nullptr || std::string_view{enable} != "1") {
+        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run this corpus smoke test";
+    }
+
+    const char* env_dir = std::getenv("VECTIS_CAMEL_DIR");
+    const std::filesystem::path camel_root =
+        env_dir != nullptr
+            ? std::filesystem::path{env_dir}
+            : std::filesystem::path{std::getenv("HOME") != nullptr ? std::getenv("HOME") : ""} /
+                  "corpus-issue07" / "camel";
+    if (!std::filesystem::is_directory(camel_root)) {
+        GTEST_SKIP() << "camel corpus not at '" << camel_root.string() << "'; set VECTIS_CAMEL_DIR";
+    }
+
+    CodeIndex index;
+    TreeSitterParser parser;
+    parser.register_builtin_languages();
+
+    ScanConfig cfg;
+    cfg.root = camel_root;
+    cfg.epoch = 1;
+    std::atomic<std::int64_t> epoch{1};
+    const CancellationToken token{};
+
+    auto collect =
+        Scanner::run_collect(cfg, index, parser, [](const ScanProgress&) {}, token, epoch);
+    ASSERT_TRUE(collect.has_value());
+
+    vectis::code::manifest_scanner::Config mc;
+    mc.root = camel_root;
+    mc.epoch = 1;
+    vectis::code::manifest_scanner::scan_manifests(
+        mc, index, collect->visited_paths, vectis::code::manifest_scanner::default_handlers());
+    Scanner::resolve(index, camel_root, collect->per_file_imports);
+
+    std::size_t pom_files = 0;
+    for (const auto& f : index.snapshot_files()) {
+        if (f.language == Language::MavenPom) {
+            ++pom_files;
+        }
+    }
+    EXPECT_EQ(pom_files, 691U) << "camel POM count is fixed by the corpus snapshot";
+
+    std::size_t parent_internal = 0;
+    std::size_t parent_external = 0;
+    std::size_t maven_count = 0;
+    std::size_t managed_count = 0;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind == "maven-parent") {
+            (d.target_file_id != 0 ? parent_internal : parent_external)++;
+        }
+        else if (d.kind == "maven") {
+            ++maven_count;
+        }
+        else if (d.kind == "maven-managed") {
+            ++managed_count;
+        }
+    }
+    EXPECT_EQ(parent_external, 0U)
+        << "camel is fully self-contained for parents; all <parent> refs must resolve internally";
+    EXPECT_GT(managed_count, 0U) << "camel uses <dependencyManagement> heavily";
+    EXPECT_NE(maven_count, managed_count)
+        << "managed vs live dep counts diverge — the kinds must be distinct";
+}
+
+TEST(FixturesTest, SampleMavenMultimodule_RegistersThreePomsAndEmitsMavenEdges)
+{
+    CodeIndex index;
+    scan_fixture_full_digest("sample-maven-multimodule", index);
+
+    // 3 POMs + 2 Java sources.
+    EXPECT_EQ(index.file_count(), 5U);
+
+    const auto root_id = index.file_id_for_path("pom.xml");
+    const auto app_id = index.file_id_for_path("app/pom.xml");
+    const auto lib_id = index.file_id_for_path("lib/pom.xml");
+    ASSERT_NE(root_id, 0);
+    ASSERT_NE(app_id, 0);
+    ASSERT_NE(lib_id, 0);
+
+    // Collect edge categories.
+    const auto all_deps = index.all_dependencies();
+    std::size_t module_internal = 0;
+    std::size_t parent_internal = 0;
+    std::size_t maven_internal = 0;
+    std::size_t maven_external_junit = 0;
+    for (const auto& d : all_deps) {
+        if (d.kind == "maven-module" && d.target_file_id != 0) {
+            ++module_internal;
+        }
+        else if (d.kind == "maven-parent" && d.target_file_id != 0) {
+            ++parent_internal;
+        }
+        else if (d.kind == "maven" && d.target_file_id != 0) {
+            ++maven_internal;
+        }
+        else if (d.kind == "maven" && d.target_file_id == 0 &&
+                 d.import_string == "org.junit.jupiter:junit-jupiter:5.10.0") {
+            // Confirms the ${junit-version} placeholder resolved via
+            // the parent POM's <properties> — one-hop substitution.
+            ++maven_external_junit;
+        }
+    }
+    EXPECT_EQ(module_internal, 2U) << "root → app and root → lib";
+    EXPECT_EQ(parent_internal, 2U)
+        << "missing <relativePath> must default to ../pom.xml and resolve internally";
+    EXPECT_EQ(maven_internal, 1U) << "app → lib via in-repo coordinate";
+    EXPECT_EQ(maven_external_junit, 1U)
+        << "external junit coord with property resolved via parent <properties>";
 }
 
 } // namespace
