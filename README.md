@@ -18,6 +18,12 @@ pipelines, scripts).
 
 - **12 languages** — Python, JavaScript, TypeScript, C, C++, Rust,
   Java, C#, Go, Ruby, PHP, SQL.
+- **Manifest-file dependency graph** — module / parent / dependency
+  / managed-dependency / BOM edges from Maven `pom.xml` files;
+  project / package / import / solution edges from `.csproj` /
+  `.fsproj` / `.vbproj` / `.sln` / `.slnx` with Central Package
+  Management resolution via nearest-ancestor `Directory.Packages.props`.
+  Spring `<beans>` XML and `.properties` are next.
 - **10 architecture labels** with 0–100 confidence — Monolith,
   Layered, MVC, MVVM, Clean Architecture, Monorepo, Frontend SPA,
   API Backend, .NET Solution, Library. **Calibrated against a
@@ -68,28 +74,28 @@ Then:
 ```
 
 `vectis explain` is the fastest way to orient an agent in an
-unfamiliar repo. Sample output (Flask):
+unfamiliar repo. Sample output (a Python library project):
 
 ```
-flask — Library (75% confidence)
-Architecture: Python library (pyproject.toml + `flask/__init__.py`,
+sample-lib — Library (75% confidence)
+Architecture: Python library (pyproject.toml + `sample_lib/__init__.py`,
               no app entry).
 Scale: 85 files, 1622 symbols, 613 dependency edges.
 Languages: Python (98%, 83 files), SQL (2%, 2 files).
 API surface: 1575 public / 47 private.
 
 Top hotspots (by cyclomatic complexity):
-  src/flask/sansio/blueprints.py:273  register   [function, complexity 22]
-  src/flask/app.py:1224  make_response             [function, complexity 17]
+  src/sample_lib/scopes/registry.py:273  register      [function, complexity 22]
+  src/sample_lib/app.py:1224             make_response [function, complexity 17]
   ...
 
 Decorators (top 5 over 657 decorated symbols): @app.route("/") (99),
-  @setupmethod (43), @t.overload (18), @pytest.fixture (17),
-  @app.teardown_request (14).
+  @setupmethod (43), @t.overload (18), @fixture (17),
+  @teardown_request (14).
 
 Dependency graph: 171 internal edges, 1 cycle.
-External imports (top 5): flask (78), pytest (23), werkzeug.exceptions
-  (23), werkzeug.routing (19), os (15).
+External imports (top 5): sample_lib (78), test-framework (23),
+  http-lib.exceptions (23), http-lib.routing (19), os (15).
 ```
 
 Slim JSON for pipelines (excerpt):
@@ -98,15 +104,22 @@ Slim JSON for pipelines (excerpt):
 {
   "architecture": {
     "confidence": 75, "label": "Library",
-    "reasoning": "Python library (pyproject.toml + `flask/__init__.py`, …)"
+    "signals": ["layout:library", "manifest:pyproject.toml"]
   },
   "symbols": [
     { "name": "register", "kind": "function",
-      "path": "src/flask/sansio/blueprints.py", "line": 273,
+      "path": "src/sample_lib/scopes/registry.py", "line": 273,
       "visibility": "public", "decorators": ["setupmethod"] }
   ],
-  "dependency_graph": { "edges": [/* … */],
-                        "stats": { "internal_edges": 171 } },
+  "dependency_graph": {
+    "edges": [
+      { "source": "src/sample_lib/app.py", "target": "src/sample_lib/scopes/registry.py",
+        "kind": "import", "import_ref": "scopes.registry" },
+      { "source": "pom.xml", "target": "app/pom.xml",
+        "kind": "maven-module" }
+    ],
+    "stats": { "internal_edges": 171 }
+  },
   "hotspots": [ /* top 10, no body excerpts */ ],
   "project": { "file_count": 85, "symbol_count": 1622 }
 }
@@ -117,12 +130,11 @@ A vcpkg path is wired for Windows / portable static builds; see
 
 ## Subcommands and formats
 
-| Command                       | Output   | Use case                                                  |
+| Command                       | Output | Use case                                                  |
 |---|---|---|
-| `vectis explain`              | text     | Narrative summary for humans / LLM agents                 |
-| `vectis digest --format slim` | JSON     | Token-efficient structured map for agent context          |
-| `vectis digest --format json` | JSON     | Full per-file symbols, hotspot excerpts, flat `symbols[]` |
-| `vectis digest --format md`   | Markdown | PR-style review output                                    |
+| `vectis explain`              | text   | Narrative summary for humans / LLM agents                 |
+| `vectis digest --format slim` | JSON   | Token-efficient structured map for agent context          |
+| `vectis digest --format json` | JSON   | Full per-file symbols, hotspot excerpts, flat `symbols[]` |
 
 Common flags (`--cache`, `--cache-dir`, `--output`, `-q` / `-v`)
 work on both subcommands. `vectis --help` lists everything.
@@ -134,7 +146,10 @@ work on both subcommands. `vectis --help` lists everything.
         │
         ▼
   parse files (tree-sitter, 12 grammars)
-        │  symbols + imports + namespaces
+        │  symbols + raw imports + namespaces
+        ▼
+  manifest pass (pom.xml, .csproj, .sln/.slnx, .props/.targets)
+        │  + maven / csproj / sln edges
         ▼
   resolve dependencies (paths + namespace index + go.mod)
         │
@@ -145,7 +160,7 @@ work on both subcommands. `vectis --help` lists everything.
   └──────────────┴──────────────┴──────────────┘
         │
         ▼
-  emit digest  (slim JSON · full JSON · Markdown)
+  emit digest  (slim JSON · full JSON)
 ```
 
 State persists in `<project>/vectis-data/vectis.db` (SQLite WAL +
