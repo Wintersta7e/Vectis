@@ -92,7 +92,7 @@ std::int64_t CodeIndex::insert_file_locked(FileEntry file, std::string key)
     const std::size_t new_index = m_files.size();
     m_files.push_back(std::move(file));
     m_index_by_path.emplace(std::move(key), new_index);
-    m_file_count.store(m_files.size(), std::memory_order_release);
+    m_file_count.fetch_add(1, std::memory_order_acq_rel);
 
     if (bit != 0U) {
         m_language_bits.fetch_or(bit, std::memory_order_acq_rel);
@@ -217,7 +217,7 @@ void CodeIndex::add_symbols(std::span<const Symbol> symbols)
         m_by_file[copy.file_id].push_back(symbol_index);
         m_symbols.push_back(std::move(copy));
     }
-    m_symbol_count.store(m_symbols.size(), std::memory_order_release);
+    m_symbol_count.fetch_add(symbols.size(), std::memory_order_acq_rel);
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -254,7 +254,7 @@ void CodeIndex::add_dependency(Dependency dep)
                                   m_dep_keys)) {
         return;
     }
-    m_dependency_count.store(m_dependencies.size(), std::memory_order_release);
+    m_dependency_count.fetch_add(1, std::memory_order_acq_rel);
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -274,7 +274,7 @@ void CodeIndex::add_dependencies(std::span<const Dependency> deps)
     if (inserted == 0) {
         return;
     }
-    m_dependency_count.store(m_dependencies.size(), std::memory_order_release);
+    m_dependency_count.fetch_add(inserted, std::memory_order_acq_rel);
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -427,6 +427,13 @@ void CodeIndex::compact()
     m_dependencies = std::move(live_deps);
     m_deps_outgoing = std::move(new_outgoing);
     m_deps_incoming = std::move(new_incoming);
+
+    // Tombstones are gone; vector sizes are now authoritative for live
+    // counts. Re-sync the atomics so any drift from earlier
+    // store-the-size mistakes is corrected here too.
+    m_file_count.store(m_files.size(), std::memory_order_release);
+    m_symbol_count.store(m_symbols.size(), std::memory_order_release);
+    m_dependency_count.store(m_dependencies.size(), std::memory_order_release);
 
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }

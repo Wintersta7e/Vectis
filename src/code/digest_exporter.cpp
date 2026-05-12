@@ -158,7 +158,15 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
     std::size_t internal_count = 0;
     std::size_t external_count = 0;
 
-    for (const Dependency& dep : index.all_dependencies()) {
+    // Sort canonically so cold and warm runs produce byte-identical
+    // output regardless of the order edges were inserted into the
+    // index. Source-language imports and manifest-pass edges land at
+    // different points in the pipeline, so insertion order isn't
+    // stable across the warm-cache path.
+    auto deps = index.all_dependencies();
+    std::ranges::sort(deps, dependency_emission_less);
+
+    for (const Dependency& dep : deps) {
         nlohmann::json edge;
         edge["source"] = path_for(lookup, dep.source_file_id);
         if (dep.target_file_id == 0) {
