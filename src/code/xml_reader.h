@@ -94,6 +94,11 @@ public:
     /// Returns an empty view if absent.
     [[nodiscard]] std::string_view attribute(std::string_view local_name) const noexcept;
 
+    /// All direct children, in source order. Use when the caller
+    /// needs to iterate arbitrary tag names (e.g. Maven's
+    /// `<properties>` block whose children name themselves).
+    [[nodiscard]] std::vector<Element> children() const;
+
     /// Direct children with the given local name (namespace-agnostic).
     [[nodiscard]] std::vector<Element> children(std::string_view local_name) const;
 

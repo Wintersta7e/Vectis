@@ -621,6 +621,20 @@ std::string_view Element::attribute(std::string_view local_name) const noexcept
     return {};
 }
 
+std::vector<Element> Element::children() const
+{
+    std::vector<Element> out;
+    if (m_doc == nullptr) {
+        return out;
+    }
+    const auto& child_indices = m_doc->node(m_index).children;
+    out.reserve(child_indices.size());
+    for (std::size_t child_idx : child_indices) {
+        out.emplace_back(m_doc, child_idx);
+    }
+    return out;
+}
+
 std::vector<Element> Element::children(std::string_view local_name) const
 {
     std::vector<Element> out;

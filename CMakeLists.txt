@@ -357,6 +357,7 @@ add_library(vectis_core STATIC
     src/code/hotspot_detector.cpp
     src/code/language.cpp
     src/code/manifest_scanner.cpp
+    src/code/maven_pom.cpp
     src/code/pagerank.cpp
     src/code/parser.cpp
     src/code/parser_queries.cpp
