@@ -140,7 +140,12 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 /// - `edges`: array of `{source, target, kind}` where source/target
 ///   are relative paths. External (unresolved) edges set `target` to
 ///   `null` and carry the raw import string in `target_external` so an
-///   agent can see what was imported without resolving it.
+///   agent can see what was imported without resolving it. Internal
+///   edges whose `import_string` is non-empty (Maven coordinates,
+///   Spring FQCNs, source-language relative imports) additionally
+///   carry an `import_ref` field — the raw token agents may want to
+///   reason about even when the edge resolved internally. Edges with
+///   empty `import_string` omit the field.
 /// - `cycles`: array of arrays of paths, one per detected cycle.
 ///   Full format only — slim drops cycles to stay token-cheap.
 /// - `stats`: totals for quick scanning.
@@ -164,6 +169,9 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
         else {
             ++internal_count;
             edge["target"] = path_for(lookup, dep.target_file_id);
+            if (!dep.import_string.empty()) {
+                edge["import_ref"] = dep.import_string;
+            }
         }
         edge["kind"] = dep.kind;
         edges_array.push_back(std::move(edge));

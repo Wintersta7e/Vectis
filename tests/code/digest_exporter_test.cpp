@@ -425,10 +425,16 @@ TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
             saw_external = true;
             EXPECT_EQ(e["target_external"], "<vector>");
             EXPECT_EQ(e["kind"], "include");
+            EXPECT_FALSE(e.contains("import_ref"))
+                << "external edges already carry the raw import in target_external; "
+                << "import_ref would be redundant";
         }
         else {
             saw_internal = true;
             EXPECT_FALSE(e.contains("target_external"));
+            ASSERT_TRUE(e.contains("import_ref"))
+                << "internal edge with non-empty import_string must carry import_ref";
+            EXPECT_EQ(e["import_ref"], "scanner.h");
         }
     }
     EXPECT_TRUE(saw_external);
@@ -437,6 +443,31 @@ TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
     EXPECT_EQ(parsed["dependency_graph"]["stats"]["total_edges"], 2);
     EXPECT_EQ(parsed["dependency_graph"]["stats"]["internal_edges"], 1);
     EXPECT_EQ(parsed["dependency_graph"]["stats"]["external_edges"], 1);
+}
+
+TEST(DigestExporterTest, Json_OmitsImportRefWhenImportStringEmpty)
+{
+    // Some resolved edges might be registered with an empty
+    // import_string (synthetic / introspective). The exporter must
+    // skip import_ref rather than emit an empty value.
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    Dependency dep;
+    dep.source_file_id = 1;
+    dep.target_file_id = 2;
+    dep.import_string = ""; // intentionally empty
+    dep.kind = "include";
+    index.add_dependency(std::move(dep));
+
+    const ExportOptions options = make_options(DigestFormat::Json, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    const auto& edges = parsed["dependency_graph"]["edges"];
+    ASSERT_EQ(edges.size(), 1U);
+    EXPECT_FALSE(edges[0].contains("import_ref"))
+        << "empty import_string must not produce an empty import_ref field";
 }
 
 } // namespace

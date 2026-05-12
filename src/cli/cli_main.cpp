@@ -23,6 +23,7 @@
 #include "code/exclude_dirs.h"
 #include "code/explain.h"
 #include "code/gitignore.h"
+#include "code/manifest_scanner.h"
 #include "code/parser.h"
 #include "code/scanner.h"
 #include "core/log.h"
@@ -224,8 +225,23 @@ vectis::code::ScanConfig make_scan_config(const std::filesystem::path& abs_root)
     return config;
 }
 
+/// Build the manifest scanner Config from a ScanConfig — same root,
+/// same excludes, same epoch, so the source and manifest passes
+/// observe a consistent view of the tree.
+[[nodiscard]] vectis::code::manifest_scanner::Config
+make_manifest_config(const vectis::code::ScanConfig& config)
+{
+    vectis::code::manifest_scanner::Config mc;
+    mc.root = config.root;
+    mc.exclude_dir_names = config.exclude_dir_names;
+    mc.exclude_dir_globs = config.exclude_dir_globs;
+    mc.epoch = config.epoch;
+    return mc;
+}
+
 /// Run a scan without touching disk. Every invocation starts with an
-/// empty in-memory CodeIndex and does a full tree walk.
+/// empty in-memory CodeIndex and does a full tree walk, then runs the
+/// manifest pass and edge resolution.
 [[nodiscard]] vectis::core::Result<vectis::code::ScanSummary>
 run_uncached(const vectis::code::ScanConfig& config, vectis::code::TreeSitterParser& parser,
              vectis::code::CodeIndex& index)
@@ -233,15 +249,29 @@ run_uncached(const vectis::code::ScanConfig& config, vectis::code::TreeSitterPar
     std::atomic<std::int64_t> epoch{1};
     vectis::core::CancellationToken token;
     const auto noop_progress = [](const auto&) {};
-    vectis::code::ScanSummary summary;
-    const auto on_complete = [&summary](const vectis::code::ScanSummary& s) { summary = s; };
 
-    auto r =
-        vectis::code::Scanner::run(config, index, parser, noop_progress, on_complete, token, epoch);
-    if (!r) {
-        std::fprintf(stderr, "error: scan failed: %s\n", r.error().message.c_str());
-        return tl::unexpected{r.error()};
+    auto scan =
+        vectis::code::Scanner::run_collect(config, index, parser, noop_progress, token, epoch);
+    if (!scan) {
+        std::fprintf(stderr, "error: scan failed: %s\n", scan.error().message.c_str());
+        return tl::unexpected{scan.error()};
     }
+
+    // Manifest pass — Phase 0 ships with no built-in handlers, so this
+    // is a no-op today; Phases 1-4 of ISSUE-07 will hook real handlers
+    // in via `default_handlers()` and start emitting Maven / csproj /
+    // Spring / properties edges.
+    const auto manifest_config = make_manifest_config(config);
+    const auto handlers = vectis::code::manifest_scanner::default_handlers();
+    vectis::code::manifest_scanner::scan_manifests(manifest_config, index, scan->visited_paths,
+                                                   handlers);
+
+    vectis::code::Scanner::resolve(index, config.root, scan->per_file_imports);
+
+    vectis::code::ScanSummary summary = scan->summary;
+    summary.file_count = index.file_count();
+    summary.symbol_count = index.symbol_count();
+    summary.language_count = index.language_count();
     return summary;
 }
 
@@ -296,27 +326,45 @@ run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& 
         }
     }
 
+    const auto manifest_config = make_manifest_config(config);
+    const auto handlers = vectis::code::manifest_scanner::default_handlers();
+
     vectis::code::ScanSummary summary;
     if (index.file_count() == 0) {
-        const auto on_complete = [&summary](const vectis::code::ScanSummary& s) { summary = s; };
-        auto r = vectis::code::Scanner::run(config, index, parser, noop_progress, on_complete,
-                                            token, epoch);
-        if (!r) {
-            std::fprintf(stderr, "error: scan failed: %s\n", r.error().message.c_str());
-            return tl::unexpected{r.error()};
+        auto scan =
+            vectis::code::Scanner::run_collect(config, index, parser, noop_progress, token, epoch);
+        if (!scan) {
+            std::fprintf(stderr, "error: scan failed: %s\n", scan.error().message.c_str());
+            return tl::unexpected{scan.error()};
         }
+        vectis::code::manifest_scanner::scan_manifests(manifest_config, index, scan->visited_paths,
+                                                       handlers);
+        vectis::code::Scanner::resolve(index, config.root, scan->per_file_imports);
+        summary = scan->summary;
+        summary.file_count = index.file_count();
+        summary.symbol_count = index.symbol_count();
+        summary.language_count = index.language_count();
     }
     else {
-        auto r = vectis::code::Scanner::run_incremental(config, index, parser, noop_progress, token,
-                                                        epoch);
-        if (!r) {
-            std::fprintf(stderr, "error: incremental scan failed: %s\n", r.error().message.c_str());
-            return tl::unexpected{r.error()};
+        auto scan = vectis::code::Scanner::run_incremental_collect(config, index, parser,
+                                                                   noop_progress, token, epoch);
+        if (!scan) {
+            std::fprintf(stderr, "error: incremental scan failed: %s\n",
+                         scan.error().message.c_str());
+            return tl::unexpected{scan.error()};
+        }
+        vectis::code::manifest_scanner::scan_manifests(manifest_config, index, scan->visited_paths,
+                                                       handlers);
+        const std::size_t deleted =
+            vectis::code::Scanner::prune_missing(index, scan->visited_paths);
+        vectis::code::Scanner::resolve(index, config.root, scan->per_file_imports);
+        if (deleted > 0 || scan->files_updated > 0) {
+            index.compact();
         }
         summary.file_count = index.file_count();
         summary.symbol_count = index.symbol_count();
         summary.language_count = index.language_count();
-        summary.files_skipped = r->files_skipped;
+        summary.files_skipped = scan->summary.files_skipped;
     }
 
     vectis::code::CacheMetadata meta;
