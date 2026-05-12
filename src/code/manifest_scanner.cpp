@@ -1,12 +1,12 @@
 #include "code/manifest_scanner.h"
 
+#include "code/maven_pom_handler.h"
+
 namespace vectis::code::manifest_scanner {
 
 std::vector<std::shared_ptr<Handler>> default_handlers()
 {
-    // Phase 0 ships with no built-in handlers. Phase 1-4 of ISSUE-07
-    // will populate this list as each manifest format lands.
-    return {};
+    return {vectis::code::maven::make_pom_handler()};
 }
 
 void scan_manifests(const Config& config, CodeIndex& index,

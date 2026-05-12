@@ -163,9 +163,13 @@ TEST(ManifestScannerTest, VisitedPathsAreAppendedByEachHandler)
     EXPECT_TRUE(visited.contains("bar/pom.xml"));
 }
 
-TEST(ManifestScannerTest, DefaultHandlersIsEmptyAtPhaseZero)
+TEST(ManifestScannerTest, DefaultHandlersIncludesEveryShippedFormat)
 {
-    EXPECT_TRUE(vectis::code::manifest_scanner::default_handlers().empty());
+    const auto handlers = vectis::code::manifest_scanner::default_handlers();
+    EXPECT_FALSE(handlers.empty()) << "default handlers must register every shipped format";
+    for (const auto& h : handlers) {
+        EXPECT_NE(h.get(), nullptr);
+    }
 }
 
 } // namespace

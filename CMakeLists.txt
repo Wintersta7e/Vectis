@@ -358,6 +358,7 @@ add_library(vectis_core STATIC
     src/code/language.cpp
     src/code/manifest_scanner.cpp
     src/code/maven_pom.cpp
+    src/code/maven_pom_handler.cpp
     src/code/pagerank.cpp
     src/code/parser.cpp
     src/code/parser_queries.cpp

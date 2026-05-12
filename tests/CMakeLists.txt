@@ -24,6 +24,7 @@ add_executable(vectis_tests
     code/language_test.cpp
     code/manifest_scanner_test.cpp
     code/maven_pom_test.cpp
+    code/maven_pom_handler_test.cpp
     code/pagerank_test.cpp
     code/parser_test.cpp
     code/scanner_test.cpp
