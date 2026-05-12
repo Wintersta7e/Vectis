@@ -351,6 +351,7 @@ add_library(vectis_core STATIC
     src/code/dependency_graph.cpp
     src/code/dependency_resolver.cpp
     src/code/digest_exporter.cpp
+    src/code/dotnet_project.cpp
     src/code/exclude_dirs.cpp
     src/code/explain.cpp
     src/code/gitignore.cpp
