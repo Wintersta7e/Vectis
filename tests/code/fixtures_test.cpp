@@ -289,6 +289,103 @@ TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
         << "managed vs live dep counts diverge — the kinds must be distinct";
 }
 
+/// Optional .NET corpus smoke against PowerToys when
+/// `VECTIS_RUN_CORPUS_SMOKE=1` is set. PowerToys ships ~190 csproj
+/// files plus a root `Directory.Packages.props` with ~129 PackageVersion
+/// entries and ~488 PackageReference entries that depend on CPM
+/// resolution. Skipped by default; manifest-only run keeps it fast.
+TEST(FixturesTest, OptionalPowerToysCorpus_SmokesCsprojCountAndCpmResolution)
+{
+    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
+    if (enable == nullptr || std::string_view{enable} != "1") {
+        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run this corpus smoke test";
+    }
+
+    const char* env_dir = std::getenv("VECTIS_POWERTOYS_DIR");
+    const std::filesystem::path pt_root =
+        env_dir != nullptr
+            ? std::filesystem::path{env_dir}
+            : std::filesystem::path{std::getenv("HOME") != nullptr ? std::getenv("HOME") : ""} /
+                  "corpus-issue07" / "PowerToys";
+    if (!std::filesystem::is_directory(pt_root)) {
+        GTEST_SKIP() << "PowerToys corpus not at '" << pt_root.string()
+                     << "'; set VECTIS_POWERTOYS_DIR";
+    }
+
+    CodeIndex index;
+    std::unordered_set<std::string> visited;
+    vectis::code::manifest_scanner::Config mc;
+    mc.root = pt_root;
+    mc.epoch = 1;
+    vectis::code::manifest_scanner::scan_manifests(
+        mc, index, visited, vectis::code::manifest_scanner::default_handlers());
+
+    std::size_t csproj_files = 0;
+    std::size_t sln_files = 0;
+    std::size_t slnx_files = 0;
+    for (const auto& f : index.snapshot_files()) {
+        if (f.language == Language::Csproj) {
+            ++csproj_files;
+        }
+        else if (f.language == Language::DotNetSolution) {
+            const auto ext = f.path_relative.extension().string();
+            if (ext == ".sln") {
+                ++sln_files;
+            }
+            else if (ext == ".slnx") {
+                ++slnx_files;
+            }
+        }
+    }
+    EXPECT_EQ(csproj_files, 190U) << "PowerToys csproj count is pinned by the corpus snapshot";
+    EXPECT_EQ(sln_files, 10U);
+    EXPECT_EQ(slnx_files, 3U);
+
+    std::size_t pkg_empty_version = 0;
+    std::size_t pkg_resolved = 0;
+    std::size_t pkg_remove_leaked = 0;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind != "csproj-package") {
+            continue;
+        }
+        // Format is "name:version"; empty version → trailing colon.
+        if (!d.import_string.empty() && d.import_string.back() == ':') {
+            ++pkg_empty_version;
+        }
+        else {
+            ++pkg_resolved;
+        }
+        // PowerToys's Directory.Build.targets uses Remove= to drop refs.
+        // None of those should have leaked into the csproj-package set.
+        if (d.import_string.find("Remove") != std::string::npos) {
+            ++pkg_remove_leaked;
+        }
+    }
+    EXPECT_GT(pkg_resolved, 0U);
+    EXPECT_EQ(pkg_empty_version, 0U)
+        << "every PackageReference must resolve to a version via Directory.Packages.props";
+    EXPECT_EQ(pkg_remove_leaked, 0U) << "Remove= and Update= entries must not produce edges";
+
+    std::size_t proj_internal = 0;
+    std::size_t imp_internal = 0;
+    std::size_t sln_internal = 0;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind == "csproj-project" && d.target_file_id != 0) {
+            ++proj_internal;
+        }
+        else if (d.kind == "csproj-import" && d.target_file_id != 0) {
+            ++imp_internal;
+        }
+        else if (d.kind == "sln-project" && d.target_file_id != 0) {
+            ++sln_internal;
+        }
+    }
+    EXPECT_GT(proj_internal, 300U) << "the bulk of <ProjectReference> must resolve to siblings";
+    EXPECT_GT(imp_internal, 100U) << "Common.Dotnet.* imports must resolve via $(RepoRoot)";
+    EXPECT_GT(sln_internal, 100U)
+        << "Solution.sln + .slnx must produce many internal sln-project edges";
+}
+
 TEST(FixturesTest, SampleMavenMultimodule_RegistersThreePomsAndEmitsMavenEdges)
 {
     CodeIndex index;
@@ -333,6 +430,54 @@ TEST(FixturesTest, SampleMavenMultimodule_RegistersThreePomsAndEmitsMavenEdges)
     EXPECT_EQ(maven_internal, 1U) << "app → lib via in-repo coordinate";
     EXPECT_EQ(maven_external_junit, 1U)
         << "external junit coord with property resolved via parent <properties>";
+}
+
+TEST(FixturesTest, SampleDotnetCpm_RegistersFiveManifestsAndResolvesViaCPM)
+{
+    CodeIndex index;
+    scan_fixture_full_digest("sample-dotnet-cpm", index);
+
+    // 5 manifests + 2 C# sources.
+    EXPECT_EQ(index.file_count(), 7U);
+
+    const auto app_id = index.file_id_for_path("App/App.csproj");
+    const auto lib_id = index.file_id_for_path("Lib/Lib.csproj");
+    const auto sln_id = index.file_id_for_path("Solution.sln");
+    const auto cpm_id = index.file_id_for_path("Directory.Packages.props");
+    const auto common_id = index.file_id_for_path("Common.props");
+    ASSERT_NE(app_id, 0);
+    ASSERT_NE(lib_id, 0);
+    ASSERT_NE(sln_id, 0);
+    ASSERT_NE(cpm_id, 0);
+    ASSERT_NE(common_id, 0);
+
+    const auto all_deps = index.all_dependencies();
+    bool project_ref = false;
+    bool package_resolved_via_cpm = false;
+    bool import_internal = false;
+    std::size_t sln_internal = 0;
+    for (const auto& d : all_deps) {
+        if (d.kind == "csproj-project" && d.source_file_id == app_id &&
+            d.target_file_id == lib_id) {
+            project_ref = true;
+        }
+        else if (d.kind == "csproj-package" && d.source_file_id == app_id &&
+                 d.import_string == "Newtonsoft.Json:13.0.3") {
+            package_resolved_via_cpm = true;
+        }
+        else if (d.kind == "csproj-import" && d.source_file_id == app_id &&
+                 d.target_file_id == common_id) {
+            import_internal = true;
+        }
+        else if (d.kind == "sln-project" && d.source_file_id == sln_id && d.target_file_id != 0) {
+            ++sln_internal;
+        }
+    }
+    EXPECT_TRUE(project_ref) << "App → Lib via <ProjectReference>";
+    EXPECT_TRUE(package_resolved_via_cpm)
+        << "PackageReference with no version must resolve to 13.0.3 via Directory.Packages.props";
+    EXPECT_TRUE(import_internal) << "$(RepoRoot)Common.props must resolve internally";
+    EXPECT_EQ(sln_internal, 2U) << "Solution.sln → App.csproj and Lib.csproj";
 }
 
 } // namespace
