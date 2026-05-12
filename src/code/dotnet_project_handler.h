@@ -55,8 +55,8 @@ private:
     /// Nearest-ancestor lookup index: `<dir generic_string()> →
     /// CPM version map`. The directory is the one *containing* a
     /// `Directory.Packages.props` file. Transparent comparator so the
-    /// per-package probe loop doesn't allocate a temporary string per
-    /// ancestor step.
+    /// `find_nearest_cpm` probe can pass `string_view` slices of a
+    /// once-built key and stay allocation-free per step.
     std::map<std::string, PropertyMap, std::less<>> m_cpm_by_dir;
 
     static void emit_solution_edges(const SolutionEntry& sln, CodeIndex& index,
@@ -68,7 +68,7 @@ private:
 
     /// Walk ancestor directories from `start_dir` toward `root` and
     /// return the nearest CPM map, or nullptr.
-    [[nodiscard]] const PropertyMap* find_nearest_cpm(std::filesystem::path start_dir,
+    [[nodiscard]] const PropertyMap* find_nearest_cpm(const std::filesystem::path& start_dir,
                                                       const std::filesystem::path& root) const;
 };
 

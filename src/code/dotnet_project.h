@@ -62,9 +62,10 @@ struct CsprojData
 [[nodiscard]] CsprojData parse_csproj(const xml::Element& root);
 
 /// One project entry from a `.sln` text file or `.slnx` XML file.
-/// `project_type_guid` is populated for `.sln` (from the leading
-/// `Project("{...}")` GUID), empty for `.slnx` (which has no type
-/// GUIDs — filter by extension instead).
+/// `project_type_guid` is populated for `.sln` only; `.slnx` carries
+/// no GUIDs and the handler filters by extension instead. `name` is
+/// always set by `.sln`; for `.slnx` it is populated only when the
+/// `<Project Name="..."/>` attribute is present (commonly absent).
 struct SolutionProjectEntry
 {
     std::string project_type_guid;
@@ -104,14 +105,14 @@ struct SolutionProjectEntry
 /// `<PropertyGroup>` values are not resolved for paths.
 struct MsbuildContext
 {
-    /// `$(RepoRoot)` — wherever `vectis digest` was rooted. Trailing
-    /// slash MUST be present so naive `"$(RepoRoot)src/..."` produces a
-    /// well-formed path.
-    std::filesystem::path repo_root;
-    /// `$(ProjectDir)` / `$(MSBuildThisFileDirectory)` — the
-    /// directory of the file doing the `<Import>` (or
-    /// `<ProjectReference>`). Trailing slash again.
-    std::filesystem::path this_file_dir;
+    /// `$(RepoRoot)` — wherever `vectis digest` was rooted. MUST end
+    /// with `/` so naive `"$(RepoRoot)src/..."` produces a well-formed
+    /// path.
+    std::string repo_root;
+    /// `$(ProjectDir)` / `$(MSBuildThisFileDirectory)` — directory of
+    /// the file doing the `<Import>` / `<ProjectReference>`. MUST end
+    /// with `/`.
+    std::string this_file_dir;
     /// `$(MSBuildProjectName)` — csproj filename minus extension.
     std::string project_name;
 };

@@ -208,16 +208,19 @@ PropertyMap parse_packages_props(const xml::Element& root)
 
 std::string substitute_msbuild_builtins(std::string_view input, const MsbuildContext& ctx)
 {
-    return substitute_placeholders(
-        input, '(', ')', [&](std::string_view name) -> std::optional<std::string> {
+    if (input.find("$(") == std::string_view::npos) {
+        return std::string{input};
+    }
+    return code::substitute_placeholders(
+        input, '(', ')', [&](std::string_view name) -> std::optional<std::string_view> {
             if (name == "RepoRoot") {
-                return ctx.repo_root.generic_string();
+                return std::string_view{ctx.repo_root};
             }
             if (name == "ProjectDir" || name == "MSBuildThisFileDirectory") {
-                return ctx.this_file_dir.generic_string();
+                return std::string_view{ctx.this_file_dir};
             }
             if (name == "MSBuildProjectName") {
-                return ctx.project_name;
+                return std::string_view{ctx.project_name};
             }
             return std::nullopt;
         });

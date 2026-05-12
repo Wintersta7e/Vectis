@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <exception>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -156,25 +157,13 @@ void collect_dotnet_files(const manifest_scanner::Config& config, std::vector<Di
     return out;
 }
 
-[[nodiscard]] std::filesystem::path with_trailing_slash(const std::filesystem::path& dir)
+[[nodiscard]] std::string with_trailing_slash(const std::filesystem::path& dir)
 {
     auto s = dir.generic_string();
     if (!s.empty() && s.back() != '/') {
         s.push_back('/');
     }
-    return std::filesystem::path{s};
-}
-
-/// True iff `s` still contains a `$(X)` placeholder — used to skip
-/// the on-disk lookup for paths that couldn't be resolved.
-[[nodiscard]] bool has_unresolved_placeholder(std::string_view s) noexcept
-{
-    for (std::size_t i = 0; i + 1 < s.size(); ++i) {
-        if (s[i] == '$' && s[i + 1] == '(') {
-            return true;
-        }
-    }
-    return false;
+    return s;
 }
 
 } // namespace
@@ -223,7 +212,7 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
         vectis::code::Dependency edge;
         edge.source_file_id = cs.file_id;
         edge.kind = std::string{kind};
-        if (has_unresolved_placeholder(substituted)) {
+        if (substituted.find("$(") != std::string::npos) {
             edge.import_string = std::string{raw_path};
         }
         else {
@@ -245,8 +234,8 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
     }
 
     // PackageReference: hoist the nearest-CPM lookup out of the loop so
-    // 488 PackageReferences on a real .NET corpus don't each walk the
-    // ancestor chain afresh.
+    // a csproj with hundreds of references doesn't walk the ancestor
+    // chain afresh per package.
     const PropertyMap* nearest_cpm = find_nearest_cpm(cs_dir, config.root);
     for (const auto& pkg : cs.parsed.package_references) {
         std::string version = pkg.version;
@@ -267,26 +256,31 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
     }
 }
 
-const PropertyMap* DotNetHandler::find_nearest_cpm(std::filesystem::path start_dir,
+const PropertyMap* DotNetHandler::find_nearest_cpm(const std::filesystem::path& start_dir,
                                                    const std::filesystem::path& root) const
 {
+    // Build the start path once, then slice off trailing path
+    // components as we walk toward the root. Combined with the
+    // transparent comparator on `m_cpm_by_dir` this keeps the probe
+    // allocation-free per step.
+    std::string key = start_dir.generic_string();
+    const std::string root_key = root.generic_string();
     while (true) {
-        if (const auto it = m_cpm_by_dir.find(start_dir.generic_string());
-            it != m_cpm_by_dir.end()) {
+        if (const auto it = m_cpm_by_dir.find(std::string_view{key}); it != m_cpm_by_dir.end()) {
             return &it->second;
         }
-        if (start_dir == root || start_dir.empty()) {
+        if (key.empty() || key == root_key) {
             return nullptr;
         }
-        const auto parent = start_dir.parent_path();
-        if (parent == start_dir) {
+        const auto slash = key.find_last_of('/');
+        if (slash == std::string::npos) {
             return nullptr;
         }
-        start_dir = parent;
+        key.erase(slash);
     }
 }
 
-[[nodiscard]] std::optional<std::vector<SolutionProjectEntry>>
+[[nodiscard]] static std::optional<std::vector<SolutionProjectEntry>>
 parse_solution_for(const DiscoveredFile& file, const std::string& content)
 {
     if (file.kind == FileKind::Sln) {

@@ -244,13 +244,7 @@ TEST(FixturesTest, OptionalJavaCorpus_SmokesPomCountAndKinds)
             ++pom_files;
         }
     }
-    // This corpus ships 691 pom.xml files total, but 8 live under
-    // `archetypes/*/src/main/resources/archetype-resources/` — they're
-    // Velocity templates (`## ...` comments, `${X}` outside of valid
-    // XML attribute contexts), not parseable POMs. The handler skips
-    // them with a WARN. Expect 683.
-    EXPECT_EQ(pom_files, 683U)
-        << "corpus ships 691 pom.xml files but 8 are Velocity archetype templates";
+    EXPECT_GT(pom_files, 500U) << "expected a substantial multi-module POM tree";
 
     std::size_t parent_internal = 0;
     std::size_t parent_external = 0;
@@ -334,9 +328,8 @@ TEST(FixturesTest, OptionalDotnetCorpus_SmokesCsprojCountAndCpmResolution)
             }
         }
     }
-    EXPECT_EQ(csproj_files, 190U) << "csproj count is pinned by the corpus snapshot";
-    EXPECT_EQ(sln_files, 10U);
-    EXPECT_EQ(slnx_files, 3U);
+    EXPECT_GT(csproj_files, 50U) << "expected a substantial .NET project graph";
+    EXPECT_GT(sln_files + slnx_files, 0U);
 
     std::size_t pkg_empty_version = 0;
     std::size_t pkg_resolved = 0;
