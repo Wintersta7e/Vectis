@@ -438,6 +438,20 @@ TEST(CodeIndexTest, Compact_AddFileAfterPreservesIdMonotonicity)
     EXPECT_EQ(idx.file_count(), 3U);
 }
 
+TEST(CodeIndexTest, FileIdForPath_ReturnsAssignedIdOnHit)
+{
+    CodeIndex idx;
+    const auto id = idx.add_file(make_file("a/pom.xml", Language::MavenPom));
+    EXPECT_EQ(idx.file_id_for_path("a/pom.xml"), id);
+}
+
+TEST(CodeIndexTest, FileIdForPath_ReturnsZeroOnMiss)
+{
+    CodeIndex idx;
+    idx.add_file(make_file("a/pom.xml", Language::MavenPom));
+    EXPECT_EQ(idx.file_id_for_path("b/pom.xml"), 0);
+}
+
 TEST(CodeIndexTest, AddOrUpdateFileByPath_AddsNewFileWhenAbsent)
 {
     CodeIndex idx;

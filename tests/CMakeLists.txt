@@ -22,6 +22,7 @@ add_executable(vectis_tests
     code/gitignore_test.cpp
     code/hotspot_detector_test.cpp
     code/language_test.cpp
+    code/manifest_scanner_test.cpp
     code/pagerank_test.cpp
     code/parser_test.cpp
     code/scanner_test.cpp

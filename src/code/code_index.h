@@ -112,6 +112,14 @@ public:
     /// Snapshot of every dependency edge in the project.
     [[nodiscard]] std::vector<Dependency> all_dependencies() const;
 
+    /// Constant-time path → file-id lookup. Returns 0 if the path is
+    /// not registered. Match keys are
+    /// `path_relative.generic_string()`. Used by the manifest scanner
+    /// to resolve cross-manifest references (e.g. a Maven `<parent>`
+    /// pointing at the sibling pom.xml) and by anything else that
+    /// needs to find a known file without scanning the snapshot.
+    [[nodiscard]] std::int64_t file_id_for_path(std::string_view path) const noexcept;
+
     // ----- Stats (lock-free atomic reads) -----------------------------
 
     [[nodiscard]] std::size_t file_count() const noexcept

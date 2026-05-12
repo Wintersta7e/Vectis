@@ -523,6 +523,20 @@ std::vector<Dependency> CodeIndex::dependents_of(std::int64_t file_id) const
     return out;
 }
 
+std::int64_t CodeIndex::file_id_for_path(std::string_view path) const noexcept
+{
+    const std::shared_lock lock(m_mutex);
+    // unordered_map::find requires a key with std::hash<T>; constructing
+    // a temporary std::string is cheap relative to the path-walk
+    // alternative, and we don't expect this to be a hot path.
+    const std::string key{path};
+    const auto it = m_index_by_path.find(key);
+    if (it == m_index_by_path.end()) {
+        return 0;
+    }
+    return m_files[it->second].id;
+}
+
 std::vector<Dependency> CodeIndex::all_dependencies() const
 {
     const std::shared_lock lock(m_mutex);
