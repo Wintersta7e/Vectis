@@ -1,16 +1,18 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
-#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "code/property_map.h"
 #include "code/xml_reader.h"
 
 namespace vectis::code::maven {
+
+/// Backward-compat alias — `code::PropertyMap` is the shared form.
+using PropertyMap = code::PropertyMap;
 
 /// Maven coordinate `<groupId>:<artifactId>:<version>`. Fields may be
 /// empty at parse time — parent inheritance fills `group_id` and
@@ -35,12 +37,6 @@ struct Coordinate
 
     bool operator==(const Coordinate&) const = default;
 };
-
-/// Transparent-comparator property map. `find(string_view)` lands
-/// without constructing a `std::string`, which matters because
-/// substitution looks up every `${X}` placeholder across (own,
-/// parent) maps on every dependency.
-using PropertyMap = std::map<std::string, std::string, std::less<>>;
 
 /// One `<dependency>` entry from a POM. Coordinate fields keep any
 /// `${X}` placeholders; substitution happens later when the importer's
@@ -81,7 +77,7 @@ struct ParsedPom
     /// when there is no `<parent>` at all.
     std::optional<std::string> parent_relative_path;
     /// Own `<properties>` block.
-    PropertyMap properties;
+    code::PropertyMap properties;
     /// `<modules>` child names (NOT resolved to paths).
     std::vector<std::string> modules;
     /// Every `<dependency>` entry found at top-level or under
@@ -108,7 +104,7 @@ struct ParsedPom
 /// `parent_props` are NOT recursively substituted. Maven's full
 /// recursive rules are out of scope today.
 [[nodiscard]] std::string substitute_properties(std::string_view input, const Coordinate& own_coord,
-                                                const PropertyMap& own_props,
-                                                const PropertyMap& parent_props);
+                                                const code::PropertyMap& own_props,
+                                                const code::PropertyMap& parent_props);
 
 } // namespace vectis::code::maven

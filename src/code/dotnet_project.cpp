@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -10,45 +9,12 @@
 #include <utility>
 #include <vector>
 
+#include "code/property_map.h"
 #include "core/string_util.h"
 
 namespace vectis::code::dotnet {
 
 namespace {
-
-/// Generic `$<open>NAME<close>` placeholder substitution. Used for
-/// MSBuild `$(X)` and the same-file `<PropertyGroup>` resolution
-/// rules. Unresolved placeholders pass through verbatim so agents see
-/// what couldn't be resolved.
-template <typename Lookup>
-std::string substitute_placeholders(std::string_view input, char open, char close,
-                                    const Lookup& lookup_fn)
-{
-    std::string out;
-    out.reserve(input.size());
-    std::size_t i = 0;
-    while (i < input.size()) {
-        if (i + 1 < input.size() && input[i] == '$' && input[i + 1] == open) {
-            const std::size_t close_pos = input.find(close, i + 2);
-            if (close_pos == std::string_view::npos) {
-                out.append(input.substr(i));
-                break;
-            }
-            const std::string_view name = input.substr(i + 2, close_pos - i - 2);
-            if (auto resolved = lookup_fn(name)) {
-                out.append(*resolved);
-            }
-            else {
-                out.append(input.substr(i, close_pos - i + 1));
-            }
-            i = close_pos + 1;
-            continue;
-        }
-        out.push_back(input[i]);
-        ++i;
-    }
-    return out;
-}
 
 /// Collect every `<PropertyGroup>`'s direct children into the map.
 /// MSBuild allows multiple PropertyGroup blocks at root level.
@@ -63,13 +29,13 @@ void collect_property_groups(const xml::Element& root, PropertyMap& out)
 
 [[nodiscard]] std::string substitute_against_props(std::string_view input, const PropertyMap& props)
 {
-    return substitute_placeholders(input, '(', ')',
-                                   [&](std::string_view name) -> std::optional<std::string_view> {
-                                       if (const auto it = props.find(name); it != props.end()) {
-                                           return std::string_view{it->second};
-                                       }
-                                       return std::nullopt;
-                                   });
+    return code::substitute_placeholders(
+        input, '(', ')', [&](std::string_view name) -> std::optional<std::string_view> {
+            if (const auto it = props.find(name); it != props.end()) {
+                return std::string_view{it->second};
+            }
+            return std::nullopt;
+        });
 }
 
 /// Walk `<Folder>` nesting collecting `<Project Path=...>` elements.
@@ -208,13 +174,7 @@ bool is_csharp_family_guid(std::string_view guid)
         "F184B08F-C81C-45F6-A57F-5ABD9991F28F", // VB
         "9A19103F-16F7-4668-BE54-9A1E7A4F7556", // C# .NET SDK-style
     };
-    const std::string upper = [&] {
-        std::string s{guid};
-        for (char& c : s) {
-            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-        }
-        return s;
-    }();
+    const std::string upper = vectis::core::to_upper_ascii(guid);
     return std::ranges::find(k_csharp_guids, upper) != k_csharp_guids.end();
 }
 

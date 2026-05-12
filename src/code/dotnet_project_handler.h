@@ -54,8 +54,10 @@ private:
     std::vector<SolutionEntry> m_solutions;
     /// Nearest-ancestor lookup index: `<dir generic_string()> →
     /// CPM version map`. The directory is the one *containing* a
-    /// `Directory.Packages.props` file.
-    std::map<std::string, PropertyMap> m_cpm_by_dir;
+    /// `Directory.Packages.props` file. Transparent comparator so the
+    /// per-package probe loop doesn't allocate a temporary string per
+    /// ancestor step.
+    std::map<std::string, PropertyMap, std::less<>> m_cpm_by_dir;
 
     static void emit_solution_edges(const SolutionEntry& sln, CodeIndex& index,
                                     const manifest_scanner::Config& config,
@@ -63,6 +65,11 @@ private:
     void emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
                            const manifest_scanner::Config& config,
                            std::vector<vectis::code::Dependency>& pending) const;
+
+    /// Walk ancestor directories from `start_dir` toward `root` and
+    /// return the nearest CPM map, or nullptr.
+    [[nodiscard]] const PropertyMap* find_nearest_cpm(std::filesystem::path start_dir,
+                                                      const std::filesystem::path& root) const;
 };
 
 [[nodiscard]] std::shared_ptr<manifest_scanner::Handler> make_dotnet_handler();

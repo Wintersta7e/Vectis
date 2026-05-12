@@ -21,6 +21,17 @@ namespace vectis::core {
     return out;
 }
 
+/// Counterpart of `to_lower_ascii`. ASCII upper-case fold, locale-free.
+[[nodiscard]] inline std::string to_upper_ascii(std::string_view input)
+{
+    std::string out;
+    out.reserve(input.size());
+    for (const char ch : input) {
+        out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+    }
+    return out;
+}
+
 /// Count source lines in `content`. Empty content has 0 lines; any
 /// non-empty content has at least 1, plus one per embedded `\n`. The
 /// last line need not end with a newline.

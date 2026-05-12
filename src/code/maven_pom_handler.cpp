@@ -15,6 +15,7 @@
 #include "code/dependency.h"
 #include "code/gitignore.h"
 #include "code/language.h"
+#include "code/path_util.h"
 #include "code/symbol.h"
 #include "code/xml_reader.h"
 #include "core/hash.h"
@@ -25,18 +26,6 @@
 namespace vectis::code::maven {
 
 namespace {
-
-/// Lexically normalise an absolute path relative to `root`. Returns
-/// the relative path with forward-slash separators so it matches what
-/// CodeIndex stores. Does NOT touch the filesystem — handles
-/// non-existent paths gracefully (relevant for module / parent
-/// resolution where the target may not exist on disk).
-[[nodiscard]] std::string normalise_relative(const std::filesystem::path& absolute,
-                                             const std::filesystem::path& root)
-{
-    const std::filesystem::path normalised = absolute.lexically_normal();
-    return normalised.lexically_relative(root).generic_string();
-}
 
 /// Walk the tree under `config.root` collecting every `pom.xml` whose
 /// directory chain is not excluded. Results are sorted by absolute

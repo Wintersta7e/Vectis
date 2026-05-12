@@ -1,20 +1,17 @@
 #pragma once
 
 #include <filesystem>
-#include <functional>
-#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "code/property_map.h"
 #include "code/xml_reader.h"
 
 namespace vectis::code::dotnet {
 
-/// Transparent-comparator string map. Used for `<PropertyGroup>`
-/// values and `Directory.Packages.props` version maps; the
-/// `find(string_view)` calls during substitution stay allocation-free.
-using PropertyMap = std::map<std::string, std::string, std::less<>>;
+/// Backward-compat alias — `code::PropertyMap` is the shared form.
+using PropertyMap = code::PropertyMap;
 
 /// `<ProjectReference Include="path" />` — single relative path. The
 /// path is left as-written (with `\` separators on Windows); the
@@ -49,10 +46,9 @@ struct ProjectImport
 /// applied to `<PackageReference Version="...">` values.
 struct CsprojData
 {
-    /// Concatenation of every `<PropertyGroup>` block — used by the
-    /// handler when resolving Version attributes that weren't already
-    /// substituted at parse time (the parser does its own pass; this
-    /// is the snapshot for any later cross-cutting lookups).
+    /// Concatenation of every `<PropertyGroup>` block. The parser
+    /// already substitutes these into `<PackageReference Version=...>`
+    /// at read time; exposed so tests can inspect them.
     PropertyMap properties;
     std::vector<ProjectReference> project_references;
     std::vector<PackageReference> package_references;
@@ -86,9 +82,9 @@ struct SolutionProjectEntry
 [[nodiscard]] std::vector<SolutionProjectEntry> parse_slnx(const xml::Element& root);
 
 /// True iff `guid` (without surrounding braces or quotes) is one of
-/// the C# / F# / VB / C#-SDK project-type GUIDs Phase 2 emits edges
-/// for. Lowercase-compared — `.sln` files always uppercase the GUIDs
-/// but tooling can be inconsistent.
+/// the C# / F# / VB / C#-SDK project-type GUIDs the handler emits
+/// edges for. Case-insensitive — `.sln` files canonically use upper
+/// case but tooling can be inconsistent.
 [[nodiscard]] bool is_csharp_family_guid(std::string_view guid);
 
 /// True iff `name` (a project path's filename) ends with one of the
@@ -104,8 +100,8 @@ struct SolutionProjectEntry
 [[nodiscard]] PropertyMap parse_packages_props(const xml::Element& root);
 
 /// Context for MSBuild built-in `$(X)` substitution. Properties that
-/// don't match a known built-in are left verbatim — Phase 2 doesn't
-/// resolve user-defined `<PropertyGroup>` values for paths.
+/// don't match a known built-in are left verbatim — user-defined
+/// `<PropertyGroup>` values are not resolved for paths.
 struct MsbuildContext
 {
     /// `$(RepoRoot)` — wherever `vectis digest` was rooted. Trailing

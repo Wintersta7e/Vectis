@@ -6,6 +6,8 @@
 #include <string_view>
 #include <utility>
 
+#include "code/property_map.h"
+
 namespace vectis::code::maven {
 
 namespace {
@@ -150,8 +152,8 @@ namespace {
 /// allocation-free.
 [[nodiscard]] std::optional<std::string_view> lookup_property(std::string_view name,
                                                               const Coordinate& own_coord,
-                                                              const PropertyMap& own_props,
-                                                              const PropertyMap& parent_props)
+                                                              const code::PropertyMap& own_props,
+                                                              const code::PropertyMap& parent_props)
 {
     if (name == "project.version") {
         return std::string_view{own_coord.version};
@@ -171,34 +173,12 @@ namespace {
 } // namespace
 
 std::string substitute_properties(std::string_view input, const Coordinate& own_coord,
-                                  const PropertyMap& own_props, const PropertyMap& parent_props)
+                                  const code::PropertyMap& own_props,
+                                  const code::PropertyMap& parent_props)
 {
-    std::string out;
-    out.reserve(input.size());
-    std::size_t i = 0;
-    while (i < input.size()) {
-        // Look for the next `${`.
-        if (i + 1 < input.size() && input[i] == '$' && input[i + 1] == '{') {
-            const std::size_t close = input.find('}', i + 2);
-            if (close == std::string_view::npos) {
-                // Unterminated placeholder — copy the rest verbatim.
-                out.append(input.substr(i));
-                break;
-            }
-            const std::string_view name = input.substr(i + 2, close - i - 2);
-            if (const auto resolved = lookup_property(name, own_coord, own_props, parent_props)) {
-                out.append(*resolved);
-            }
-            else {
-                out.append(input.substr(i, close - i + 1));
-            }
-            i = close + 1;
-            continue;
-        }
-        out.push_back(input[i]);
-        ++i;
-    }
-    return out;
+    return code::substitute_placeholders(input, '{', '}', [&](std::string_view name) {
+        return lookup_property(name, own_coord, own_props, parent_props);
+    });
 }
 
 } // namespace vectis::code::maven

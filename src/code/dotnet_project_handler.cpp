@@ -14,6 +14,7 @@
 #include "code/dependency.h"
 #include "code/gitignore.h"
 #include "code/language.h"
+#include "code/path_util.h"
 #include "code/symbol.h"
 #include "code/xml_reader.h"
 #include "core/hash.h"
@@ -55,36 +56,24 @@ enum class FileKind : std::uint8_t
     return std::nullopt;
 }
 
-[[nodiscard]] Language language_for(FileKind kind)
+struct FileKindMeta
 {
-    switch (kind) {
-    case FileKind::Csproj:
-        return Language::Csproj;
-    case FileKind::Sln:
-    case FileKind::Slnx:
-        return Language::DotNetSolution;
-    case FileKind::Props:
-    case FileKind::CpmProps:
-        return Language::MsbuildProps;
-    }
-    return Language::Unknown;
-}
+    FileKind kind;
+    Language language;
+    std::string_view symbol_member;
+};
 
-[[nodiscard]] std::string symbol_kind_label(FileKind kind)
+inline constexpr std::array<FileKindMeta, 5> k_file_kind_meta = {{
+    {FileKind::Csproj, Language::Csproj, "kind:csproj"},
+    {FileKind::Sln, Language::DotNetSolution, "kind:sln"},
+    {FileKind::Slnx, Language::DotNetSolution, "kind:slnx"},
+    {FileKind::Props, Language::MsbuildProps, "kind:msbuild-props"},
+    {FileKind::CpmProps, Language::MsbuildProps, "kind:cpm-props"},
+}};
+
+[[nodiscard]] const FileKindMeta& meta_for(FileKind kind)
 {
-    switch (kind) {
-    case FileKind::Csproj:
-        return "kind:csproj";
-    case FileKind::Sln:
-        return "kind:sln";
-    case FileKind::Slnx:
-        return "kind:slnx";
-    case FileKind::Props:
-        return "kind:msbuild-props";
-    case FileKind::CpmProps:
-        return "kind:cpm-props";
-    }
-    return "kind:unknown";
+    return k_file_kind_meta[static_cast<std::size_t>(kind)];
 }
 
 struct DiscoveredFile
@@ -158,12 +147,6 @@ void collect_dotnet_files(const manifest_scanner::Config& config, std::vector<Di
     });
 }
 
-[[nodiscard]] std::string normalise_relative(const std::filesystem::path& absolute,
-                                             const std::filesystem::path& root)
-{
-    return absolute.lexically_normal().lexically_relative(root).generic_string();
-}
-
 /// Convert any `\` to `/`. MSBuild paths in cross-platform repos often
 /// use Windows separators even when committed from Linux toolchains.
 [[nodiscard]] std::string normalise_msbuild_path(std::string_view raw)
@@ -233,96 +216,73 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
     ctx.this_file_dir = with_trailing_slash(cs_dir);
     ctx.project_name = cs.absolute_path.stem().string();
 
-    // <ProjectReference Include="..">
+    const auto emit_path_edge = [&](std::string_view raw_path, std::string_view kind) {
+        const std::string substituted =
+            substitute_msbuild_builtins(normalise_msbuild_path(raw_path), ctx);
+
+        vectis::code::Dependency edge;
+        edge.source_file_id = cs.file_id;
+        edge.kind = std::string{kind};
+        if (has_unresolved_placeholder(substituted)) {
+            edge.import_string = std::string{raw_path};
+        }
+        else {
+            const std::filesystem::path candidate = cs_dir / substituted;
+            edge.target_file_id =
+                index.file_id_for_path(normalise_relative(candidate, config.root));
+            if (edge.target_file_id == 0) {
+                edge.import_string = std::string{raw_path};
+            }
+        }
+        pending.push_back(std::move(edge));
+    };
+
     for (const auto& pref : cs.parsed.project_references) {
-        const std::string substituted =
-            substitute_msbuild_builtins(normalise_msbuild_path(pref.include_path), ctx);
-
-        std::int64_t target = 0;
-        std::string import_string;
-        if (has_unresolved_placeholder(substituted)) {
-            import_string = pref.include_path;
-        }
-        else {
-            const std::filesystem::path candidate = cs_dir / substituted;
-            const std::string rel = normalise_relative(candidate, config.root);
-            target = index.file_id_for_path(rel);
-            if (target == 0) {
-                import_string = pref.include_path;
-            }
-        }
-
-        vectis::code::Dependency edge;
-        edge.source_file_id = cs.file_id;
-        edge.target_file_id = target;
-        edge.kind = "csproj-project";
-        edge.import_string = std::move(import_string);
-        pending.push_back(std::move(edge));
+        emit_path_edge(pref.include_path, "csproj-project");
     }
-
-    // <Import Project="..">
     for (const auto& imp : cs.parsed.imports) {
-        const std::string substituted =
-            substitute_msbuild_builtins(normalise_msbuild_path(imp.project_path), ctx);
-
-        std::int64_t target = 0;
-        std::string import_string;
-        if (has_unresolved_placeholder(substituted)) {
-            import_string = imp.project_path;
-        }
-        else {
-            const std::filesystem::path candidate = cs_dir / substituted;
-            const std::string rel = normalise_relative(candidate, config.root);
-            target = index.file_id_for_path(rel);
-            if (target == 0) {
-                import_string = imp.project_path;
-            }
-        }
-
-        vectis::code::Dependency edge;
-        edge.source_file_id = cs.file_id;
-        edge.target_file_id = target;
-        edge.kind = "csproj-import";
-        edge.import_string = std::move(import_string);
-        pending.push_back(std::move(edge));
+        emit_path_edge(imp.project_path, "csproj-import");
     }
 
-    // <PackageReference Include="..">
+    // PackageReference: hoist the nearest-CPM lookup out of the loop so
+    // 488 PackageReferences on a real .NET corpus don't each walk the
+    // ancestor chain afresh.
+    const PropertyMap* nearest_cpm = find_nearest_cpm(cs_dir, config.root);
     for (const auto& pkg : cs.parsed.package_references) {
         std::string version = pkg.version;
-        if (version.empty()) {
-            // Nearest-ancestor CPM lookup.
-            std::filesystem::path probe = cs_dir;
-            while (true) {
-                const auto it = m_cpm_by_dir.find(probe.generic_string());
-                if (it != m_cpm_by_dir.end()) {
-                    if (const auto v = it->second.find(pkg.name); v != it->second.end()) {
-                        version = v->second;
-                    }
-                    break;
-                }
-                if (probe == config.root || probe.empty()) {
-                    break;
-                }
-                const auto parent = probe.parent_path();
-                if (parent == probe) {
-                    break;
-                }
-                probe = parent;
+        if (version.empty() && nearest_cpm != nullptr) {
+            if (const auto v = nearest_cpm->find(pkg.name); v != nearest_cpm->end()) {
+                version = v->second;
             }
         }
-        std::string gav;
-        gav.reserve(pkg.name.size() + version.size() + 1);
-        gav.append(pkg.name);
-        gav.push_back(':');
-        gav.append(version);
 
         vectis::code::Dependency edge;
         edge.source_file_id = cs.file_id;
-        edge.target_file_id = 0; // packages are always external
         edge.kind = "csproj-package";
-        edge.import_string = std::move(gav);
+        edge.import_string.reserve(pkg.name.size() + version.size() + 1);
+        edge.import_string.append(pkg.name);
+        edge.import_string.push_back(':');
+        edge.import_string.append(version);
         pending.push_back(std::move(edge));
+    }
+}
+
+const PropertyMap* DotNetHandler::find_nearest_cpm(std::filesystem::path start_dir,
+                                                   const std::filesystem::path& root) const
+{
+    while (true) {
+        if (const auto it = m_cpm_by_dir.find(start_dir.generic_string());
+            it != m_cpm_by_dir.end()) {
+            return &it->second;
+        }
+        if (start_dir == root || start_dir.empty()) {
+            return nullptr;
+        }
+        const auto parent = start_dir.parent_path();
+        if (parent == start_dir) {
+            return nullptr;
+        }
+        start_dir = parent;
     }
 }
 
@@ -365,7 +325,7 @@ void DotNetHandler::register_files(const manifest_scanner::Config& config, CodeI
 
         FileEntry entry;
         entry.path_relative = std::filesystem::relative(file.absolute_path, config.root);
-        entry.language = language_for(file.kind);
+        entry.language = meta_for(file.kind).language;
         entry.size = content.size();
         entry.line_count = vectis::core::count_lines(content);
         entry.content_hash = vectis::core::fnv1a_hex(content);
@@ -384,7 +344,7 @@ void DotNetHandler::register_files(const manifest_scanner::Config& config, CodeI
         manifest_symbol.line_start = 1;
         manifest_symbol.line_end = 1;
         manifest_symbol.visibility = Visibility::Public;
-        manifest_symbol.members.push_back(symbol_kind_label(file.kind));
+        manifest_symbol.members.emplace_back(meta_for(file.kind).symbol_member);
         const std::array<Symbol, 1> batch{std::move(manifest_symbol)};
         index.add_symbols(std::span<const Symbol>(batch.data(), batch.size()));
 
@@ -441,7 +401,16 @@ void DotNetHandler::register_files(const manifest_scanner::Config& config, CodeI
 
 void DotNetHandler::emit_edges(const manifest_scanner::Config& config, CodeIndex& index)
 {
+    std::size_t projected = 0;
+    for (const auto& cs : m_csprojs) {
+        projected += cs.parsed.project_references.size() + cs.parsed.package_references.size() +
+                     cs.parsed.imports.size();
+    }
+    for (const auto& sln : m_solutions) {
+        projected += sln.projects.size();
+    }
     std::vector<vectis::code::Dependency> pending;
+    pending.reserve(projected);
 
     for (const auto& sln : m_solutions) {
         emit_solution_edges(sln, index, config, pending);
