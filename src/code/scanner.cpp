@@ -66,6 +66,23 @@ constexpr std::chrono::milliseconds k_progress_time_stride{100};
     return count;
 }
 
+/// Reason the current scan should stop, or an empty view to keep
+/// going. Checked at every loop boundary so cancellation and epoch
+/// pre-emption surface immediately.
+[[nodiscard]] std::string_view
+scan_preemption_reason(const vectis::core::CancellationToken& cancel_token,
+                       const std::atomic<std::int64_t>& current_epoch,
+                       std::int64_t expected_epoch) noexcept
+{
+    if (cancel_token.stop_requested()) {
+        return "cancelled by token";
+    }
+    if (current_epoch.load(std::memory_order_acquire) != expected_epoch) {
+        return "pre-empted by epoch bump";
+    }
+    return {};
+}
+
 } // namespace
 
 vectis::core::Result<ScanResult>
@@ -87,31 +104,6 @@ Scanner::run_collect(const ScanConfig& config, CodeIndex& index, TreeSitterParse
     // deferred to `resolve_all` after the main loop exits so the
     // resolver sees the complete file table.
     std::vector<FileImports> per_file_imports;
-
-    // Check for cancellation or a superseding epoch. Returns the
-    // reason the scan should stop, or an empty string to continue.
-    const auto preemption_reason = [&]() -> std::string_view {
-        if (cancel_token.stop_requested()) {
-            return "cancelled by token";
-        }
-        if (current_epoch.load(std::memory_order_acquire) != config.epoch) {
-            return "pre-empted by epoch bump";
-        }
-        return {};
-    };
-
-    // Directory-name-only exclude check. Matches the design doc: the
-    // user writes `code.exclude = ["node_modules", ".git"]` as names,
-    // not path prefixes.
-    const auto is_excluded_dir_name = [&](const std::filesystem::path& dir) {
-        const std::string name = dir.filename().string();
-        if (config.exclude_dir_names.find(name) != config.exclude_dir_names.end()) {
-            return true;
-        }
-        return std::ranges::any_of(config.exclude_dir_globs, [&](const std::string& glob) {
-            return wildcard_match(glob, name);
-        });
-    };
 
     std::error_code ec;
     if (!std::filesystem::is_directory(config.root, ec) || ec) {
@@ -143,7 +135,9 @@ Scanner::run_collect(const ScanConfig& config, CodeIndex& index, TreeSitterParse
 
     const Iter end_it{};
     for (; it != end_it;) {
-        if (const std::string_view reason = preemption_reason(); !reason.empty()) {
+        if (const std::string_view reason =
+                scan_preemption_reason(cancel_token, current_epoch, config.epoch);
+            !reason.empty()) {
             VECTIS_LOG_INFO("Scanner: scan {}", reason);
             return make_error(vectis::core::ErrorKind::Cancelled, std::string{reason},
                               config.root.string());
@@ -153,7 +147,8 @@ Scanner::run_collect(const ScanConfig& config, CodeIndex& index, TreeSitterParse
 
         // Directory-level skip: disable recursion for excluded subtrees.
         if (entry.is_directory(ec)) {
-            if (is_excluded_dir_name(entry.path())) {
+            if (is_excluded_basename(entry.path(), config.exclude_dir_names,
+                                     config.exclude_dir_globs)) {
                 it.disable_recursion_pending();
             }
             try {
@@ -336,7 +331,9 @@ Scanner::run_collect(const ScanConfig& config, CodeIndex& index, TreeSitterParse
         }
     }
 
-    if (const std::string_view reason = preemption_reason(); !reason.empty()) {
+    if (const std::string_view reason =
+            scan_preemption_reason(cancel_token, current_epoch, config.epoch);
+        !reason.empty()) {
         VECTIS_LOG_INFO("Scanner: scan {}", reason);
         return make_error(vectis::core::ErrorKind::Cancelled, std::string{reason},
                           config.root.string());
@@ -376,7 +373,7 @@ Scanner::run_incremental_collect(const ScanConfig& config, CodeIndex& index,
     std::unordered_map<std::string, std::pair<std::int64_t, std::string>> path_to_info;
     path_to_info.reserve(existing_files.size());
     for (const auto& f : existing_files) {
-        path_to_info[f.path_relative.string()] = {f.id, f.content_hash};
+        path_to_info[f.path_relative.generic_string()] = {f.id, f.content_hash};
     }
 
     // Track which existing paths were visited. Lives on the result so
@@ -391,26 +388,6 @@ Scanner::run_incremental_collect(const ScanConfig& config, CodeIndex& index,
 
     // Imports collected for the dependency resolver pass.
     std::vector<FileImports> per_file_imports;
-
-    const auto preemption_reason = [&]() -> std::string_view {
-        if (cancel_token.stop_requested()) {
-            return "cancelled by token";
-        }
-        if (current_epoch.load(std::memory_order_acquire) != config.epoch) {
-            return "pre-empted by epoch bump";
-        }
-        return {};
-    };
-
-    const auto is_excluded_dir_name = [&](const std::filesystem::path& dir) {
-        const std::string name = dir.filename().string();
-        if (config.exclude_dir_names.find(name) != config.exclude_dir_names.end()) {
-            return true;
-        }
-        return std::ranges::any_of(config.exclude_dir_globs, [&](const std::string& glob) {
-            return wildcard_match(glob, name);
-        });
-    };
 
     std::error_code ec;
     if (!std::filesystem::is_directory(config.root, ec) || ec) {
@@ -437,7 +414,9 @@ Scanner::run_incremental_collect(const ScanConfig& config, CodeIndex& index,
 
     const Iter end_it{};
     for (; it != end_it;) {
-        if (const std::string_view reason = preemption_reason(); !reason.empty()) {
+        if (const std::string_view reason =
+                scan_preemption_reason(cancel_token, current_epoch, config.epoch);
+            !reason.empty()) {
             VECTIS_LOG_INFO("Scanner: incremental scan {}", reason);
             return make_error(ErrorKind::Cancelled, std::string{reason}, config.root.string());
         }
@@ -445,7 +424,8 @@ Scanner::run_incremental_collect(const ScanConfig& config, CodeIndex& index,
         const std::filesystem::directory_entry& entry = *it;
 
         if (entry.is_directory(ec)) {
-            if (is_excluded_dir_name(entry.path())) {
+            if (is_excluded_basename(entry.path(), config.exclude_dir_names,
+                                     config.exclude_dir_globs)) {
                 it.disable_recursion_pending();
             }
             try {
@@ -551,7 +531,7 @@ Scanner::run_incremental_collect(const ScanConfig& config, CodeIndex& index,
             }
             continue;
         }
-        const std::string rel_str = rel.string();
+        const std::string rel_str = rel.generic_string();
 
         visited_paths.insert(rel_str);
         const auto new_hash = vectis::core::fnv1a_hex(content);

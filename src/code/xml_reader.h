@@ -135,22 +135,11 @@ public:
     }
     [[nodiscard]] std::size_t node_count() const noexcept { return m_nodes.size(); }
 
-    // ----- Builder hook (used by parse()) ------------------------------
-
-    /// Replace all node storage in one shot. Used by `parse()` after it
-    /// has built the full tree in a local vector. No other caller
-    /// should invoke this; the function is public only because `parse()`
-    /// lives in a free function rather than a friend declaration.
-    void take_nodes(std::vector<ElementNode>&& nodes, std::size_t root_index) noexcept
-    {
-        m_nodes = std::move(nodes);
-        m_root_index = root_index;
-    }
-    [[nodiscard]] std::size_t root_index() const noexcept { return m_root_index; }
-
 private:
     std::vector<ElementNode> m_nodes;
     std::size_t m_root_index = 0;
+
+    friend vectis::core::Result<Document> parse(std::string_view content);
 };
 
 /// Parse XML with tolerant settings.

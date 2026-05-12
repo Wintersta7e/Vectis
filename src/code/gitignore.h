@@ -58,4 +58,13 @@ struct GitignorePatterns
 /// short (directory basenames), so worst-case backtracking is fine.
 [[nodiscard]] bool wildcard_match(std::string_view pattern, std::string_view name) noexcept;
 
+/// Check whether a directory should be excluded by basename, given a
+/// set of exact names and a list of glob patterns (same shape as
+/// `ScanConfig::exclude_dir_names` / `exclude_dir_globs`). Returns
+/// true on a hit. Used by the source scanner and by manifest
+/// handlers — both observe the same exclude rules.
+[[nodiscard]] bool is_excluded_basename(const std::filesystem::path& dir,
+                                        const std::unordered_set<std::string>& exact_names,
+                                        const std::vector<std::string>& glob_patterns);
+
 } // namespace vectis::code

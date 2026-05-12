@@ -83,16 +83,12 @@ namespace {
 
 } // namespace
 
-std::int64_t CodeIndex::add_file(FileEntry file)
+std::int64_t CodeIndex::insert_file_locked(FileEntry file, std::string key)
 {
-    const std::unique_lock lock(m_mutex);
-
     const std::int64_t assigned_id = m_next_file_id++;
     file.id = assigned_id;
 
     const std::uint32_t bit = language_bit(file.language);
-    std::string key = file.path_relative.generic_string();
-
     const std::size_t new_index = m_files.size();
     m_files.push_back(std::move(file));
     m_index_by_path.emplace(std::move(key), new_index);
@@ -101,54 +97,51 @@ std::int64_t CodeIndex::add_file(FileEntry file)
     if (bit != 0U) {
         m_language_bits.fetch_or(bit, std::memory_order_acq_rel);
     }
-
     m_generation.fetch_add(1, std::memory_order_acq_rel);
     return assigned_id;
 }
 
+std::int64_t CodeIndex::add_file(FileEntry file)
+{
+    std::string key = file.path_relative.generic_string();
+    const std::unique_lock lock(m_mutex);
+    return insert_file_locked(std::move(file), std::move(key));
+}
+
 std::int64_t CodeIndex::add_or_update_file_by_path(FileEntry file)
 {
+    std::string key = file.path_relative.generic_string();
     const std::unique_lock lock(m_mutex);
 
-    const std::string key = file.path_relative.generic_string();
     const auto it = m_index_by_path.find(key);
     if (it == m_index_by_path.end()) {
-        // Miss — same path-tracking insert as `add_file`, just inline so
-        // we avoid the recursive lock on `m_mutex`.
-        const std::int64_t assigned_id = m_next_file_id++;
-        file.id = assigned_id;
-        const std::uint32_t bit = language_bit(file.language);
-        const std::size_t new_index = m_files.size();
-        m_files.push_back(std::move(file));
-        m_index_by_path.emplace(key, new_index);
-        m_file_count.store(m_files.size(), std::memory_order_release);
-        if (bit != 0U) {
-            m_language_bits.fetch_or(bit, std::memory_order_acq_rel);
-        }
-        m_generation.fetch_add(1, std::memory_order_acq_rel);
-        return assigned_id;
+        return insert_file_locked(std::move(file), std::move(key));
     }
 
     // Hit — keep the existing id and overwrite the mutable fields.
     const std::size_t idx = it->second;
     FileEntry& existing = m_files[idx];
     const std::int64_t reused_id = existing.id;
+    const bool language_changed = (existing.language != file.language);
     existing.content_hash = std::move(file.content_hash);
     existing.size = file.size;
     existing.line_count = file.line_count;
     existing.language = file.language;
     existing.last_modified = file.last_modified;
 
-    // Recompute the language bitmask from live files since the upserted
-    // entry may have switched languages and dropped the only bit of its
-    // prior language.
-    std::uint32_t new_bits = 0;
-    for (const auto& f : m_files) {
-        if (f.id != 0) {
-            new_bits |= language_bit(f.language);
+    // Only rebuild the language bitmask if the upsert switched
+    // languages — the common warm-cache case re-registers manifests
+    // with their stable language and would otherwise pay an O(N_files)
+    // walk per call.
+    if (language_changed) {
+        std::uint32_t new_bits = 0;
+        for (const auto& f : m_files) {
+            if (f.id != 0) {
+                new_bits |= language_bit(f.language);
+            }
         }
+        m_language_bits.store(new_bits, std::memory_order_release);
     }
-    m_language_bits.store(new_bits, std::memory_order_release);
 
     // Clear this file's symbols. Tombstone via file_id=0 (matches
     // remove_file's contract) and erase the lookup so future
@@ -349,7 +342,7 @@ void CodeIndex::compact()
     // `m_index_by_path` against the new compacted indices.
     std::vector<FileEntry> live_files;
     live_files.reserve(m_files.size());
-    std::unordered_map<std::string, std::size_t> new_index_by_path;
+    decltype(m_index_by_path) new_index_by_path;
     for (auto& f : m_files) {
         if (f.id != 0) {
             new_index_by_path.emplace(f.path_relative.generic_string(), live_files.size());
@@ -526,11 +519,7 @@ std::vector<Dependency> CodeIndex::dependents_of(std::int64_t file_id) const
 std::int64_t CodeIndex::file_id_for_path(std::string_view path) const noexcept
 {
     const std::shared_lock lock(m_mutex);
-    // unordered_map::find requires a key with std::hash<T>; constructing
-    // a temporary std::string is cheap relative to the path-walk
-    // alternative, and we don't expect this to be a hot path.
-    const std::string key{path};
-    const auto it = m_index_by_path.find(key);
+    const auto it = m_index_by_path.find(path);
     if (it == m_index_by_path.end()) {
         return 0;
     }

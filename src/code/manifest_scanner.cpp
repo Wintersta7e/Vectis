@@ -17,16 +17,12 @@ void scan_manifests(const Config& config, CodeIndex& index,
     // handlers before any edges are emitted so cross-manifest
     // references resolve regardless of dispatch order.
     for (const auto& handler : handlers) {
-        if (handler) {
-            handler->register_files(config, index, visited_paths);
-        }
+        handler->register_files(config, index, visited_paths);
     }
 
     // Phase B — emit edges with the file table now stable.
     for (const auto& handler : handlers) {
-        if (handler) {
-            handler->emit_edges(config, index);
-        }
+        handler->emit_edges(config, index);
     }
 }
 

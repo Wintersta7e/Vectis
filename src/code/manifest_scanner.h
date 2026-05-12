@@ -78,6 +78,9 @@ public:
 /// This is what guarantees that a Phase B edge from `a.csproj` to a
 /// sibling `b.csproj` resolves internally regardless of which handler
 /// was dispatched first or the order of the filesystem walk.
+///
+/// Every element of `handlers` must be non-null; the orchestrator
+/// dereferences without checking.
 void scan_manifests(const Config& config, CodeIndex& index,
                     std::unordered_set<std::string>& visited_paths,
                     const std::vector<std::shared_ptr<Handler>>& handlers);

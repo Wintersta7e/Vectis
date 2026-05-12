@@ -272,54 +272,59 @@ private:
 
         // Content: alternating text runs and child elements until matching
         // end tag. Accumulate text into one buffer; flush once at close.
+        // The inner loop hoists `peek()` once per iteration and gates the
+        // `<…` probes behind `c == '<'` so plain-text characters (the bulk
+        // of manifest bytes) take a single comparison.
         std::string text_buf;
         for (;;) {
             if (eof()) {
                 return err("unexpected EOF inside element content");
             }
-            if (starts_with("</")) {
-                advance(2);
-                std::string end_prefix;
-                std::string end_local;
-                if (!read_qname(end_prefix, end_local)) {
-                    return err("expected tag name in end tag");
-                }
-                skip_ws();
-                if (peek() != '>') {
-                    return err("expected '>' to close end tag");
-                }
-                advance();
-                if (end_prefix != m_nodes[my_idx].prefix ||
-                    end_local != m_nodes[my_idx].local_name) {
-                    return err("end tag does not match start tag");
-                }
-                if (!text_buf.empty()) {
-                    m_nodes[my_idx].direct_text.push_back(std::move(text_buf));
-                }
-                return my_idx;
-            }
-            if (starts_with("<!--")) {
-                skip_comment();
-                continue;
-            }
-            if (starts_with("<?")) {
-                skip_pi();
-                continue;
-            }
-            if (starts_with("<![CDATA[")) {
-                advance(9);
-                while (!eof() && !starts_with("]]>")) {
-                    text_buf.push_back(peek());
+            const char c = peek();
+
+            if (c == '<') {
+                if (starts_with("</")) {
+                    advance(2);
+                    std::string end_prefix;
+                    std::string end_local;
+                    if (!read_qname(end_prefix, end_local)) {
+                        return err("expected tag name in end tag");
+                    }
+                    skip_ws();
+                    if (peek() != '>') {
+                        return err("expected '>' to close end tag");
+                    }
                     advance();
+                    if (end_prefix != m_nodes[my_idx].prefix ||
+                        end_local != m_nodes[my_idx].local_name) {
+                        return err("end tag does not match start tag");
+                    }
+                    if (!text_buf.empty()) {
+                        m_nodes[my_idx].direct_text.push_back(std::move(text_buf));
+                    }
+                    return my_idx;
                 }
-                if (eof()) {
-                    return err("unterminated CDATA section");
+                if (starts_with("<!--")) {
+                    skip_comment();
+                    continue;
                 }
-                advance(3); // consume "]]>"
-                continue;
-            }
-            if (peek() == '<') {
-                // Child element — recurse. Save text run first.
+                if (starts_with("<?")) {
+                    skip_pi();
+                    continue;
+                }
+                if (starts_with("<![CDATA[")) {
+                    advance(9);
+                    while (!eof() && !starts_with("]]>")) {
+                        text_buf.push_back(peek());
+                        advance();
+                    }
+                    if (eof()) {
+                        return err("unterminated CDATA section");
+                    }
+                    advance(3); // consume "]]>"
+                    continue;
+                }
+                // Child element — recurse.
                 auto child_idx = parse_element(my_idx);
                 if (!child_idx) {
                     return tl::unexpected<vectis::core::Error>(child_idx.error());
@@ -327,15 +332,17 @@ private:
                 m_nodes[my_idx].children.push_back(*child_idx);
                 continue;
             }
-            // Character content. Decode entities; preserve whitespace
-            // verbatim until `text()` normalises it.
-            if (peek() == '&') {
+
+            if (c == '&') {
                 if (!decode_entity_into(text_buf)) {
                     return err("malformed entity reference");
                 }
                 continue;
             }
-            text_buf.push_back(peek());
+
+            // Plain character content — preserve whitespace verbatim
+            // until `text()` normalises it.
+            text_buf.push_back(c);
             advance();
         }
     }
@@ -684,7 +691,8 @@ vectis::core::Result<Document> parse(std::string_view content)
         return tl::unexpected<vectis::core::Error>(built.error());
     }
     Document doc;
-    doc.take_nodes(std::move(built->first), built->second);
+    doc.m_nodes = std::move(built->first);
+    doc.m_root_index = built->second;
     return doc;
 }
 

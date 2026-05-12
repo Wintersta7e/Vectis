@@ -150,4 +150,16 @@ GitignorePatterns read_gitignore_dir_patterns(const std::filesystem::path& root)
     return result;
 }
 
+bool is_excluded_basename(const std::filesystem::path& dir,
+                          const std::unordered_set<std::string>& exact_names,
+                          const std::vector<std::string>& glob_patterns)
+{
+    const std::string name = dir.filename().string();
+    if (exact_names.contains(name)) {
+        return true;
+    }
+    return std::ranges::any_of(glob_patterns,
+                               [&](const std::string& glob) { return wildcard_match(glob, name); });
+}
+
 } // namespace vectis::code

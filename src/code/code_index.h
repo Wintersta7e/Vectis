@@ -174,7 +174,29 @@ private:
     // so callers don't have to care about OS path separators. Tombstoned
     // entries are removed by `remove_file`; `compact()` rebuilds the map
     // alongside the other structures.
-    std::unordered_map<std::string, std::size_t> m_index_by_path;
+    //
+    // Transparent hash + equal so `find(string_view)` works without
+    // constructing a `std::string` — meaningful because the manifest
+    // scanner resolves cross-manifest references per edge.
+    struct PathHash
+    {
+        using is_transparent = void;
+        [[nodiscard]] std::size_t operator()(std::string_view sv) const noexcept
+        {
+            return std::hash<std::string_view>{}(sv);
+        }
+        [[nodiscard]] std::size_t operator()(const std::string& s) const noexcept
+        {
+            return std::hash<std::string_view>{}(s);
+        }
+    };
+    std::unordered_map<std::string, std::size_t, PathHash, std::equal_to<>> m_index_by_path;
+
+    // Private helper — append a new file to `m_files` and update every
+    // derived structure (index, count, language bits, generation).
+    // Assumes the caller holds `m_mutex` for writing. Used by both
+    // `add_file` and the miss branch of `add_or_update_file_by_path`.
+    std::int64_t insert_file_locked(FileEntry file, std::string key);
 
     std::atomic<std::size_t> m_file_count{0};
     std::atomic<std::size_t> m_symbol_count{0};
