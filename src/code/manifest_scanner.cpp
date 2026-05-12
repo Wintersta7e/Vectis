@@ -1,12 +1,16 @@
 #include "code/manifest_scanner.h"
 
+#include "code/dotnet_project_handler.h"
 #include "code/maven_pom_handler.h"
 
 namespace vectis::code::manifest_scanner {
 
 std::vector<std::shared_ptr<Handler>> default_handlers()
 {
-    return {vectis::code::maven::make_pom_handler()};
+    return {
+        vectis::code::maven::make_pom_handler(),
+        vectis::code::dotnet::make_dotnet_handler(),
+    };
 }
 
 void scan_manifests(const Config& config, CodeIndex& index,
