@@ -225,26 +225,17 @@ TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
         GTEST_SKIP() << "camel corpus not at '" << camel_root.string() << "'; set VECTIS_CAMEL_DIR";
     }
 
+    // Manifest-only run — bypasses the source scanner entirely so the
+    // smoke test stays sub-minute on a 36k-file corpus. The assertions
+    // below only inspect POM-derived state, so the source pass would
+    // just be expensive noise.
     CodeIndex index;
-    TreeSitterParser parser;
-    parser.register_builtin_languages();
-
-    ScanConfig cfg;
-    cfg.root = camel_root;
-    cfg.epoch = 1;
-    std::atomic<std::int64_t> epoch{1};
-    const CancellationToken token{};
-
-    auto collect =
-        Scanner::run_collect(cfg, index, parser, [](const ScanProgress&) {}, token, epoch);
-    ASSERT_TRUE(collect.has_value());
-
+    std::unordered_set<std::string> visited;
     vectis::code::manifest_scanner::Config mc;
     mc.root = camel_root;
     mc.epoch = 1;
     vectis::code::manifest_scanner::scan_manifests(
-        mc, index, collect->visited_paths, vectis::code::manifest_scanner::default_handlers());
-    Scanner::resolve(index, camel_root, collect->per_file_imports);
+        mc, index, visited, vectis::code::manifest_scanner::default_handlers());
 
     std::size_t pom_files = 0;
     for (const auto& f : index.snapshot_files()) {
@@ -252,12 +243,20 @@ TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
             ++pom_files;
         }
     }
-    EXPECT_EQ(pom_files, 691U) << "camel POM count is fixed by the corpus snapshot";
+    // camel ships 691 pom.xml files total, but 8 of them live under
+    // `archetypes/*/src/main/resources/archetype-resources/` — they're
+    // Velocity templates (`## ...` comments, `${X}` outside of valid
+    // XML attribute contexts), not parseable POMs. The handler
+    // correctly skips them with a WARN. Expect 683.
+    EXPECT_EQ(pom_files, 683U) << "camel ships 691 pom.xml files but 8 are archetype templates "
+                                  "(Velocity syntax) that aren't valid XML";
 
     std::size_t parent_internal = 0;
     std::size_t parent_external = 0;
     std::size_t maven_count = 0;
     std::size_t managed_count = 0;
+    std::size_t bom_count = 0;
+    std::size_t module_count = 0;
     for (const auto& d : index.all_dependencies()) {
         if (d.kind == "maven-parent") {
             (d.target_file_id != 0 ? parent_internal : parent_external)++;
@@ -268,10 +267,24 @@ TEST(FixturesTest, OptionalCamelCorpus_SmokesPomCountAndKinds)
         else if (d.kind == "maven-managed") {
             ++managed_count;
         }
+        else if (d.kind == "maven-bom") {
+            ++bom_count;
+        }
+        else if (d.kind == "maven-module") {
+            ++module_count;
+        }
     }
-    EXPECT_EQ(parent_external, 0U)
-        << "camel is fully self-contained for parents; all <parent> refs must resolve internally";
+    // Every camel POM except the root traces to the in-repo
+    // `camel/pom.xml`; the root POM itself parents to Apache's
+    // off-repo `org.apache:apache:37`. So exactly one external parent
+    // is expected.
+    EXPECT_EQ(parent_external, 1U) << "only the root POM's `org.apache:apache:37` parent should "
+                                      "be external; everything else resolves internally";
+    EXPECT_GT(parent_internal, 0U);
     EXPECT_GT(managed_count, 0U) << "camel uses <dependencyManagement> heavily";
+    EXPECT_GT(maven_count, 0U);
+    EXPECT_GT(module_count, 0U);
+    EXPECT_GT(bom_count, 0U) << "camel imports junit-bom and others";
     EXPECT_NE(maven_count, managed_count)
         << "managed vs live dep counts diverge — the kinds must be distinct";
 }

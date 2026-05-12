@@ -205,11 +205,18 @@ void PomHandler::emit_edges(const manifest_scanner::Config& config, CodeIndex& i
         // Empty `parent_relative_path` means `<relativePath/>` was
         // explicitly empty — Maven semantics treat that as "no local
         // file"; we skip the on-disk lookup so the edge stays external.
+        // Maven also treats a directory-shaped `<relativePath>` (i.e.
+        // anything not ending in `pom.xml`) as "append pom.xml", so
+        // `<relativePath>../parent</relativePath>` resolves like
+        // `<relativePath>../parent/pom.xml</relativePath>`.
         std::int64_t parent_file_id = 0;
         const PropertyMap* parent_props = &k_empty_props;
         if (pom.parent_relative_path.has_value() && !pom.parent_relative_path->empty()) {
-            const std::filesystem::path candidate =
+            std::filesystem::path candidate =
                 entry.absolute_path.parent_path() / *pom.parent_relative_path;
+            if (candidate.filename() != "pom.xml") {
+                candidate /= "pom.xml";
+            }
             const std::string parent_rel = normalise_relative(candidate, config.root);
             parent_file_id = index.file_id_for_path(parent_rel);
             if (parent_file_id != 0) {

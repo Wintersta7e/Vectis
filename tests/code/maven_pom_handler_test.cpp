@@ -112,6 +112,48 @@ TEST_F(PomHandlerFixture, ModulesEdgesPointToChildPoms)
     EXPECT_EQ(module_edges, 2);
 }
 
+TEST_F(PomHandlerFixture, DirectoryShapedRelativePathAppendsPomXml)
+{
+    // Maven treats <relativePath>../parent</relativePath> as "look in
+    // ../parent/pom.xml". camel uses this idiom all over the place, so
+    // dropping the implicit /pom.xml would leave hundreds of parents
+    // unresolved.
+    write_pom("parent/pom.xml",
+              R"(<project>
+  <groupId>com.example</groupId>
+  <artifactId>root</artifactId>
+  <version>1.0</version>
+  <packaging>pom</packaging>
+</project>)");
+    write_pom("catalog/pom.xml",
+              R"(<project>
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>root</artifactId>
+    <version>1.0</version>
+    <relativePath>../parent</relativePath>
+  </parent>
+  <artifactId>catalog</artifactId>
+</project>)");
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto root_id = index.file_id_for_path("parent/pom.xml");
+    ASSERT_NE(root_id, 0);
+
+    const auto catalog_deps = deps_of(index, "catalog/pom.xml");
+    bool found = false;
+    for (const auto& d : catalog_deps) {
+        if (d.kind == "maven-parent") {
+            EXPECT_EQ(d.target_file_id, root_id)
+                << "directory-shaped <relativePath> must resolve to parent/pom.xml";
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
 TEST_F(PomHandlerFixture, ExplicitEmptyRelativePathSkipsLocalLookupEvenWhenSiblingExists)
 {
     // <relativePath/> tells Maven "this parent lives in the repo, not
