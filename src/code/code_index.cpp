@@ -17,6 +17,23 @@ namespace vectis::code {
 
 namespace {
 
+/// Cache table PK as a single string: (source_file_id, target_file_id,
+/// kind, import_string) joined with U+001F (US), the only ASCII byte
+/// that cannot legitimately appear in any of the four fields.
+[[nodiscard]] std::string make_dep_key(const Dependency& dep)
+{
+    std::string key;
+    key.reserve(dep.kind.size() + dep.import_string.size() + 24);
+    key.append(std::to_string(dep.source_file_id));
+    key.push_back('\x1f');
+    key.append(std::to_string(dep.target_file_id));
+    key.push_back('\x1f');
+    key.append(dep.kind);
+    key.push_back('\x1f');
+    key.append(dep.import_string);
+    return key;
+}
+
 /// Bit position in `m_language_bits` for a given language. Kept
 /// outside the enum so we can increment without renumbering.
 [[nodiscard]] constexpr std::uint32_t language_bit(Language language) noexcept
@@ -74,8 +91,11 @@ std::int64_t CodeIndex::add_file(FileEntry file)
     file.id = assigned_id;
 
     const std::uint32_t bit = language_bit(file.language);
+    std::string key = file.path_relative.generic_string();
 
+    const std::size_t new_index = m_files.size();
     m_files.push_back(std::move(file));
+    m_index_by_path.emplace(std::move(key), new_index);
     m_file_count.store(m_files.size(), std::memory_order_release);
 
     if (bit != 0U) {
@@ -84,6 +104,107 @@ std::int64_t CodeIndex::add_file(FileEntry file)
 
     m_generation.fetch_add(1, std::memory_order_acq_rel);
     return assigned_id;
+}
+
+std::int64_t CodeIndex::add_or_update_file_by_path(FileEntry file)
+{
+    const std::unique_lock lock(m_mutex);
+
+    const std::string key = file.path_relative.generic_string();
+    const auto it = m_index_by_path.find(key);
+    if (it == m_index_by_path.end()) {
+        // Miss — same path-tracking insert as `add_file`, just inline so
+        // we avoid the recursive lock on `m_mutex`.
+        const std::int64_t assigned_id = m_next_file_id++;
+        file.id = assigned_id;
+        const std::uint32_t bit = language_bit(file.language);
+        const std::size_t new_index = m_files.size();
+        m_files.push_back(std::move(file));
+        m_index_by_path.emplace(key, new_index);
+        m_file_count.store(m_files.size(), std::memory_order_release);
+        if (bit != 0U) {
+            m_language_bits.fetch_or(bit, std::memory_order_acq_rel);
+        }
+        m_generation.fetch_add(1, std::memory_order_acq_rel);
+        return assigned_id;
+    }
+
+    // Hit — keep the existing id and overwrite the mutable fields.
+    const std::size_t idx = it->second;
+    FileEntry& existing = m_files[idx];
+    const std::int64_t reused_id = existing.id;
+    existing.content_hash = std::move(file.content_hash);
+    existing.size = file.size;
+    existing.line_count = file.line_count;
+    existing.language = file.language;
+    existing.last_modified = file.last_modified;
+
+    // Recompute the language bitmask from live files since the upserted
+    // entry may have switched languages and dropped the only bit of its
+    // prior language.
+    std::uint32_t new_bits = 0;
+    for (const auto& f : m_files) {
+        if (f.id != 0) {
+            new_bits |= language_bit(f.language);
+        }
+    }
+    m_language_bits.store(new_bits, std::memory_order_release);
+
+    // Clear this file's symbols. Tombstone via file_id=0 (matches
+    // remove_file's contract) and erase the lookup so future
+    // `symbols_in_file(reused_id)` returns empty.
+    const auto by_file_it = m_by_file.find(reused_id);
+    std::size_t symbols_cleared = 0;
+    if (by_file_it != m_by_file.end()) {
+        for (const std::size_t sym_idx : by_file_it->second) {
+            m_symbols[sym_idx].file_id = 0;
+            ++symbols_cleared;
+        }
+        m_by_file.erase(by_file_it);
+    }
+    if (symbols_cleared > 0) {
+        const auto sc = m_symbol_count.load(std::memory_order_relaxed);
+        m_symbol_count.store(sc >= symbols_cleared ? sc - symbols_cleared : 0,
+                             std::memory_order_release);
+    }
+
+    // Clear outgoing dependencies (edges where this file is `source`).
+    // Incoming edges (where it is `target`) are deliberately preserved
+    // per the upsert contract — they were registered by *other* files
+    // and aren't affected by re-processing this manifest.
+    const auto out_it = m_deps_outgoing.find(reused_id);
+    if (out_it != m_deps_outgoing.end()) {
+        std::size_t cleared_edges = 0;
+        for (const std::size_t dep_idx : out_it->second) {
+            Dependency& d = m_dependencies[dep_idx];
+            const std::int64_t target_id = d.target_file_id;
+            m_dep_keys.erase(make_dep_key(d));
+            // Drop the corresponding entry from m_deps_incoming so the
+            // target's incoming list doesn't keep stale pointers.
+            if (target_id != 0) {
+                const auto in_it = m_deps_incoming.find(target_id);
+                if (in_it != m_deps_incoming.end()) {
+                    auto& list = in_it->second;
+                    list.erase(std::remove(list.begin(), list.end(), dep_idx), list.end());
+                    if (list.empty()) {
+                        m_deps_incoming.erase(in_it);
+                    }
+                }
+            }
+            d.source_file_id = 0;
+            d.target_file_id = 0;
+            ++cleared_edges;
+        }
+        m_deps_outgoing.erase(out_it);
+        if (cleared_edges > 0) {
+            const auto dc = m_dependency_count.load(std::memory_order_relaxed);
+            m_dependency_count.store(dc >= cleared_edges ? dc - cleared_edges : 0,
+                                     std::memory_order_release);
+        }
+    }
+
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
+    return reused_id;
 }
 
 void CodeIndex::add_symbols(std::span<const Symbol> symbols)
@@ -106,27 +227,6 @@ void CodeIndex::add_symbols(std::span<const Symbol> symbols)
     m_symbol_count.store(m_symbols.size(), std::memory_order_release);
     m_generation.fetch_add(1, std::memory_order_acq_rel);
 }
-
-namespace {
-
-/// Cache table PK as a single string: (source_file_id, target_file_id,
-/// kind, import_string) joined with U+001F (US), the only ASCII byte
-/// that cannot legitimately appear in any of the four fields.
-[[nodiscard]] std::string make_dep_key(const Dependency& dep)
-{
-    std::string key;
-    key.reserve(dep.kind.size() + dep.import_string.size() + 24);
-    key.append(std::to_string(dep.source_file_id));
-    key.push_back('\x1f');
-    key.append(std::to_string(dep.target_file_id));
-    key.push_back('\x1f');
-    key.append(dep.kind);
-    key.push_back('\x1f');
-    key.append(dep.import_string);
-    return key;
-}
-
-} // namespace
 
 void CodeIndex::add_dependency(Dependency dep)
 {
@@ -156,6 +256,7 @@ void CodeIndex::remove_file(std::int64_t file_id)
     bool found_file = false;
     for (auto& f : m_files) {
         if (f.id == file_id) {
+            m_index_by_path.erase(f.path_relative.generic_string());
             f.id = 0;
             f.path_relative.clear();
             found_file = true;
@@ -229,6 +330,7 @@ void CodeIndex::clear()
     m_deps_outgoing.clear();
     m_deps_incoming.clear();
     m_dep_keys.clear();
+    m_index_by_path.clear();
     m_file_count.store(0, std::memory_order_release);
     m_symbol_count.store(0, std::memory_order_release);
     m_dependency_count.store(0, std::memory_order_release);
@@ -243,15 +345,19 @@ void CodeIndex::compact()
     const std::unique_lock lock(m_mutex);
 
     // Files — keep entries with non-zero id; preserve order so file
-    // ids and the lookup maps below stay consistent.
+    // ids and the lookup maps below stay consistent. Rebuild
+    // `m_index_by_path` against the new compacted indices.
     std::vector<FileEntry> live_files;
     live_files.reserve(m_files.size());
+    std::unordered_map<std::string, std::size_t> new_index_by_path;
     for (auto& f : m_files) {
         if (f.id != 0) {
+            new_index_by_path.emplace(f.path_relative.generic_string(), live_files.size());
             live_files.push_back(std::move(f));
         }
     }
     m_files = std::move(live_files);
+    m_index_by_path = std::move(new_index_by_path);
 
     // Symbols — drop tombstones and rebuild m_by_file with fresh
     // positional indices into the compacted vector.

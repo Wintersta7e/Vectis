@@ -43,6 +43,19 @@ public:
     /// every `Symbol` attached to this file before `add_symbols`.
     std::int64_t add_file(FileEntry file);
 
+    /// Upsert a file by its relative path. If a file with the same
+    /// `path_relative` already exists in the index, the existing entry's
+    /// content hash, size, line count, language, and last_modified are
+    /// replaced; its symbols and outgoing dependencies (edges where it
+    /// is `source`) are cleared. Returns the (possibly reused) file id.
+    ///
+    /// Incoming edges are preserved — only outgoing edges are dropped.
+    /// Path-based dedup is what makes a warm-cache manifest pass safe:
+    /// re-running the manifest scanner on an unchanged tree finds the
+    /// same pom.xml at the same path and updates in place rather than
+    /// inserting a duplicate.
+    std::int64_t add_or_update_file_by_path(FileEntry file);
+
     /// Append a batch of symbols to the index. All symbols must share
     /// the same `file_id` (caller's responsibility) and that file must
     /// already exist in the index.
@@ -147,6 +160,13 @@ private:
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_outgoing;
     std::unordered_map<std::int64_t, std::vector<std::size_t>> m_deps_incoming;
     std::unordered_set<std::string> m_dep_keys;
+
+    // Path → m_files index for O(1) lookup in
+    // `add_or_update_file_by_path`. Keyed by `path_relative.generic_string()`
+    // so callers don't have to care about OS path separators. Tombstoned
+    // entries are removed by `remove_file`; `compact()` rebuilds the map
+    // alongside the other structures.
+    std::unordered_map<std::string, std::size_t> m_index_by_path;
 
     std::atomic<std::size_t> m_file_count{0};
     std::atomic<std::size_t> m_symbol_count{0};

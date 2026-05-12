@@ -438,4 +438,92 @@ TEST(CodeIndexTest, Compact_AddFileAfterPreservesIdMonotonicity)
     EXPECT_EQ(idx.file_count(), 3U);
 }
 
+TEST(CodeIndexTest, AddOrUpdateFileByPath_AddsNewFileWhenAbsent)
+{
+    CodeIndex idx;
+    const auto id = idx.add_or_update_file_by_path(make_file("pom.xml", Language::MavenPom));
+    EXPECT_EQ(id, 1);
+    EXPECT_EQ(idx.file_count(), 1U);
+    const auto files = idx.snapshot_files();
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0].language, Language::MavenPom);
+}
+
+TEST(CodeIndexTest, AddOrUpdateFileByPath_ReusesExistingId)
+{
+    CodeIndex idx;
+    FileEntry first = make_file("pom.xml", Language::MavenPom);
+    first.content_hash = "hash-v1";
+    first.size = 100;
+    const auto id1 = idx.add_or_update_file_by_path(first);
+
+    FileEntry second = make_file("pom.xml", Language::MavenPom);
+    second.content_hash = "hash-v2";
+    second.size = 200;
+    const auto id2 = idx.add_or_update_file_by_path(second);
+
+    EXPECT_EQ(id1, id2) << "id must be stable across upserts of the same path";
+    EXPECT_EQ(idx.file_count(), 1U);
+
+    const auto files = idx.snapshot_files();
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0].content_hash, "hash-v2");
+    EXPECT_EQ(files[0].size, 200U);
+}
+
+TEST(CodeIndexTest, AddOrUpdateFileByPath_ClearsOutgoingDependencies)
+{
+    CodeIndex idx;
+    const auto pom_id = idx.add_or_update_file_by_path(make_file("pom.xml", Language::MavenPom));
+    const auto child_id = idx.add_file(make_file("child/pom.xml", Language::MavenPom));
+
+    Dependency edge;
+    edge.source_file_id = pom_id;
+    edge.target_file_id = child_id;
+    edge.kind = "maven-module";
+    edge.import_string = "child";
+    idx.add_dependency(edge);
+    ASSERT_EQ(idx.dependencies_of(pom_id).size(), 1U);
+
+    // Upsert the source — its outgoing edges must be cleared.
+    idx.add_or_update_file_by_path(make_file("pom.xml", Language::MavenPom));
+    EXPECT_TRUE(idx.dependencies_of(pom_id).empty());
+    EXPECT_EQ(idx.dependency_count(), 0U);
+}
+
+TEST(CodeIndexTest, AddOrUpdateFileByPath_PreservesIncomingDependencies)
+{
+    CodeIndex idx;
+    const auto target_id = idx.add_or_update_file_by_path(make_file("pom.xml", Language::MavenPom));
+    const auto sibling_id = idx.add_file(make_file("sibling/pom.xml", Language::MavenPom));
+
+    Dependency edge;
+    edge.source_file_id = sibling_id;
+    edge.target_file_id = target_id;
+    edge.kind = "maven-parent";
+    edge.import_string = "../pom.xml";
+    idx.add_dependency(edge);
+    ASSERT_EQ(idx.dependents_of(target_id).size(), 1U);
+
+    // Upsert the target — incoming edges (where it is the target) MUST
+    // survive. Only outgoing edges (source) are cleared.
+    idx.add_or_update_file_by_path(make_file("pom.xml", Language::MavenPom));
+    EXPECT_EQ(idx.dependents_of(target_id).size(), 1U);
+    EXPECT_EQ(idx.dependency_count(), 1U);
+}
+
+TEST(CodeIndexTest, AddOrUpdateFileByPath_ClearsPriorSymbols)
+{
+    CodeIndex idx;
+    const auto id = idx.add_or_update_file_by_path(make_file("pom.xml", Language::MavenPom));
+    const std::array<Symbol, 1> syms = {make_symbol(id, "pom", SymbolKind::Manifest)};
+    idx.add_symbols(syms);
+    ASSERT_EQ(idx.symbols_in_file(id).size(), 1U);
+
+    // Upsert wipes any symbols that had been attached previously; the
+    // handler is expected to re-add them after the upsert if needed.
+    idx.add_or_update_file_by_path(make_file("pom.xml", Language::MavenPom));
+    EXPECT_TRUE(idx.symbols_in_file(id).empty());
+}
+
 } // namespace
