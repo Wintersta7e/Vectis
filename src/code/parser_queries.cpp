@@ -387,6 +387,14 @@ std::string_view query_for(Language language) noexcept
         return k_query_php;
     case Language::Sql:
         return k_query_sql;
+    // Manifest formats are not tree-sitter-parsed; the manifest scanner
+    // handles them directly. Fall through to empty.
+    case Language::MavenPom:
+    case Language::Csproj:
+    case Language::DotNetSolution:
+    case Language::SpringXml:
+    case Language::Properties:
+    case Language::MsbuildProps:
     case Language::Unknown:
         return {};
     }
@@ -419,6 +427,14 @@ std::string_view import_query_for(Language language) noexcept
     // SQL import semantics (FK / table references / sqlplus @includes)
     // haven't been spec'd yet; keep empty until we settle the design.
     case Language::Sql:
+    // Manifest formats route through the manifest scanner — no
+    // tree-sitter import query applies.
+    case Language::MavenPom:
+    case Language::Csproj:
+    case Language::DotNetSolution:
+    case Language::SpringXml:
+    case Language::Properties:
+    case Language::MsbuildProps:
     case Language::Unknown:
         return {};
     }

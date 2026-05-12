@@ -6,12 +6,16 @@
 
 namespace vectis::code {
 
-/// Source languages Vectis knows how to detect and parse.
+/// Source languages and manifest formats Vectis knows about.
 ///
-/// Step 2 ships with twelve built-in grammars wired through CMake:
-/// Python, JavaScript (incl. `.jsx`), TypeScript (incl. `.tsx`), C,
-/// C++, Rust, Java, C#, Go, Ruby, PHP, and SQL. All other languages
-/// fall into `Unknown` and are skipped by the scanner.
+/// The first twelve entries are real source languages parsed by
+/// tree-sitter: Python, JavaScript (incl. `.jsx`), TypeScript (incl.
+/// `.tsx`), C, C++, Rust, Java, C#, Go, Ruby, PHP, and SQL. The last
+/// six are manifest / project-file formats registered by the manifest
+/// scanner (Phase 1-4 of ISSUE-07) — not parsed via tree-sitter but
+/// still tagged on `FileEntry` so digest consumers can tell which
+/// language family a file belongs to. All other extensions fall into
+/// `Unknown` and are skipped by the source scanner.
 enum class Language : std::uint8_t
 {
     Unknown = 0,
@@ -27,11 +31,17 @@ enum class Language : std::uint8_t
     Ruby,
     Php,
     Sql,
+    MavenPom,
+    Csproj,
+    DotNetSolution,
+    SpringXml,
+    Properties,
+    MsbuildProps,
 };
 
-/// Count of real language entries (excludes `Unknown`). Handy for
-/// sizing bitmasks and arrays.
-inline constexpr std::size_t k_language_count = 12;
+/// Count of real entries (excludes `Unknown`). Handy for sizing bitmasks
+/// and arrays. MUST stay in sync with the `Language` enum.
+inline constexpr std::size_t k_language_count = 18;
 
 /// Detect language from a file's extension.
 ///

@@ -26,6 +26,11 @@ enum class SymbolKind : std::uint8_t
     Enum,
     Type,
     Namespace,
+    /// Synthetic per-file symbol attached by the manifest scanner so
+    /// agents can locate the POM / csproj / Spring XML / properties
+    /// file that registered a dependency edge. One Manifest symbol per
+    /// manifest file; carries no signature, members, or complexity.
+    Manifest,
 };
 
 /// Short human-readable name for a symbol kind, used by the symbol
@@ -49,6 +54,8 @@ enum class SymbolKind : std::uint8_t
         return "type";
     case SymbolKind::Namespace:
         return "namespace";
+    case SymbolKind::Manifest:
+        return "manifest";
     case SymbolKind::Unknown:
         return "unknown";
     }
@@ -99,6 +106,9 @@ struct FileEntry
     }
     if (name == "namespace") {
         return SymbolKind::Namespace;
+    }
+    if (name == "manifest") {
+        return SymbolKind::Manifest;
     }
     return SymbolKind::Unknown;
 }

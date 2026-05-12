@@ -152,6 +152,18 @@ std::string_view language_name(Language language) noexcept
         return "PHP";
     case Language::Sql:
         return "SQL";
+    case Language::MavenPom:
+        return "Maven POM";
+    case Language::Csproj:
+        return ".csproj";
+    case Language::DotNetSolution:
+        return ".NET Solution";
+    case Language::SpringXml:
+        return "Spring XML";
+    case Language::Properties:
+        return ".properties";
+    case Language::MsbuildProps:
+        return "MSBuild Props";
     case Language::Unknown:
         return "Unknown";
     }
@@ -195,6 +207,24 @@ Language language_from_name(std::string_view name) noexcept
     }
     if (name == "SQL") {
         return Language::Sql;
+    }
+    if (name == "Maven POM") {
+        return Language::MavenPom;
+    }
+    if (name == ".csproj") {
+        return Language::Csproj;
+    }
+    if (name == ".NET Solution") {
+        return Language::DotNetSolution;
+    }
+    if (name == "Spring XML") {
+        return Language::SpringXml;
+    }
+    if (name == ".properties") {
+        return Language::Properties;
+    }
+    if (name == "MSBuild Props") {
+        return Language::MsbuildProps;
     }
     return Language::Unknown;
 }

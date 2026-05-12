@@ -46,6 +46,18 @@ namespace {
         return 1U << 10U;
     case Language::Sql:
         return 1U << 11U;
+    case Language::MavenPom:
+        return 1U << 12U;
+    case Language::Csproj:
+        return 1U << 13U;
+    case Language::DotNetSolution:
+        return 1U << 14U;
+    case Language::SpringXml:
+        return 1U << 15U;
+    case Language::Properties:
+        return 1U << 16U;
+    case Language::MsbuildProps:
+        return 1U << 17U;
     case Language::Unknown:
         return 0U;
     }

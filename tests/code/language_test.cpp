@@ -8,6 +8,7 @@ namespace {
 
 using vectis::code::detect_language;
 using vectis::code::Language;
+using vectis::code::language_from_name;
 using vectis::code::language_name;
 using vectis::code::refine_language;
 
@@ -75,6 +76,32 @@ TEST(LanguageTest, NameMatchesEnum)
     EXPECT_EQ(language_name(Language::Php), "PHP");
     EXPECT_EQ(language_name(Language::Sql), "SQL");
     EXPECT_EQ(language_name(Language::Unknown), "Unknown");
+}
+
+TEST(LanguageTest, ManifestLanguageNames)
+{
+    EXPECT_EQ(language_name(Language::MavenPom), "Maven POM");
+    EXPECT_EQ(language_name(Language::Csproj), ".csproj");
+    EXPECT_EQ(language_name(Language::DotNetSolution), ".NET Solution");
+    EXPECT_EQ(language_name(Language::SpringXml), "Spring XML");
+    EXPECT_EQ(language_name(Language::Properties), ".properties");
+    EXPECT_EQ(language_name(Language::MsbuildProps), "MSBuild Props");
+}
+
+TEST(LanguageTest, NameRoundTripCoversAllValues)
+{
+    constexpr Language all[] = {
+        Language::Python,    Language::JavaScript, Language::TypeScript,
+        Language::C,         Language::Cpp,        Language::Rust,
+        Language::Java,      Language::CSharp,     Language::Go,
+        Language::Ruby,      Language::Php,        Language::Sql,
+        Language::MavenPom,  Language::Csproj,     Language::DotNetSolution,
+        Language::SpringXml, Language::Properties, Language::MsbuildProps,
+    };
+    for (Language l : all) {
+        EXPECT_EQ(language_from_name(language_name(l)), l)
+            << "round-trip failed for " << language_name(l);
+    }
 }
 
 TEST(LanguageTest, RefineKeepsCppForRealHeaders)
