@@ -530,4 +530,52 @@ TEST(DependencyResolverTest, Ruby_RequireResolvesByLoadPathSuffix)
     EXPECT_TRUE(linked);
 }
 
+TEST(DependencyResolverTest, Java_DottedCandidates_DirectMatchListedFirst)
+{
+    using vectis::code::match_java_dotted_candidates;
+    std::vector<FileEntry> files;
+    files.push_back(FileEntry{
+        .id = 1, .path_relative = "src/main/java/com/x/Foo.java", .language = Language::Java});
+    files.push_back(FileEntry{.id = 2,
+                              .path_relative = "com/x/Foo.java", // direct
+                              .language = Language::Java});
+    files.push_back(
+        FileEntry{.id = 3, .path_relative = "lib/com/x/Foo.java", .language = Language::Java});
+
+    const auto candidates = match_java_dotted_candidates(files, "com.x.Foo");
+
+    ASSERT_EQ(candidates.size(), 3U);
+    EXPECT_EQ(candidates[0], 2); // direct match wins position 0
+    EXPECT_EQ(candidates[1], 1); // suffix matches follow in insertion order
+    EXPECT_EQ(candidates[2], 3);
+}
+
+TEST(DependencyResolverTest, Java_DottedCandidates_NoDirect_SuffixOnly_InsertionOrder)
+{
+    using vectis::code::match_java_dotted_candidates;
+    std::vector<FileEntry> files;
+    files.push_back(FileEntry{
+        .id = 1, .path_relative = "src/main/java/com/x/Foo.java", .language = Language::Java});
+    files.push_back(FileEntry{
+        .id = 2, .path_relative = "src/test/java/com/x/Foo.java", .language = Language::Java});
+
+    const auto candidates = match_java_dotted_candidates(files, "com.x.Foo");
+
+    ASSERT_EQ(candidates.size(), 2U);
+    EXPECT_EQ(candidates[0], 1); // insertion order preserved
+    EXPECT_EQ(candidates[1], 2);
+}
+
+TEST(DependencyResolverTest, Java_DottedCandidates_NoMatch_EmptyVector)
+{
+    using vectis::code::match_java_dotted_candidates;
+    std::vector<FileEntry> files;
+    files.push_back(FileEntry{
+        .id = 1, .path_relative = "src/main/java/com/x/Bar.java", .language = Language::Java});
+
+    const auto candidates = match_java_dotted_candidates(files, "com.x.Foo");
+
+    EXPECT_TRUE(candidates.empty());
+}
+
 } // namespace

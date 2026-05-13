@@ -58,4 +58,21 @@ struct FileImports
 void resolve_all(CodeIndex& index, const std::filesystem::path& project_root,
                  const std::vector<FileImports>& per_file);
 
+/// Return every Java file_id whose `path_relative` could correspond
+/// to the dotted name `dotted` (e.g. `com.example.Foo`). A direct
+/// path-shape match (`com/example/Foo.java`) is listed first;
+/// suffix matches elsewhere in the tree follow in file-insertion
+/// order. Empty vector means no candidate exists.
+///
+/// Two consumers:
+///   * Source-language Java import resolution — picks `candidates[0]`
+///     to preserve first-match-wins.
+///   * Spring `<bean class="X">` (Phase 3b) — exactly one candidate
+///     resolves internally; zero or many resolve as external. The
+///     uniqueness rule is what disambiguates Spring beans across
+///     `src/main/java` and `src/test/java` roots without us reading
+///     `pom.xml` / `build.gradle`.
+[[nodiscard]] std::vector<std::int64_t>
+match_java_dotted_candidates(const std::vector<FileEntry>& files, std::string_view dotted);
+
 } // namespace vectis::code

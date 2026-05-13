@@ -234,23 +234,14 @@ namespace {
 
 /// Java-specific: `foo.bar.Baz` → try `foo/bar/Baz.java` directly, then
 /// fall back to an endswith match so projects rooted under `src/main/java`
-/// still resolve without us parsing build descriptors.
+/// still resolve without us parsing build descriptors. First-match-wins;
+/// Phase 3 Spring callers use `match_java_dotted_candidates` directly when
+/// they need to enforce uniqueness.
 [[nodiscard]] std::int64_t match_java_dotted(const std::vector<FileEntry>& files,
                                              std::string_view dotted)
 {
-    const std::filesystem::path stem = split_dotted(dotted, '.');
-    static const std::vector<std::string_view> k_java_ext = {".java"};
-    const std::int64_t direct = match_by_extension(files, stem, k_java_ext);
-    if (direct != 0) {
-        return direct;
-    }
-    const std::string suffix = stem.generic_string() + ".java";
-    for (const FileEntry& file : files) {
-        if (path_ends_with(file.path_relative, suffix)) {
-            return file.id;
-        }
-    }
-    return 0;
+    const auto candidates = match_java_dotted_candidates(files, dotted);
+    return candidates.empty() ? 0 : candidates.front();
 }
 
 /// PHP-specific: `Slim\Factory\Foo` → try `Slim/Factory/Foo.php`
@@ -573,6 +564,33 @@ build_namespace_index(const std::vector<FileImports>& per_file)
 }
 
 } // namespace
+
+std::vector<std::int64_t> match_java_dotted_candidates(const std::vector<FileEntry>& files,
+                                                       std::string_view dotted)
+{
+    std::vector<std::int64_t> result;
+
+    const std::filesystem::path stem = split_dotted(dotted, '.');
+    static const std::vector<std::string_view> k_java_ext = {".java"};
+
+    // Direct match first so the wrapper's `front()` stays first-match-wins.
+    const std::int64_t direct = match_by_extension(files, stem, k_java_ext);
+    if (direct != 0) {
+        result.push_back(direct);
+    }
+
+    const std::string suffix = stem.generic_string() + ".java";
+    for (const FileEntry& file : files) {
+        if (file.id == direct) {
+            continue;
+        }
+        if (path_ends_with(file.path_relative, suffix)) {
+            result.push_back(file.id);
+        }
+    }
+
+    return result;
+}
 
 void resolve_all(CodeIndex& index, const std::filesystem::path& project_root,
                  const std::vector<FileImports>& per_file)
