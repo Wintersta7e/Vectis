@@ -186,10 +186,14 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
     }
     graph["edges"] = std::move(edges_array);
 
-    // Cycles — full format only; slim stays token-cheap.
+    // Cycle detection feeds two consumers: the full `cycles` array
+    // (paths per cycle, full format only) and the `stats.cycles`
+    // count (always — slim consumers need this to flag tangled
+    // graphs without parsing the array).
+    const std::vector<DependencyCycle> cycles = detect_cycles(index);
     if (include_cycles) {
         nlohmann::json cycles_array = nlohmann::json::array();
-        for (const DependencyCycle& cycle : detect_cycles(index)) {
+        for (const DependencyCycle& cycle : cycles) {
             nlohmann::json cycle_json = nlohmann::json::array();
             for (const std::int64_t id : cycle.file_ids) {
                 cycle_json.push_back(path_for(lookup, id));
@@ -203,6 +207,7 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
     stats["total_edges"] = internal_count + external_count;
     stats["internal_edges"] = internal_count;
     stats["external_edges"] = external_count;
+    stats["cycles"] = cycles.size();
     graph["stats"] = std::move(stats);
 
     return graph;

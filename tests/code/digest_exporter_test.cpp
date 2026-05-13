@@ -380,11 +380,51 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
     // Symbols stay full-format-only to keep slim token-cheap.
     EXPECT_FALSE(parsed.contains("symbols"));
 
-    // Cycles stay full-format-only (rarely useful for first-pass
-    // orientation) but external edges DO show up in slim — agents need
-    // the third-party dep landscape to reason about the project.
+    // The full `cycles` array stays full-format-only (rarely useful
+    // for first-pass orientation), but a `stats.cycles` count is
+    // emitted in both formats so slim consumers can flag tangled
+    // graphs without parsing the array. External edges also show up
+    // in slim — agents need the third-party dep landscape.
     ASSERT_TRUE(parsed.contains("dependency_graph"));
     EXPECT_FALSE(parsed["dependency_graph"].contains("cycles"));
+    ASSERT_TRUE(parsed["dependency_graph"]["stats"].contains("cycles"));
+    EXPECT_TRUE(parsed["dependency_graph"]["stats"]["cycles"].is_number_unsigned());
+}
+
+TEST(DigestExporterTest, BothFormats_StatsCarryCycleCount)
+{
+    // Two files with mutual deps form a single 2-cycle. Both slim and
+    // full digests must surface `stats.cycles == 1`.
+    CodeIndex index;
+    FileEntry a;
+    a.path_relative = "a.cpp";
+    a.language = Language::Cpp;
+    const std::int64_t a_id = index.add_file(std::move(a));
+    FileEntry b;
+    b.path_relative = "b.cpp";
+    b.language = Language::Cpp;
+    const std::int64_t b_id = index.add_file(std::move(b));
+
+    Dependency a_to_b;
+    a_to_b.source_file_id = a_id;
+    a_to_b.target_file_id = b_id;
+    a_to_b.import_string = "b.h";
+    a_to_b.kind = "include";
+    index.add_dependency(std::move(a_to_b));
+    Dependency b_to_a;
+    b_to_a.source_file_id = b_id;
+    b_to_a.target_file_id = a_id;
+    b_to_a.import_string = "a.h";
+    b_to_a.kind = "include";
+    index.add_dependency(std::move(b_to_a));
+
+    for (const DigestFormat fmt : {DigestFormat::SlimJson, DigestFormat::Json}) {
+        const ExportOptions options = make_options(fmt, "/fake/project");
+        const auto parsed = nlohmann::json::parse(build_digest_string(index, options));
+        const auto& stats = parsed["dependency_graph"]["stats"];
+        ASSERT_TRUE(stats.contains("cycles")) << "format=" << static_cast<int>(fmt);
+        EXPECT_EQ(stats["cycles"], 1U) << "format=" << static_cast<int>(fmt);
+    }
 }
 
 TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
