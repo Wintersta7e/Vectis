@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <ranges>
 #include <regex>
@@ -844,6 +845,33 @@ namespace {
     return text;
 }
 
+/// Return a compiled regex for `pattern`, sharing one std::regex per
+/// distinct pattern across all `match?` / `not-match?` invocations on
+/// this thread. Tree-sitter query strings are stable for the query's
+/// lifetime and `std::regex` ECMAScript construction costs ~5-20 µs,
+/// so caching matters on Ruby corpora where a single `^require…` regex
+/// would otherwise recompile on every `call`-with-string-literal node.
+/// Returns nullptr if the pattern is malformed — cached as a failure
+/// so a broken pattern doesn't repeatedly throw.
+[[nodiscard]] const std::regex* compiled_regex_for(std::string_view pattern)
+{
+    thread_local std::unordered_map<std::string_view, std::unique_ptr<std::regex>> cache;
+    if (const auto it = cache.find(pattern); it != cache.end()) {
+        return it->second.get();
+    }
+    std::unique_ptr<std::regex> compiled;
+    try {
+        compiled = std::make_unique<std::regex>(pattern.begin(), pattern.end(),
+                                                std::regex::ECMAScript | std::regex::optimize);
+    }
+    catch (const std::regex_error& e) {
+        VECTIS_LOG_WARN("predicate regex compile failed: pattern='{}' error='{}'", pattern,
+                        e.what());
+    }
+    const auto [it, _] = cache.emplace(pattern, std::move(compiled));
+    return it->second.get();
+}
+
 /// Evaluate tree-sitter `#eq?` / `#not-eq?` / `#match?` / `#not-match?`
 /// predicates against a single match. Tree-sitter's C runtime returns
 /// every structural match unfiltered — predicate steps are advisory and
@@ -857,7 +885,7 @@ namespace {
 /// satisfied so we don't accidentally drop matches when a query gains
 /// a meta-predicate.
 [[nodiscard]] bool match_satisfies_predicates(const TSQuery* query, const TSQueryMatch& match,
-                                              std::string_view content) noexcept
+                                              std::string_view content)
 {
     std::uint32_t step_count = 0;
     const TSQueryPredicateStep* steps =
@@ -925,15 +953,11 @@ namespace {
             std::uint32_t pat_len = 0;
             const char* pat_chars =
                 ts_query_string_value_for_id(query, steps[i + 2].value_id, &pat_len);
-            bool matched = false;
-            try {
-                const std::regex re{std::string{pat_chars, pat_len},
-                                    std::regex::ECMAScript | std::regex::optimize};
-                matched = std::regex_search(subject->begin(), subject->end(), re);
-            }
-            catch (const std::regex_error&) {
+            const std::regex* re = compiled_regex_for({pat_chars, pat_len});
+            if (re == nullptr) {
                 return false;
             }
+            const bool matched = std::regex_search(subject->begin(), subject->end(), *re);
             if ((name == "match?" && !matched) || (name == "not-match?" && matched)) {
                 return false;
             }
