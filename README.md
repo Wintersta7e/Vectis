@@ -24,10 +24,12 @@ pipelines, scripts).
   `.fsproj` / `.vbproj` / `.sln` / `.slnx` with Central Package
   Management resolution via nearest-ancestor `Directory.Packages.props`.
   Spring `<beans>` XML and `.properties` are next.
-- **10 architecture labels** with 0–100 confidence — Monolith,
+- **11 architecture labels** with 0–100 confidence — Monolith,
   Layered, MVC, MVVM, Clean Architecture, Monorepo, Frontend SPA,
-  API Backend, .NET Solution, Library. **Calibrated against a
-  33-project reference corpus at 100% precision/recall per class.**
+  API Backend, .NET Solution, Library, Electron. The first ten are
+  **calibrated against a 33-project reference corpus at 100%
+  precision/recall per class**; Electron is unit-tested but not yet
+  corpus-calibrated.
 - **Per-symbol API surface** — every symbol carries a `visibility`
   field (`public` / `private` / `protected` / `internal`) derived
   from each language's native idiom (Go capitalisation, Python
@@ -116,14 +118,24 @@ Slim JSON for pipelines (excerpt):
       { "source": "src/sample_lib/app.py", "target": "src/sample_lib/scopes/registry.py",
         "kind": "import", "import_ref": "scopes.registry" },
       { "source": "pom.xml", "target": "app/pom.xml",
-        "kind": "maven-module" }
+        "kind": "maven-module" },
+      { "source": "src/sample_lib/app.py", "target": null,
+        "target_external": "requests", "kind": "import" }
     ],
-    "stats": { "internal_edges": 171 }
+    "stats": { "total_edges": 613, "internal_edges": 171, "external_edges": 442, "cycles": 1 }
   },
   "hotspots": [ /* top 10, no body excerpts */ ],
   "project": { "file_count": 85, "symbol_count": 1622 }
 }
 ```
+
+Edge schema: internal edges carry `target` (resolved file path) and
+optionally `import_ref` (the source-level coordinate / FQCN — handy
+for Maven / Spring / NuGet hops where the path alone hides intent).
+External edges set `target: null` and carry `target_external` with
+the unresolved import literal (e.g. `"react"`, `"requests"`).
+`stats.cycles` is the count of dependency cycles detected; the full
+JSON additionally lists each cycle as an array of paths.
 
 A vcpkg path is wired for Windows / portable static builds; see
 `CMakeLists.txt`.
