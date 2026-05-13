@@ -41,6 +41,13 @@ enum class ArchitectureLabel : std::uint8_t
     /// C++ libraries (fmt, spdlog, nlohmann/json with src split out)
     /// and many language-agnostic SDKs.
     Library,
+    /// Electron desktop app: `electron` in `package.json` dependencies
+    /// or an `electron-forge` / `electron-builder` config at the
+    /// project root. Tested before SPA / API-Backend because Electron
+    /// apps routinely carry either shape (renderer/ + handlers/) and
+    /// the more specific Electron label fits better than the generic
+    /// fallback.
+    Electron,
 };
 
 /// Description returned by `detect_architecture`.

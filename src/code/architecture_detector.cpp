@@ -187,6 +187,17 @@ struct PathSignals
 /// implies a frontend single-page app. Nested matches don't count —
 /// backend frameworks ship one-off embedded mini-apps deep in their
 /// tree (e.g. for exception-page rendering).
+/// Root-scoped config files that mark an Electron desktop app even
+/// when `package.json` is absent or doesn't carry the `electron`
+/// dependency directly (e.g. monorepo packages that take the dep
+/// transitively). Both Forge and Builder ship under several script
+/// extensions / serialisation formats — we accept the common ones.
+constexpr std::array<std::string_view, 8> k_electron_root_configs = {
+    "forge.config.js",       "forge.config.ts",       "forge.config.cjs",
+    "forge.config.mjs",      "electron-builder.yml",  "electron-builder.yaml",
+    "electron-builder.json", "electron-builder.toml",
+};
+
 constexpr std::array<std::string_view, 4> k_spa_root_configs = {"next.config.js", "vite.config.ts",
                                                                 "vite.config.js", "nuxt.config.ts"};
 
@@ -962,6 +973,8 @@ std::string_view architecture_label_name(ArchitectureLabel label) noexcept
         return ".NET Solution";
     case ArchitectureLabel::Library:
         return "Library";
+    case ArchitectureLabel::Electron:
+        return "Electron";
     case ArchitectureLabel::Unknown:
         return "Unknown";
     }
@@ -1189,6 +1202,49 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
         return out;
     }
     (void)has_any; // reserved for future layered heuristics
+
+    // --- Electron desktop app --------------------------------------
+    // Run before SPA / ApiBackend: Electron apps often carry one of
+    // those shapes (renderer/ as a Vite/Next SPA, handlers/ for IPC
+    // routing), and the more specific Electron label fits better
+    // than either generic fallback. Signals are filesystem-anchored
+    // to project_root — no full-tree scan. Substring `"electron"`
+    // (with both quotes) keeps the package.json check tight enough
+    // not to fire on `"electron-builder"` / `"react-electron"` keys.
+    const std::string electron_pkg_text =
+        project_root.empty() ? std::string{} : read_text_capped(project_root / "package.json");
+    const bool has_electron_dep =
+        !electron_pkg_text.empty() && electron_pkg_text.find(R"("electron")") != std::string::npos;
+    const bool has_electron_config =
+        !project_root.empty() &&
+        std::ranges::any_of(k_electron_root_configs, [&](std::string_view n) {
+            std::error_code ec;
+            return std::filesystem::exists(project_root / n, ec) && !ec;
+        });
+
+    if (has_electron_dep || has_electron_config) {
+        out.label = ArchitectureLabel::Electron;
+        out.signals = {"layout:electron"};
+        if (has_electron_dep && has_electron_config) {
+            out.reasoning = "electron in package.json dependencies + forge/builder config";
+            out.signals.emplace_back("dep:electron");
+            out.signals.emplace_back("electron-config");
+            out.signals.emplace_back("manifest:package.json");
+            out.confidence = 90;
+        }
+        else if (has_electron_dep) {
+            out.reasoning = "electron in package.json dependencies";
+            out.signals.emplace_back("dep:electron");
+            out.signals.emplace_back("manifest:package.json");
+            out.confidence = 85;
+        }
+        else {
+            out.reasoning = "electron-forge / electron-builder config at project root";
+            out.signals.emplace_back("electron-config");
+            out.confidence = 80;
+        }
+        return out;
+    }
 
     // --- Frontend SPA indicators -----------------------------------
     // src/components/ + src/pages/, or a framework config at the

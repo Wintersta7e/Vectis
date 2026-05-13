@@ -540,6 +540,91 @@ TEST(ArchitectureDetectorTest, ApiBackend_DetectsRoutersDirectory)
     fs::remove_all(root);
 }
 
+TEST(ArchitectureDetectorTest, Electron_DetectsByPackageJsonDependency)
+{
+    const fs::path root = fresh_tmp("electron_pkg");
+    write_file(root / "package.json", R"({
+  "name": "demo-app",
+  "main": "main.js",
+  "devDependencies": { "electron": "^25.0.0" }
+})");
+    write_file(root / "main.js", "const { app } = require('electron');\n");
+    write_file(root / "preload.js", "// preload\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.js", Language::JavaScript);
+    add_file(idx, "preload.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Electron);
+    EXPECT_GE(result.confidence, 80);
+    EXPECT_NE(result.reasoning.find("electron"), std::string::npos);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, Electron_DetectsByForgeConfigWithoutDep)
+{
+    // Monorepo packages can inherit the `electron` dep transitively
+    // from a workspace root. A forge config on its own is sufficient
+    // evidence for the Electron label.
+    const fs::path root = fresh_tmp("electron_forge");
+    write_file(root / "forge.config.js", "module.exports = {};\n");
+    write_file(root / "main.js", "// main\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Electron);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, Electron_BeatsApiBackendWhenHandlersDirPresent)
+{
+    // Regression for the vis-electron-client misfire (2026-05-13):
+    // Electron apps routinely keep IPC routing in `handlers/`, and
+    // the ApiBackend branch used to win.
+    const fs::path root = fresh_tmp("electron_with_handlers");
+    write_file(root / "package.json", R"({"devDependencies": { "electron": "^25.0.0" }})");
+    write_file(root / "main.js", "// main\n");
+    write_file(root / "handlers" / "ipc.js", "// ipc\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.js", Language::JavaScript);
+    add_file(idx, "handlers/ipc.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_EQ(result.label, ArchitectureLabel::Electron);
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, Electron_PackageJsonSubstringDoesNotFireOnElectronBuilderKey)
+{
+    // The `"electron"` (with both quotes) substring must not match
+    // `"electron-builder"` or `"react-electron"` style keys when the
+    // raw `electron` dep isn't present.
+    const fs::path root = fresh_tmp("electron_substring_guard");
+    write_file(root / "package.json", R"({
+  "name": "not-an-electron-app",
+  "devDependencies": {
+    "electron-builder": "^24.0.0",
+    "react-electron-web-view": "^2.0.0"
+  }
+})");
+    write_file(root / "main.js", "// main\n");
+
+    CodeIndex idx;
+    add_file(idx, "main.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Electron);
+
+    fs::remove_all(root);
+}
+
 TEST(ArchitectureDetectorTest, DiskWalk_SkipsHeavyVendorDirs)
 {
     // node_modules, build, .git etc. must not inject directory names
