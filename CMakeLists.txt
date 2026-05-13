@@ -365,6 +365,7 @@ add_library(vectis_core STATIC
     src/code/parser.cpp
     src/code/parser_queries.cpp
     src/code/scanner.cpp
+    src/code/spring_xml.cpp
     src/code/xml_reader.cpp
     src/services/index_engine/index_engine.cpp
     src/services/storage_engine/storage_engine.cpp
