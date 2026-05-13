@@ -5,7 +5,9 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ranges>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -842,9 +844,111 @@ namespace {
     return text;
 }
 
-/// Filter `$('<div>')`-style strings out of JS/TS imports: tree-sitter's
-/// `(#eq? @_func "require")` predicate sometimes lets `$()` calls match
-/// the `require()` rule, so the survivors get a textual check.
+/// Evaluate tree-sitter `#eq?` / `#not-eq?` / `#match?` / `#not-match?`
+/// predicates against a single match. Tree-sitter's C runtime returns
+/// every structural match unfiltered — predicate steps are advisory and
+/// the host has to test them. Without this filter the JS/TS
+/// `(#eq? @_func "require")` constraint would let any single-identifier
+/// call-with-string-literal (e.g. `fetch("https://…")`, `mock("x")`)
+/// through as a `require()` import; same story for Ruby's
+/// `(#match? @_m "^require(_relative)?$")`.
+///
+/// Unknown predicate names (e.g. `set!`, `any-of?`) are treated as
+/// satisfied so we don't accidentally drop matches when a query gains
+/// a meta-predicate.
+[[nodiscard]] bool match_satisfies_predicates(const TSQuery* query, const TSQueryMatch& match,
+                                              std::string_view content) noexcept
+{
+    std::uint32_t step_count = 0;
+    const TSQueryPredicateStep* steps =
+        ts_query_predicates_for_pattern(query, match.pattern_index, &step_count);
+    if (step_count == 0 || steps == nullptr) {
+        return true;
+    }
+
+    const auto step_text =
+        [&](const TSQueryPredicateStep& step) noexcept -> std::optional<std::string_view> {
+        if (step.type == TSQueryPredicateStepTypeString) {
+            std::uint32_t len = 0;
+            const char* chars = ts_query_string_value_for_id(query, step.value_id, &len);
+            return std::string_view{chars, len};
+        }
+        if (step.type == TSQueryPredicateStepTypeCapture) {
+            for (std::uint16_t i = 0; i < match.capture_count; ++i) {
+                if (match.captures[i].index != step.value_id) {
+                    continue;
+                }
+                const std::uint32_t start = ts_node_start_byte(match.captures[i].node);
+                const std::uint32_t end = ts_node_end_byte(match.captures[i].node);
+                if (start > end || end > content.size()) {
+                    return std::nullopt;
+                }
+                return content.substr(start, end - start);
+            }
+            return std::nullopt;
+        }
+        return std::nullopt;
+    };
+
+    std::uint32_t i = 0;
+    while (i < step_count) {
+        std::uint32_t end = i;
+        while (end < step_count && steps[end].type != TSQueryPredicateStepTypeDone) {
+            ++end;
+        }
+        const std::uint32_t arity = end - i;
+        if (arity == 0 || steps[i].type != TSQueryPredicateStepTypeString) {
+            i = end + 1;
+            continue;
+        }
+        std::uint32_t name_len = 0;
+        const char* name_chars = ts_query_string_value_for_id(query, steps[i].value_id, &name_len);
+        const std::string_view name{name_chars, name_len};
+
+        if ((name == "eq?" || name == "not-eq?") && arity == 3) {
+            const auto a = step_text(steps[i + 1]);
+            const auto b = step_text(steps[i + 2]);
+            if (!a || !b) {
+                return false;
+            }
+            const bool equal = (*a == *b);
+            if ((name == "eq?" && !equal) || (name == "not-eq?" && equal)) {
+                return false;
+            }
+        }
+        else if ((name == "match?" || name == "not-match?") && arity == 3 &&
+                 steps[i + 2].type == TSQueryPredicateStepTypeString) {
+            const auto subject = step_text(steps[i + 1]);
+            if (!subject) {
+                return false;
+            }
+            std::uint32_t pat_len = 0;
+            const char* pat_chars =
+                ts_query_string_value_for_id(query, steps[i + 2].value_id, &pat_len);
+            bool matched = false;
+            try {
+                const std::regex re{std::string{pat_chars, pat_len},
+                                    std::regex::ECMAScript | std::regex::optimize};
+                matched = std::regex_search(subject->begin(), subject->end(), re);
+            }
+            catch (const std::regex_error&) {
+                return false;
+            }
+            if ((name == "match?" && !matched) || (name == "not-match?" && matched)) {
+                return false;
+            }
+        }
+
+        i = end + 1;
+    }
+    return true;
+}
+
+/// Filter `$('<div>')`-style strings out of JS/TS imports. With proper
+/// predicate evaluation in place (see `match_satisfies_predicates`),
+/// jQuery's `$()` no longer matches the `require()` rule — but the
+/// textual check stays as defence-in-depth against any future grammar
+/// drift that might let the structural match through again.
 [[nodiscard]] bool looks_like_css_selector(std::string_view s) noexcept
 {
     if (s.empty()) {
@@ -913,6 +1017,9 @@ std::vector<RawImport> TreeSitterParser::extract_imports(Language language,
 
     TSQueryMatch match;
     while (ts_query_cursor_next_match(cursor, &match)) {
+        if (!match_satisfies_predicates(entry.import_query, match, content)) {
+            continue;
+        }
         RawImport raw;
         bool has_path = false;
         bool has_kind = false;

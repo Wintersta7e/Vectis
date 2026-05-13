@@ -490,6 +490,79 @@ var rel = require('./local');
     EXPECT_TRUE(saw_local);
 }
 
+TEST(ParserTest, JavaScriptRequirePredicateFiltersNonRequireCalls)
+{
+    // Tree-sitter returns every structural match, including single-id
+    // `f("…")` calls that don't satisfy the query's `(#eq? @_func
+    // "require")`. The host-side predicate evaluator drops those so
+    // arbitrary callees and string literals (URLs, identifier-like
+    // strings, platform names) don't pollute external imports.
+    auto parser = make_parser();
+    constexpr std::string_view source = R"(
+import realImport from 'real-import';
+const a = require('./real-relative');
+fetch('https://api.example.com/health');
+mock('transferQueueKey');
+setTimeout('linux', 100);
+Buffer('darwin');
+require('valid-bare');
+)";
+    const auto imports = parser->extract_imports(Language::JavaScript, source);
+
+    bool saw_real_import = false;
+    bool saw_real_relative = false;
+    bool saw_valid_bare = false;
+    for (const auto& imp : imports) {
+        EXPECT_NE(imp.import_string, "https://api.example.com/health");
+        EXPECT_NE(imp.import_string, "transferQueueKey");
+        EXPECT_NE(imp.import_string, "linux");
+        EXPECT_NE(imp.import_string, "darwin");
+        if (imp.import_string == "real-import") {
+            saw_real_import = true;
+        }
+        if (imp.import_string == "./real-relative") {
+            saw_real_relative = true;
+        }
+        if (imp.import_string == "valid-bare") {
+            saw_valid_bare = true;
+        }
+    }
+    EXPECT_TRUE(saw_real_import);
+    EXPECT_TRUE(saw_real_relative);
+    EXPECT_TRUE(saw_valid_bare);
+}
+
+TEST(ParserTest, RubyRequirePredicateFiltersNonRequireCalls)
+{
+    // Ruby leans on `(#match? @_m "^require(_relative)?$")` to limit
+    // captures to `require` / `require_relative`. Without predicate
+    // evaluation, any single-identifier call with a string-literal
+    // first argument (e.g. `load 'x'`) would slip through.
+    auto parser = make_parser();
+    constexpr std::string_view source = R"RUBY(
+require 'real-gem'
+require_relative './local'
+load 'transferQueueKey'
+puts 'darwin'
+)RUBY";
+    const auto imports = parser->extract_imports(Language::Ruby, source);
+
+    bool saw_real_gem = false;
+    bool saw_local = false;
+    for (const auto& imp : imports) {
+        EXPECT_NE(imp.import_string, "transferQueueKey");
+        EXPECT_NE(imp.import_string, "darwin");
+        if (imp.import_string == "real-gem") {
+            saw_real_gem = true;
+        }
+        if (imp.import_string == "./local") {
+            saw_local = true;
+        }
+    }
+    EXPECT_TRUE(saw_real_gem);
+    EXPECT_TRUE(saw_local);
+}
+
 TEST(ParserTest, ExtractsRustUseDeclarations)
 {
     auto parser = make_parser();
