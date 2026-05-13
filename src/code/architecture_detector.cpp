@@ -183,10 +183,6 @@ struct PathSignals
     return dotted.size();
 }
 
-/// SPA framework config files: presence at the project root strongly
-/// implies a frontend single-page app. Nested matches don't count —
-/// backend frameworks ship one-off embedded mini-apps deep in their
-/// tree (e.g. for exception-page rendering).
 /// Root-scoped config files that mark an Electron desktop app even
 /// when `package.json` is absent or doesn't carry the `electron`
 /// dependency directly (e.g. monorepo packages that take the dep
@@ -198,6 +194,10 @@ constexpr std::array<std::string_view, 8> k_electron_root_configs = {
     "electron-builder.json", "electron-builder.toml",
 };
 
+/// SPA framework config files: presence at the project root strongly
+/// implies a frontend single-page app. Nested matches don't count —
+/// backend frameworks ship one-off embedded mini-apps deep in their
+/// tree (e.g. for exception-page rendering).
 constexpr std::array<std::string_view, 4> k_spa_root_configs = {"next.config.js", "vite.config.ts",
                                                                 "vite.config.js", "nuxt.config.ts"};
 
@@ -1204,17 +1204,14 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     (void)has_any; // reserved for future layered heuristics
 
     // --- Electron desktop app --------------------------------------
-    // Run before SPA / ApiBackend: Electron apps often carry one of
-    // those shapes (renderer/ as a Vite/Next SPA, handlers/ for IPC
-    // routing), and the more specific Electron label fits better
-    // than either generic fallback. Signals are filesystem-anchored
-    // to project_root — no full-tree scan. Substring `"electron"`
+    // Shared with the SPA branch below: one read_text_capped call,
+    // both substring probes share the buffer. Substring `"electron"`
     // (with both quotes) keeps the package.json check tight enough
     // not to fire on `"electron-builder"` / `"react-electron"` keys.
-    const std::string electron_pkg_text =
+    const std::string pkg_json_text =
         project_root.empty() ? std::string{} : read_text_capped(project_root / "package.json");
     const bool has_electron_dep =
-        !electron_pkg_text.empty() && electron_pkg_text.find(R"("electron")") != std::string::npos;
+        !pkg_json_text.empty() && pkg_json_text.find(R"("electron")") != std::string::npos;
     const bool has_electron_config =
         !project_root.empty() &&
         std::ranges::any_of(k_electron_root_configs, [&](std::string_view n) {
@@ -1262,10 +1259,8 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     // Older React apps (CRA, react-scripts) ship no framework config
     // file; the package.json's `react-scripts` dependency is the
     // closest stable marker. Only Node-runtime projects qualify.
-    const bool has_cra_marker =
-        manifest && manifest->runtime == Runtime::NodeJs && !project_root.empty() &&
-        read_text_capped(project_root / "package.json").find(R"("react-scripts")") !=
-            std::string::npos;
+    const bool has_cra_marker = manifest && manifest->runtime == Runtime::NodeJs &&
+                                pkg_json_text.find(R"("react-scripts")") != std::string::npos;
     if ((has_components && has_pages) || has_spa_config || has_cra_marker) {
         out.label = ArchitectureLabel::FrontendSpa;
         if (has_spa_config) {
