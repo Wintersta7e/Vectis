@@ -16,6 +16,7 @@
 #include "code/dependency_resolver.h"
 #include "code/gitignore.h"
 #include "code/language.h"
+#include "code/path_util.h"
 #include "code/symbol.h"
 #include "code/xml_reader.h"
 #include "core/hash.h"
@@ -101,6 +102,70 @@ void collect_xml_paths(const manifest_scanner::Config& config,
     });
 }
 
+/// Spring `classpath:` / `classpath*:` resource-prefix tokens, kept as
+/// named constants so the prefix string and its length stay in sync.
+constexpr std::string_view k_classpath_prefix = "classpath:";
+constexpr std::string_view k_classpath_wildcard_prefix = "classpath*:";
+
+/// Resolve a Spring `<import resource="...">` value to a file id, or 0
+/// (external) when it cannot be uniquely resolved inside the project.
+/// `classpath:` suffix matches resolve internally only when exactly one
+/// registered Spring XML file matches — mirrors the <bean class> FQCN
+/// uniqueness rule. The path-based forms (leading-slash and relative)
+/// resolve against any indexed file; only `classpath:` is filtered to
+/// Spring XML, since a bare suffix would otherwise be too broad.
+[[nodiscard]] std::int64_t resolve_import_resource(std::string_view resource,
+                                                   const std::filesystem::path& importer_abs,
+                                                   const std::filesystem::path& root,
+                                                   const CodeIndex& index,
+                                                   const std::vector<FileEntry>& files)
+{
+    // ${...} placeholder anywhere — never resolved.
+    if (resource.find("${") != std::string_view::npos) {
+        return 0;
+    }
+    // classpath*: wildcard form — always external.
+    if (resource.starts_with(k_classpath_wildcard_prefix)) {
+        return 0;
+    }
+    // classpath: — strip the prefix, suffix-match across registered
+    // Spring XML files on a path-component boundary.
+    if (resource.starts_with(k_classpath_prefix)) {
+        const std::string_view suffix = resource.substr(k_classpath_prefix.size());
+        if (suffix.empty()) {
+            return 0;
+        }
+        std::int64_t match = 0;
+        std::size_t hits = 0;
+        for (const auto& file : files) {
+            if (file.language != Language::SpringXml) {
+                continue;
+            }
+            const std::string path = file.path_relative.generic_string();
+            if (path.size() < suffix.size() || !path.ends_with(suffix)) {
+                continue;
+            }
+            // The suffix must begin on a path-component boundary, so
+            // "beans.xml" matches ".../beans.xml" but not ".../my-beans.xml".
+            const bool at_component_boundary =
+                path.size() == suffix.size() || path[path.size() - suffix.size() - 1] == '/';
+            if (at_component_boundary) {
+                ++hits;
+                match = file.id;
+            }
+        }
+        return hits == 1 ? match : 0;
+    }
+    if (resource.starts_with('/')) {
+        const std::string rel =
+            normalise_relative(root / std::filesystem::path{resource.substr(1)}, root);
+        return index.file_id_for_path(rel);
+    }
+    const std::string rel =
+        normalise_relative(importer_abs.parent_path() / std::filesystem::path{resource}, root);
+    return index.file_id_for_path(rel);
+}
+
 } // namespace
 
 void SpringXmlHandler::register_files(const manifest_scanner::Config& config, CodeIndex& index,
@@ -183,7 +248,7 @@ void SpringXmlHandler::register_files(const manifest_scanner::Config& config, Co
     }
 }
 
-void SpringXmlHandler::emit_edges(const manifest_scanner::Config& /*config*/, CodeIndex& index)
+void SpringXmlHandler::emit_edges(const manifest_scanner::Config& config, CodeIndex& index)
 {
     const std::vector<FileEntry> files = index.snapshot_files();
     std::vector<vectis::code::Dependency> pending;
@@ -214,6 +279,16 @@ void SpringXmlHandler::emit_edges(const manifest_scanner::Config& /*config*/, Co
                 // target_file_id stays 0 — component-scan is always external.
                 pending.push_back(std::move(edge));
             }
+        }
+
+        for (const auto& import_ref : entry.parsed.imports) {
+            vectis::code::Dependency edge;
+            edge.source_file_id = entry.file_id;
+            edge.kind = "spring-import";
+            edge.import_string = import_ref.resource; // raw resource value, verbatim
+            edge.target_file_id = resolve_import_resource(import_ref.resource, entry.absolute_path,
+                                                          config.root, index, files);
+            pending.push_back(std::move(edge));
         }
     }
 

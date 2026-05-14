@@ -265,4 +265,169 @@ TEST_F(SpringXmlHandlerFixture, ComponentScanCommaSeparatedSplitsToMultipleEdges
     EXPECT_NE(std::find(scan_pkgs.begin(), scan_pkgs.end(), "com.example.repo"), scan_pkgs.end());
 }
 
+TEST_F(SpringXmlHandlerFixture, ImportClasspathResolvesToRegisteredSpringXml)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <import resource="classpath:inner.xml"/>
+</beans>)");
+    write_file("src/main/resources/inner.xml", k_dtd_beans);
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto inner_id = index.file_id_for_path("src/main/resources/inner.xml");
+    ASSERT_NE(inner_id, 0);
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-import") {
+            EXPECT_EQ(d.import_string, "classpath:inner.xml") << "raw resource value preserved";
+            EXPECT_EQ(d.target_file_id, inner_id);
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, ImportClasspathAmbiguousMatchEmitsExternal)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <import resource="classpath:inner.xml"/>
+</beans>)");
+    write_file("src/main/resources/inner.xml", k_dtd_beans);
+    write_file("src/test/resources/inner.xml", k_dtd_beans);
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-import") {
+            EXPECT_EQ(d.target_file_id, 0) << "two suffix matches => ambiguous => external";
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, ImportClasspathStarPatternIsExternal)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <import resource="classpath*:META-INF/spring/*.xml"/>
+</beans>)");
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-import") {
+            EXPECT_EQ(d.target_file_id, 0);
+            EXPECT_EQ(d.import_string, "classpath*:META-INF/spring/*.xml");
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, ImportClasspathMidComponentSuffixEmitsExternal)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <import resource="classpath:context.xml"/>
+</beans>)");
+    // "my-context.xml" ends with "context.xml" but not on a '/' boundary --
+    // a mid-component suffix match must not count as a hit.
+    write_file("src/main/resources/my-context.xml", k_dtd_beans);
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-import") {
+            EXPECT_EQ(d.target_file_id, 0)
+                << "suffix match mid-component (my-context.xml) must not resolve";
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, ImportRelativePathResolves)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <import resource="sub/inner.xml"/>
+</beans>)");
+    write_file("sub/inner.xml", k_dtd_beans);
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto inner_id = index.file_id_for_path("sub/inner.xml");
+    ASSERT_NE(inner_id, 0);
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-import") {
+            EXPECT_EQ(d.target_file_id, inner_id);
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, ImportLeadingSlashResolvesFromRoot)
+{
+    write_file("nested/applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <import resource="/shared/inner.xml"/>
+</beans>)");
+    write_file("shared/inner.xml", k_dtd_beans);
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto inner_id = index.file_id_for_path("shared/inner.xml");
+    ASSERT_NE(inner_id, 0);
+    const auto deps = deps_of(index, "nested/applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-import") {
+            EXPECT_EQ(d.target_file_id, inner_id);
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, ImportPlaceholderIsExternal)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <import resource="${config.dir}/inner.xml"/>
+</beans>)");
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-import") {
+            EXPECT_EQ(d.target_file_id, 0);
+            EXPECT_EQ(d.import_string, "${config.dir}/inner.xml");
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
 } // namespace
