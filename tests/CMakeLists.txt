@@ -30,6 +30,7 @@ add_executable(vectis_tests
     code/parser_test.cpp
     code/scanner_test.cpp
     code/spring_xml_test.cpp
+    code/spring_xml_handler_test.cpp
     code/symbol_test.cpp
     code/xml_reader_test.cpp
     platform/file_io_test.cpp

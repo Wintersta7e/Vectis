@@ -2,6 +2,7 @@
 
 #include "code/dotnet_project_handler.h"
 #include "code/maven_pom_handler.h"
+#include "code/spring_xml_handler.h"
 
 namespace vectis::code::manifest_scanner {
 
@@ -10,6 +11,7 @@ std::vector<std::shared_ptr<Handler>> default_handlers()
     return {
         vectis::code::maven::make_pom_handler(),
         vectis::code::dotnet::make_dotnet_handler(),
+        vectis::code::spring::make_spring_xml_handler(),
     };
 }
 
