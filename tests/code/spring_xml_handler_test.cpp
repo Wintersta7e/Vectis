@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -62,6 +63,18 @@ protected:
     {
         const auto id = index.file_id_for_path(path);
         return id == 0 ? std::vector<Dependency>{} : index.dependencies_of(id);
+    }
+
+    /// Seed a synthetic .java file row so match_java_dotted_candidates
+    /// has something to resolve against (the Spring handler never
+    /// registers .java files itself).
+    static std::int64_t seed_java(CodeIndex& index, const std::string& relative)
+    {
+        FileEntry f;
+        f.path_relative = relative;
+        f.language = Language::Java;
+        f.line_count = 1;
+        return index.add_file(std::move(f));
     }
 
     std::filesystem::path m_root;
@@ -138,6 +151,118 @@ TEST_F(SpringXmlHandlerFixture, NonSpringNamespaceBeansRootIsNotRegistered)
 
     EXPECT_EQ(index.file_id_for_path("other.xml"), 0)
         << "a <beans> root in a foreign namespace with no <bean> child is not Spring XML";
+}
+
+TEST_F(SpringXmlHandlerFixture, BeanClassResolvesToInRepoJavaFile)
+{
+    write_file("applicationContext.xml", k_namespaced_beans); // bean: com.example.svc.MyService
+
+    CodeIndex index;
+    const std::int64_t java_id = seed_java(index, "src/main/java/com/example/svc/MyService.java");
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-bean" && d.import_string == "com.example.svc.MyService") {
+            EXPECT_EQ(d.target_file_id, java_id) << "unique FQCN match must resolve internally";
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, BeanClassUnresolvedEmitsExternal)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <bean class="org.nowhere.Absent"/>
+</beans>)");
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-bean" && d.import_string == "org.nowhere.Absent") {
+            EXPECT_EQ(d.target_file_id, 0);
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, BeanClassMultipleSuffixMatchesEmitsExternal)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <bean class="com.x.Foo"/>
+</beans>)");
+
+    CodeIndex index;
+    seed_java(index, "src/main/java/com/x/Foo.java");
+    seed_java(index, "src/test/java/com/x/Foo.java");
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-bean" && d.import_string == "com.x.Foo") {
+            EXPECT_EQ(d.target_file_id, 0) << "two suffix matches => not unique => external";
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, BeanNestedClassStripsForMatchButKeepsFullFqcn)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans">
+  <bean class="com.x.Outer$Inner"/>
+</beans>)");
+
+    CodeIndex index;
+    const std::int64_t outer_id = seed_java(index, "src/main/java/com/x/Outer.java");
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    bool found = false;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-bean") {
+            EXPECT_EQ(d.import_string, "com.x.Outer$Inner")
+                << "edge keeps the full nested-class FQCN for the agent";
+            EXPECT_EQ(d.target_file_id, outer_id)
+                << "resolution strips $Inner so it matches Outer.java";
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST_F(SpringXmlHandlerFixture, ComponentScanCommaSeparatedSplitsToMultipleEdges)
+{
+    write_file("applicationContext.xml",
+               R"(<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:context="http://www.springframework.org/schema/context">
+  <context:component-scan base-package="com.example.svc, com.example.repo"/>
+</beans>)");
+
+    CodeIndex index;
+    run_handler(index);
+
+    const auto deps = deps_of(index, "applicationContext.xml");
+    std::vector<std::string> scan_pkgs;
+    for (const auto& d : deps) {
+        if (d.kind == "spring-component-scan") {
+            EXPECT_EQ(d.target_file_id, 0) << "component-scan edges are always external";
+            scan_pkgs.push_back(d.import_string);
+        }
+    }
+    ASSERT_EQ(scan_pkgs.size(), 2U);
+    EXPECT_NE(std::find(scan_pkgs.begin(), scan_pkgs.end(), "com.example.svc"), scan_pkgs.end());
+    EXPECT_NE(std::find(scan_pkgs.begin(), scan_pkgs.end(), "com.example.repo"), scan_pkgs.end());
 }
 
 } // namespace

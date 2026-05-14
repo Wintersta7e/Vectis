@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+#include "code/dependency.h"
+#include "code/dependency_resolver.h"
 #include "code/gitignore.h"
 #include "code/language.h"
 #include "code/symbol.h"
@@ -181,10 +183,42 @@ void SpringXmlHandler::register_files(const manifest_scanner::Config& config, Co
     }
 }
 
-void SpringXmlHandler::emit_edges(const manifest_scanner::Config& /*config*/, CodeIndex& /*index*/)
+void SpringXmlHandler::emit_edges(const manifest_scanner::Config& /*config*/, CodeIndex& index)
 {
-    // Edge emission (spring-bean / spring-import / spring-component-scan)
-    // lands in later commits; Phase A registration is self-contained.
+    const std::vector<FileEntry> files = index.snapshot_files();
+    std::vector<vectis::code::Dependency> pending;
+
+    for (const auto& entry : m_entries) {
+        for (const auto& bean : entry.parsed.beans) {
+            vectis::code::Dependency edge;
+            edge.source_file_id = entry.file_id;
+            edge.kind = "spring-bean";
+            edge.import_string = bean.fqcn; // full FQCN, incl. any $Inner suffix
+            // Strip a nested-class suffix before path-shape resolution,
+            // but keep the original FQCN in import_string above.
+            const std::string_view stripped = fqcn_without_nested(bean.fqcn);
+            const std::vector<std::int64_t> candidates =
+                match_java_dotted_candidates(files, stripped);
+            if (candidates.size() == 1) {
+                edge.target_file_id = candidates.front();
+            }
+            pending.push_back(std::move(edge));
+        }
+
+        for (const auto& scan : entry.parsed.scans) {
+            for (const auto& package : scan.packages) {
+                vectis::code::Dependency edge;
+                edge.source_file_id = entry.file_id;
+                edge.kind = "spring-component-scan";
+                edge.import_string = package;
+                // target_file_id stays 0 — component-scan is always external.
+                pending.push_back(std::move(edge));
+            }
+        }
+    }
+
+    std::ranges::sort(pending, dependency_emission_less);
+    index.add_dependencies(pending);
 }
 
 std::shared_ptr<manifest_scanner::Handler> make_spring_xml_handler()
