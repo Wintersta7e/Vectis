@@ -948,6 +948,20 @@ detect_ecosystem_library(const std::filesystem::path& project_root, const Manife
     return std::nullopt;
 }
 
+/// True if the index holds a Spring `<beans>` XML file (Language::
+/// SpringXml) at the project root or under `src/main/resources/`.
+/// Drives the `manifest:applicationContext.xml` architecture signal.
+[[nodiscard]] bool has_spring_context_xml(const CodeIndex& index)
+{
+    return std::ranges::any_of(index.snapshot_files(), [](const FileEntry& file) {
+        if (file.language != Language::SpringXml) {
+            return false;
+        }
+        const std::string rel = file.path_relative.generic_string();
+        return rel.find('/') == std::string::npos || rel.starts_with("src/main/resources/");
+    });
+}
+
 } // namespace
 
 std::string_view architecture_label_name(ArchitectureLabel label) noexcept
@@ -981,9 +995,11 @@ std::string_view architecture_label_name(ArchitectureLabel label) noexcept
     return "Unknown";
 }
 
-ArchitectureDescription
-detect_architecture(const CodeIndex& index, const std::filesystem::path& project_root,
-                    const std::unordered_set<std::string>& exclude_dir_names)
+// TU-local: the public detect_architecture wrapper below is the only
+// entry point, so the manifest signal is never silently skipped.
+static ArchitectureDescription
+detect_architecture_impl(const CodeIndex& index, const std::filesystem::path& project_root,
+                         const std::unordered_set<std::string>& exclude_dir_names)
 {
     ArchitectureDescription out;
 
@@ -1428,6 +1444,17 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     out.reasoning = "no distinctive architectural indicators found";
     // Empty signals — by definition, nothing fired.
     out.confidence = 10;
+    return out;
+}
+
+ArchitectureDescription
+detect_architecture(const CodeIndex& index, const std::filesystem::path& project_root,
+                    const std::unordered_set<std::string>& exclude_dir_names)
+{
+    ArchitectureDescription out = detect_architecture_impl(index, project_root, exclude_dir_names);
+    if (has_spring_context_xml(index)) {
+        out.signals.emplace_back("manifest:applicationContext.xml");
+    }
     return out;
 }
 

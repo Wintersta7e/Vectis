@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +29,14 @@ void add_file(CodeIndex& idx, const std::string& path, Language lang = Language:
     f.language = lang;
     f.line_count = 10;
     idx.add_file(std::move(f));
+}
+
+/// True if `desc` carries the Spring `manifest:applicationContext.xml`
+/// architecture signal — keeps the signal-presence tests one line each.
+[[nodiscard]] bool has_manifest_signal(const ArchitectureDescription& desc)
+{
+    return std::ranges::any_of(
+        desc.signals, [](const std::string& s) { return s == "manifest:applicationContext.xml"; });
 }
 
 TEST(ArchitectureDetectorTest, EmptyProject_IsUnknown)
@@ -1055,6 +1064,52 @@ TEST(ArchitectureDetectorTest, DiskWalk_EmptyExcludeSetFallsBackToCanonicalDefau
     EXPECT_NE(result.label, ArchitectureLabel::Mvc) << "reasoning: " << result.reasoning;
 
     fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, SpringXmlUnderResources_AddsManifestSignal)
+{
+    CodeIndex idx;
+    add_file(idx, "src/main/java/com/example/App.java", Language::Java);
+    add_file(idx, "src/main/resources/applicationContext.xml", Language::SpringXml);
+
+    EXPECT_TRUE(has_manifest_signal(detect_architecture(idx, "/fake")));
+}
+
+TEST(ArchitectureDetectorTest, SpringXmlNestedUnderResources_AddsManifestSignal)
+{
+    CodeIndex idx;
+    add_file(idx, "src/main/java/com/example/App.java", Language::Java);
+    add_file(idx, "src/main/resources/spring/applicationContext.xml", Language::SpringXml);
+
+    EXPECT_TRUE(has_manifest_signal(detect_architecture(idx, "/fake")))
+        << "Spring XML nested below src/main/resources/ must still raise the signal";
+}
+
+TEST(ArchitectureDetectorTest, SpringXmlAtRoot_AddsManifestSignal)
+{
+    CodeIndex idx;
+    add_file(idx, "Main.java", Language::Java);
+    add_file(idx, "beans.xml", Language::SpringXml);
+
+    EXPECT_TRUE(has_manifest_signal(detect_architecture(idx, "/fake")));
+}
+
+TEST(ArchitectureDetectorTest, SpringXmlElsewhere_NoManifestSignal)
+{
+    CodeIndex idx;
+    add_file(idx, "src/main/java/com/example/App.java", Language::Java);
+    add_file(idx, "src/test/resources/test-context.xml", Language::SpringXml);
+
+    EXPECT_FALSE(has_manifest_signal(detect_architecture(idx, "/fake")))
+        << "test-resources Spring XML must not raise the signal";
+}
+
+TEST(ArchitectureDetectorTest, NoSpringXml_NoManifestSignal)
+{
+    CodeIndex idx;
+    add_file(idx, "src/main/java/com/example/App.java", Language::Java);
+
+    EXPECT_FALSE(has_manifest_signal(detect_architecture(idx, "/fake")));
 }
 
 } // namespace
