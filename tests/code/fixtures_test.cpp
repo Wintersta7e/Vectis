@@ -471,4 +471,121 @@ TEST(FixturesTest, SampleDotnetCpm_RegistersFiveManifestsAndResolvesViaCPM)
     EXPECT_EQ(sln_internal, 2U) << "Solution.sln → App.csproj and Lib.csproj";
 }
 
+TEST(FixturesTest, SampleSpringXml_RegistersXmlFilesAndEmitsSpringEdges)
+{
+    CodeIndex index;
+    scan_fixture_full_digest("sample-spring-xml", index);
+
+    // 2 Spring XML files + 1 Java source.
+    EXPECT_EQ(index.file_count(), 3U);
+
+    const auto ctx_id = index.file_id_for_path("applicationContext.xml");
+    const auto inner_id = index.file_id_for_path("inner-ctx.xml");
+    const auto svc_id = index.file_id_for_path("src/main/java/com/example/svc/MyService.java");
+    ASSERT_NE(ctx_id, 0);
+    ASSERT_NE(inner_id, 0) << "DTD-style inner-ctx.xml must be detected as Spring XML";
+    ASSERT_NE(svc_id, 0);
+
+    std::size_t total_ctx_bean_edges = 0;
+    std::size_t bean_internal = 0;
+    std::size_t bean_external = 0;
+    std::size_t import_internal = 0;
+    std::size_t component_scan = 0;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind == "spring-bean" && d.source_file_id == ctx_id) {
+            ++total_ctx_bean_edges;
+            if (d.target_file_id == svc_id && d.import_string == "com.example.svc.MyService") {
+                ++bean_internal;
+            }
+            else if (d.target_file_id == 0) {
+                ++bean_external;
+            }
+        }
+        else if (d.kind == "spring-import" && d.source_file_id == ctx_id &&
+                 d.target_file_id == inner_id) {
+            ++import_internal;
+        }
+        else if (d.kind == "spring-component-scan" && d.source_file_id == ctx_id) {
+            ++component_scan;
+        }
+    }
+    // Partition guard: bean_internal + bean_external must account for every
+    // spring-bean edge, so a bean mis-resolved to a wrong internal file
+    // can't slip through counted in neither bucket.
+    EXPECT_EQ(total_ctx_bean_edges, 3U)
+        << "all three <bean class=...> entries must surface as edges, resolved or not";
+    EXPECT_EQ(bean_internal, 1U) << "com.example.svc.MyService resolves to the scanned .java";
+    EXPECT_EQ(bean_external, 2U) << "the two org.example.external.* beans stay external";
+    EXPECT_EQ(import_internal, 1U) << "classpath:inner-ctx.xml resolves to the sibling XML";
+    EXPECT_EQ(component_scan, 2U) << "comma-separated base-package splits to two edges";
+}
+
+/// Optional smoke test against a real Spring-XML-heavy corpus.
+/// Activated when both `VECTIS_RUN_CORPUS_SMOKE=1` and
+/// `VECTIS_SPRING_CORPUS_DIR=<path>` are set; otherwise skipped so the
+/// suite stays sub-second on default runs. The corpus this was
+/// calibrated against is documented in `docs/plans/` (gitignored).
+TEST(FixturesTest, OptionalSpringCorpus_SmokesBeansFileDetection)
+{
+    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
+    if (enable == nullptr || std::string_view{enable} != "1") {
+        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests";
+    }
+
+    const char* env_dir = std::getenv("VECTIS_SPRING_CORPUS_DIR");
+    if (env_dir == nullptr || *env_dir == '\0') {
+        GTEST_SKIP() << "set VECTIS_SPRING_CORPUS_DIR to point at a Spring-XML corpus";
+    }
+    const std::filesystem::path corpus_root{env_dir};
+    if (!std::filesystem::is_directory(corpus_root)) {
+        GTEST_SKIP() << "VECTIS_SPRING_CORPUS_DIR='" << corpus_root.string()
+                     << "' is not a directory";
+    }
+
+    // Manifest-only run — bypasses the source scanner so the smoke
+    // test stays fast on a large corpus.
+    CodeIndex index;
+    std::unordered_set<std::string> visited;
+    vectis::code::manifest_scanner::Config mc;
+    mc.root = corpus_root;
+    mc.epoch = 1;
+    vectis::code::manifest_scanner::scan_manifests(
+        mc, index, visited, vectis::code::manifest_scanner::default_handlers());
+
+    std::size_t spring_xml_files = 0;
+    for (const auto& f : index.snapshot_files()) {
+        if (f.language == Language::SpringXml) {
+            ++spring_xml_files;
+        }
+    }
+    EXPECT_GT(spring_xml_files, 100U) << "expected a substantial Spring XML corpus";
+
+    std::size_t bean_edges = 0;
+    std::size_t bean_internal = 0;
+    std::size_t import_edges = 0;
+    std::size_t scan_edges = 0;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind == "spring-bean") {
+            ++bean_edges;
+            if (d.target_file_id != 0) {
+                ++bean_internal;
+            }
+        }
+        else if (d.kind == "spring-import") {
+            ++import_edges;
+        }
+        else if (d.kind == "spring-component-scan") {
+            ++scan_edges;
+        }
+    }
+    EXPECT_GT(bean_edges, 0U) << "corpus declares <bean class=...> wiring";
+    EXPECT_GT(import_edges + scan_edges, 0U)
+        << "corpus uses <import resource> and/or <context:component-scan>";
+    // Manifest-only run: no .java files indexed, so bean_internal is
+    // expected to be 0 here — internal resolution is covered by the
+    // SampleSpringXml fixture test, which runs the source scanner too.
+    EXPECT_EQ(bean_internal, 0U)
+        << "manifest-only run indexes no .java targets; internal counts come from the fixture test";
+}
+
 } // namespace

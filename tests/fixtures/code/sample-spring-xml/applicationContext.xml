@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:context="http://www.springframework.org/schema/context">
+    <bean id="myService" class="com.example.svc.MyService"/>
+    <bean id="alpha" class="org.example.external.Alpha"/>
+    <bean class="org.example.external.Beta"/>
+    <import resource="classpath:inner-ctx.xml"/>
+    <context:component-scan base-package="com.example.svc, com.example.repo"/>
+</beans>
