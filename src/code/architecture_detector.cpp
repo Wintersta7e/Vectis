@@ -1042,25 +1042,31 @@ detect_architecture_impl(std::span<const FileEntry> files,
     // with `Cargo.toml [workspace]` IS a Cargo workspace, regardless of
     // directory shape. Accuracy over guesswork.
     if (!project_root.empty()) {
+        // Cargo.toml `[workspace]`, pnpm-workspace.yaml, lerna.json:
+        // the manifest IS the declaration. Top of the rubric (95-100).
         if (auto r = detect_rust_workspace(project_root); r) {
             out.label = ArchitectureLabel::Monorepo;
             out.reasoning = std::move(r->reasoning);
             out.signals = std::move(r->signals);
-            out.confidence = 92;
+            out.confidence = 95;
             return out;
         }
         if (auto r = detect_npm_monorepo(project_root); r) {
             out.label = ArchitectureLabel::Monorepo;
             out.reasoning = std::move(r->reasoning);
             out.signals = std::move(r->signals);
-            out.confidence = 90;
+            out.confidence = 95;
             return out;
         }
+        // pyproject.toml + 2+ src-layout packages — the manifest names
+        // the project but the multi-package shape is *inferred* from
+        // the filesystem rather than declared. Strong corroborated
+        // (85-94) rather than fully deterministic.
         if (auto r = detect_python_packages(project_root, files); r) {
             out.label = ArchitectureLabel::Monorepo;
             out.reasoning = std::move(r->reasoning);
             out.signals = std::move(r->signals);
-            out.confidence = 85;
+            out.confidence = 90;
             return out;
         }
     }

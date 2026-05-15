@@ -71,7 +71,40 @@ struct ArchitectureDescription
     /// matches that produced `label`. Empty for `Unknown` and the
     /// "no source files" case. Emitted in JSON for agents.
     std::vector<std::string> signals;
-    /// 0-100 integer confidence. 0 = pure guess, 100 = unambiguous.
+    /// 0-100 integer confidence in the assigned `label`. Calibrated
+    /// against the following band rubric — `architecture_detector.cpp`
+    /// picks a literal inside the appropriate band:
+    ///
+    ///   95-100  Deterministic manifest declaration. The project's own
+    ///           machine-readable config explicitly states it. E.g.
+    ///           Cargo.toml `[workspace]`, pnpm-workspace.yaml,
+    ///           lerna.json. ~100% reviewer agreement.
+    ///
+    ///   85-94   Strong corroborated signal. Characteristic layout AND
+    ///           a corroborator (matching manifest, framework dep,
+    ///           runtime majority, iconic naming trio like
+    ///           models/views/controllers). ~9/10 agreement.
+    ///
+    ///   75-84   Strong single signal. Either characteristic layout
+    ///           (3+ idiomatic dirs) OR strong manifest/runtime, but
+    ///           not both. ~8/10 agreement.
+    ///
+    ///   60-74   Weak / ambiguous signal. One ambiguous heuristic —
+    ///           framework-only, manifest without layout, partial
+    ///           layering, generic dir name. ~6-7/10 agreement.
+    ///
+    ///   40-59   Default bucket. No distinctive markers but project
+    ///           structure isn't empty; falls through to a generic
+    ///           label (typically Monolith).
+    ///
+    ///   10-39   Fallback / Unknown. A label is returned only because
+    ///           callers expect one. Don't weight downstream
+    ///           decisions on this.
+    ///
+    ///    0-9    No signal. Empty index or genuine no-match.
+    ///
+    /// Tests use `EXPECT_GE`, so values can drift up without failing.
+    /// Audit periodically against this rubric.
     std::uint8_t confidence = 0;
 };
 
