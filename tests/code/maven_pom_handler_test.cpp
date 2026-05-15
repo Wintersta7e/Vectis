@@ -115,9 +115,9 @@ TEST_F(PomHandlerFixture, ModulesEdgesPointToChildPoms)
 TEST_F(PomHandlerFixture, DirectoryShapedRelativePathAppendsPomXml)
 {
     // Maven treats <relativePath>../parent</relativePath> as "look in
-    // ../parent/pom.xml". camel uses this idiom all over the place, so
-    // dropping the implicit /pom.xml would leave hundreds of parents
-    // unresolved.
+    // ../parent/pom.xml". Large real-world multi-module projects rely on
+    // this idiom heavily, so dropping the implicit /pom.xml would leave
+    // hundreds of parents unresolved.
     write_pom("parent/pom.xml",
               R"(<project>
   <groupId>com.example</groupId>

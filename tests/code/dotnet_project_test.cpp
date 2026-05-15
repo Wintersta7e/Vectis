@@ -194,7 +194,7 @@ TEST(ParsePackagesPropsTest, ExtractsPackageVersionEntries)
 
 TEST(ParsePackagesPropsTest, ResolvesPropertyGroupVarInVersionAttribute)
 {
-    // PowerToys CPM file routinely uses <MSTestVersion>3.8.3</...>
+    // Real-world CPM files routinely declare <MSTestVersion>3.8.3</...>
     // followed by Version="$(MSTestVersion)" — must resolve.
     constexpr std::string_view input = R"xml(<Project>
   <PropertyGroup>
