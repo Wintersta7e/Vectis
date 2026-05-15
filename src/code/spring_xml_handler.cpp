@@ -117,7 +117,6 @@ constexpr std::string_view k_classpath_wildcard_prefix = "classpath*:";
 [[nodiscard]] std::int64_t resolve_import_resource(std::string_view resource,
                                                    const std::filesystem::path& importer_abs,
                                                    const std::filesystem::path& root,
-                                                   const CodeIndex& index,
                                                    const std::vector<FileEntry>& files)
 {
     // ${...} placeholder anywhere — never resolved.
@@ -156,14 +155,22 @@ constexpr std::string_view k_classpath_wildcard_prefix = "classpath*:";
         }
         return hits == 1 ? match : 0;
     }
-    if (resource.starts_with('/')) {
-        const std::string rel =
-            normalise_relative(root / std::filesystem::path{resource.substr(1)}, root);
-        return index.file_id_for_path(rel);
+    // Path-resolved branches (absolute + relative): look up by exact
+    // path and language-gate to Spring XML so a non-Spring file at the
+    // resolved path can't masquerade as an import target. Symmetric
+    // with the classpath: branch above. `files` is sorted by path so
+    // the binary search is O(log N).
+    const std::filesystem::path rel_path =
+        resource.starts_with('/')
+            ? std::filesystem::path{normalise_relative(
+                  root / std::filesystem::path{resource.substr(1)}, root)}
+            : std::filesystem::path{normalise_relative(
+                  importer_abs.parent_path() / std::filesystem::path{resource}, root)};
+    const auto it = std::ranges::lower_bound(files, rel_path, {}, &FileEntry::path_relative);
+    if (it == files.end() || it->path_relative != rel_path) {
+        return 0;
     }
-    const std::string rel =
-        normalise_relative(importer_abs.parent_path() / std::filesystem::path{resource}, root);
-    return index.file_id_for_path(rel);
+    return it->language == Language::SpringXml ? it->id : 0;
 }
 
 } // namespace
@@ -193,8 +200,8 @@ void SpringXmlHandler::register_files(const manifest_scanner::Config& config, Co
         }
         const std::string& content = *content_result;
 
-        // Cheap 4 KB pre-filter -- rules out non-Spring XML without paying
-        // the full parse cost.
+        // 4 KB pre-filter — file is already fully read, so this only
+        // saves the XML parse step, not the I/O.
         const std::string_view peek = std::string_view{content}.substr(0, k_peek_bytes);
         if (!maybe_spring_beans(peek)) {
             continue;
@@ -286,7 +293,7 @@ void SpringXmlHandler::emit_edges(const manifest_scanner::Config& config, CodeIn
             edge.kind = "spring-import";
             edge.import_string = import_ref.resource; // raw resource value, verbatim
             edge.target_file_id = resolve_import_resource(import_ref.resource, entry.absolute_path,
-                                                          config.root, index, files);
+                                                          config.root, files);
             pending.push_back(std::move(edge));
         }
     }
