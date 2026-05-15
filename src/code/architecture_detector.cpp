@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
@@ -15,7 +16,9 @@
 #include <vector>
 
 #include "code/code_index.h"
+#include "code/framework_hints.h"
 #include "code/language.h"
+#include "code/manifest_deps.h"
 #include "code/symbol.h"
 
 namespace vectis::code {
@@ -507,6 +510,13 @@ struct ManifestInfo
 {
     Runtime runtime;
     std::string filename;
+    /// Direct dependency names extracted from the manifest, if the
+    /// runtime has an extractor (`manifest_deps::extract_*`). Empty
+    /// for runtimes without one yet, and for manifests that genuinely
+    /// declare no deps. Names are verbatim from the file —
+    /// `"react"`, `"@types/node"`, `"org.springframework.boot:spring-boot-starter-web"`
+    /// — so downstream matchers can pick their own normalisation.
+    std::vector<std::string> runtime_deps;
 };
 
 [[nodiscard]] std::optional<ManifestInfo>
@@ -521,26 +531,42 @@ detect_root_manifest(const std::filesystem::path& project_root)
     // fire — i.e. it's a single-crate Rust project.
     // Order matters: the first match wins. Native build manifests
     // (Makefile, configure.ac, meson.build) are the fallback for C/C++
-    // projects without CMakeLists.txt — redis-style codebases.
-    static constexpr std::array<std::pair<std::string_view, Runtime>, 14> k_manifests = {{
-        {"go.mod", Runtime::Go},
-        {"composer.json", Runtime::Php},
-        {"Gemfile", Runtime::Ruby},
-        {"pyproject.toml", Runtime::Python},
-        {"Cargo.toml", Runtime::Rust},
-        {"pom.xml", Runtime::Java},
-        {"build.gradle.kts", Runtime::Java},
-        {"build.gradle", Runtime::Java},
-        {"package.json", Runtime::NodeJs},
-        {"CMakeLists.txt", Runtime::CCpp},
-        {"setup.py", Runtime::Python},
-        {"meson.build", Runtime::CCpp},
-        {"configure.ac", Runtime::CCpp},
-        {"Makefile", Runtime::CCpp},
+    // projects without CMakeLists.txt — redis-style codebases. The
+    // `extract` pointer is nullptr for ecosystems whose deps live in
+    // the manifest scanner's graph edges (Maven via pom.xml /
+    // build.gradle) or where no extractor exists yet (CMakeLists.txt,
+    // meson.build, configure.ac, Makefile).
+    using DepExtractor = std::vector<std::string> (*)(const std::filesystem::path&);
+    struct ManifestEntry
+    {
+        std::string_view filename;
+        Runtime runtime;
+        DepExtractor extract;
+    };
+    static constexpr std::array<ManifestEntry, 14> k_manifests = {{
+        {"go.mod", Runtime::Go, &deps::extract_go_mod},
+        {"composer.json", Runtime::Php, &deps::extract_composer},
+        {"Gemfile", Runtime::Ruby, &deps::extract_gemfile},
+        {"pyproject.toml", Runtime::Python, &deps::extract_pyproject},
+        {"Cargo.toml", Runtime::Rust, &deps::extract_cargo},
+        {"pom.xml", Runtime::Java, nullptr},
+        {"build.gradle.kts", Runtime::Java, nullptr},
+        {"build.gradle", Runtime::Java, nullptr},
+        {"package.json", Runtime::NodeJs, &deps::extract_npm},
+        {"CMakeLists.txt", Runtime::CCpp, nullptr},
+        {"setup.py", Runtime::Python, &deps::extract_setup_py},
+        {"meson.build", Runtime::CCpp, nullptr},
+        {"configure.ac", Runtime::CCpp, nullptr},
+        {"Makefile", Runtime::CCpp, nullptr},
     }};
-    for (const auto& [filename, runtime] : k_manifests) {
-        if (std::filesystem::exists(project_root / filename, ec) && !ec) {
-            return ManifestInfo{runtime, std::string{filename}};
+    for (const auto& [filename, runtime, extract] : k_manifests) {
+        const auto manifest_path = project_root / filename;
+        if (std::filesystem::exists(manifest_path, ec) && !ec) {
+            std::vector<std::string> runtime_deps;
+            if (extract != nullptr) {
+                runtime_deps = extract(manifest_path);
+            }
+            return ManifestInfo{runtime, std::string{filename}, std::move(runtime_deps)};
         }
         ec.clear();
     }
@@ -560,10 +586,10 @@ detect_root_manifest(const std::filesystem::path& project_root)
         }
         const auto ext = entry.path().extension().string();
         if (ext == ".sln") {
-            return ManifestInfo{Runtime::DotNetSolution, entry.path().filename().string()};
+            return ManifestInfo{Runtime::DotNetSolution, entry.path().filename().string(), {}};
         }
         if (ext == ".csproj") {
-            return ManifestInfo{Runtime::CSharp, entry.path().filename().string()};
+            return ManifestInfo{Runtime::CSharp, entry.path().filename().string(), {}};
         }
     }
     return std::nullopt;
@@ -1020,9 +1046,13 @@ std::string_view architecture_label_name(ArchitectureLabel label) noexcept
 
 // TU-local: the public detect_architecture wrapper below is the only
 // entry point, so the manifest signal is never silently skipped.
+// `manifest` is detected once in the wrapper and threaded through both
+// the impl and the hint emitters — that avoids re-parsing the root
+// manifest a second time inside emit_framework_hint_signals.
 static ArchitectureDescription
 detect_architecture_impl(std::span<const FileEntry> files,
                          const std::filesystem::path& project_root,
+                         const std::optional<ManifestInfo>& manifest,
                          const std::unordered_set<std::string>& exclude_dir_names)
 {
     ArchitectureDescription out;
@@ -1078,7 +1108,6 @@ detect_architecture_impl(std::span<const FileEntry> files,
         exclude_dir_names.empty() ? default_scanner_exclude_dir_names() : exclude_dir_names;
     augment_signals_from_disk(signals, project_root, effective_excludes);
     const auto& segments = signals.segments;
-    const auto manifest = detect_root_manifest(project_root);
     const int runtime_pct = manifest ? runtime_share(signals, manifest->runtime) : 0;
     const std::size_t main_count = signals.main_count;
 
@@ -1477,6 +1506,166 @@ detect_architecture_impl(std::span<const FileEntry> files,
     return out;
 }
 
+namespace {
+
+/// Map the root-manifest filename to the keyword-table ecosystem used
+/// by `hints::match`. Returns nullopt for runtimes whose manifests
+/// don't yet have an extractor (Maven's `build.gradle.kts` would
+/// match, but the framework matcher has no Gradle dep data — empty
+/// table lookups are a no-op so this is safe to over-include).
+[[nodiscard]] std::optional<hints::Ecosystem>
+ecosystem_for_manifest(std::string_view filename) noexcept
+{
+    if (filename == "package.json") {
+        return hints::Ecosystem::Npm;
+    }
+    if (filename == "pyproject.toml" || filename == "setup.py") {
+        return hints::Ecosystem::Pyproject;
+    }
+    if (filename == "Cargo.toml") {
+        return hints::Ecosystem::Cargo;
+    }
+    if (filename == "go.mod") {
+        return hints::Ecosystem::GoMod;
+    }
+    if (filename == "composer.json") {
+        return hints::Ecosystem::Composer;
+    }
+    if (filename == "Gemfile") {
+        return hints::Ecosystem::Gemfile;
+    }
+    if (filename == "pom.xml" || filename == "build.gradle" || filename == "build.gradle.kts") {
+        return hints::Ecosystem::Maven;
+    }
+    if (filename.ends_with(".csproj") || filename.ends_with(".sln") ||
+        filename.ends_with(".slnx") || filename.ends_with(".vbproj") ||
+        filename.ends_with(".fsproj")) {
+        return hints::Ecosystem::DotNet;
+    }
+    return std::nullopt;
+}
+
+/// For Java/.NET ecosystems, augment `deps` with the dep-edge coords
+/// already in the index (the manifest scanner emits `maven*` and
+/// `csproj-package` edges). For other ecosystems the file-based
+/// extractor in `detect_root_manifest` already populated `deps`, so
+/// this is a no-op.
+void augment_with_index_deps(std::vector<std::string>& deps, hints::Ecosystem eco,
+                             const CodeIndex& index)
+{
+    if (eco != hints::Ecosystem::Maven && eco != hints::Ecosystem::DotNet) {
+        return;
+    }
+    for (const auto& edge : index.all_dependencies()) {
+        const bool is_maven_kind =
+            edge.kind == "maven" || edge.kind == "maven-managed" || edge.kind == "maven-bom";
+        const bool is_dotnet_kind = edge.kind == "csproj-package";
+        const bool keep = (eco == hints::Ecosystem::Maven && is_maven_kind) ||
+                          (eco == hints::Ecosystem::DotNet && is_dotnet_kind);
+        if (keep) {
+            deps.push_back(edge.import_string);
+        }
+    }
+}
+
+/// Raise `out.confidence` based on framework-hint corroborators. Each
+/// lift represents the rubric's "strong single → strong corroborated"
+/// transition: a project that fired one signal now has a second (the
+/// framework keyword in the manifest or the annotation tally), so the
+/// confidence climbs into the band the rubric prescribes. Never lifts
+/// above 90 — only deterministic workspace manifests reach 95-100.
+void apply_hint_corroborator_lifts(ArchitectureDescription& out,
+                                   const std::set<hints::FrameworkHint>& fired)
+{
+    const bool web_backend = fired.contains(hints::FrameworkHint::WebBackend);
+    const bool web_frontend = fired.contains(hints::FrameworkHint::WebFrontend);
+
+    const auto lift = [&out](std::uint8_t cap) {
+        // +15-point lift: a corroborator typically moves a value into
+        // the next rubric band (60→75 weak→strong-single,
+        // 75→90 strong-single→strong-corroborated). The cap stops a
+        // low-starting value from over-shooting.
+        constexpr std::uint8_t k_lift_step = 15;
+        out.confidence = static_cast<std::uint8_t>(
+            std::min<int>(cap, static_cast<int>(out.confidence) + k_lift_step));
+    };
+
+    switch (out.label) {
+    case ArchitectureLabel::ApiBackend:
+        if (web_backend) {
+            lift(/*cap=*/90);
+        }
+        break;
+    case ArchitectureLabel::FrontendSpa:
+        if (web_frontend) {
+            lift(/*cap=*/90);
+        }
+        break;
+    case ArchitectureLabel::Layered:
+        if (web_backend) {
+            lift(/*cap=*/85);
+        }
+        break;
+    case ArchitectureLabel::CleanArchitecture:
+        if (web_backend) {
+            lift(/*cap=*/90);
+        }
+        break;
+    default:
+        // Monolith, Library, Monorepo, MVC, MVVM, DotNetSolution,
+        // Electron, Unknown — either already at a high confidence,
+        // covered by a more specific detector, or not hint-
+        // corroborable in a way the rubric permits.
+        break;
+    }
+}
+
+/// Tally framework hints from both the manifest-dep matcher and the
+/// annotation matcher in a single pass. Returns the deduped set; the
+/// caller emits one `hint:*` token per element and consults the same
+/// set when deciding confidence lifts (no string round-trip through
+/// `out.signals`).
+[[nodiscard]] std::set<hints::FrameworkHint>
+collect_framework_hints(const std::optional<ManifestInfo>& manifest, const CodeIndex& index)
+{
+    std::set<hints::FrameworkHint> fired;
+
+    // Manifest-dep path: only meaningful if the root manifest was
+    // detected AND the filename maps to a supported ecosystem.
+    if (manifest) {
+        if (const auto eco = ecosystem_for_manifest(manifest->filename); eco) {
+            std::vector<std::string> all_deps = manifest->runtime_deps;
+            augment_with_index_deps(all_deps, *eco, index);
+            for (const auto h : hints::match(*eco, all_deps)) {
+                fired.insert(h);
+            }
+        }
+    }
+
+    // Annotation path: independent of manifest, fires on the symbol
+    // AST's decorator stream. Uses `for_each_symbol_decorator` so we
+    // never materialise the full symbol snapshot.
+    std::vector<std::string_view> annotations;
+    annotations.reserve(256);
+    index.for_each_symbol_decorator([&](std::string_view dec) { annotations.emplace_back(dec); });
+    // match_annotations takes `span<const string>`; copy the string_view
+    // batch into a string vector for the API. This is the only required
+    // allocation on the annotation path — far cheaper than copying every
+    // Symbol's full payload via snapshot_all_symbols.
+    std::vector<std::string> owned_annotations;
+    owned_annotations.reserve(annotations.size());
+    for (const auto sv : annotations) {
+        owned_annotations.emplace_back(sv);
+    }
+    for (const auto h : hints::match_annotations(owned_annotations)) {
+        fired.insert(h);
+    }
+
+    return fired;
+}
+
+} // namespace
+
 ArchitectureDescription
 detect_architecture(const CodeIndex& index, const std::filesystem::path& project_root,
                     const std::unordered_set<std::string>& exclude_dir_names)
@@ -1486,13 +1675,24 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     const std::vector<FileEntry> files_owned = index.snapshot_files();
     const std::span<const FileEntry> files{files_owned};
 
-    ArchitectureDescription out = detect_architecture_impl(files, project_root, exclude_dir_names);
+    // Detect the root manifest once. Threaded through the impl AND
+    // the hint matcher so we don't re-read + re-parse it.
+    const auto manifest = detect_root_manifest(project_root);
+
+    ArchitectureDescription out =
+        detect_architecture_impl(files, project_root, manifest, exclude_dir_names);
     if (has_spring_context_xml(files)) {
         out.signals.emplace_back("manifest:applicationContext.xml");
     }
     if (has_application_properties(files)) {
         out.signals.emplace_back("manifest:application.properties");
     }
+
+    const auto fired_hints = collect_framework_hints(manifest, index);
+    for (const auto h : fired_hints) {
+        out.signals.emplace_back(hints::hint_signal(h));
+    }
+    apply_hint_corroborator_lifts(out, fired_hints);
     return out;
 }
 

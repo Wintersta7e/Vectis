@@ -355,9 +355,11 @@ add_library(vectis_core STATIC
     src/code/dotnet_project_handler.cpp
     src/code/exclude_dirs.cpp
     src/code/explain.cpp
+    src/code/framework_hints.cpp
     src/code/gitignore.cpp
     src/code/hotspot_detector.cpp
     src/code/language.cpp
+    src/code/manifest_deps.cpp
     src/code/manifest_scanner.cpp
     src/code/maven_pom.cpp
     src/code/maven_pom_handler.cpp

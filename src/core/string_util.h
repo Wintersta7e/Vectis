@@ -46,4 +46,18 @@ namespace vectis::core {
     return count;
 }
 
+/// Trim leading + trailing ASCII whitespace (`' '`, `'\t'`, `'\r'`,
+/// `'\n'`) from a view. Returns an empty view if `s` is all
+/// whitespace. Pure view-slicing — no allocation.
+[[nodiscard]] inline std::string_view trim_ascii(std::string_view s) noexcept
+{
+    constexpr std::string_view k_ws = " \t\r\n";
+    const std::size_t start = s.find_first_not_of(k_ws);
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    const std::size_t end = s.find_last_not_of(k_ws);
+    return s.substr(start, end - start + 1);
+}
+
 } // namespace vectis::core

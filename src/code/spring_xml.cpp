@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/string_util.h"
+
 namespace vectis::code::spring {
 
 namespace {
@@ -38,16 +40,7 @@ constexpr std::string_view k_spring_beans_ns = "http://www.springframework.org/s
         if (end == std::string_view::npos) {
             end = value.size();
         }
-        std::string_view segment = value.substr(start, end - start);
-        // Trim ASCII whitespace (space, tab, CR, LF).
-        while (!segment.empty() && (segment.front() == ' ' || segment.front() == '\t' ||
-                                    segment.front() == '\r' || segment.front() == '\n')) {
-            segment.remove_prefix(1);
-        }
-        while (!segment.empty() && (segment.back() == ' ' || segment.back() == '\t' ||
-                                    segment.back() == '\r' || segment.back() == '\n')) {
-            segment.remove_suffix(1);
-        }
+        const std::string_view segment = vectis::core::trim_ascii(value.substr(start, end - start));
         if (!segment.empty()) {
             out.emplace_back(segment);
         }

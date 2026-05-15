@@ -20,9 +20,11 @@ add_executable(vectis_tests
     code/dotnet_project_test.cpp
     code/explain_test.cpp
     code/fixtures_test.cpp
+    code/framework_hints_test.cpp
     code/gitignore_test.cpp
     code/hotspot_detector_test.cpp
     code/language_test.cpp
+    code/manifest_deps_test.cpp
     code/manifest_scanner_test.cpp
     code/maven_pom_test.cpp
     code/maven_pom_handler_test.cpp

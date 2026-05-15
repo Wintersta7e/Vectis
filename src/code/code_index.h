@@ -103,6 +103,23 @@ public:
     /// needs them all (digest export, cache save).
     [[nodiscard]] std::vector<Symbol> snapshot_all_symbols() const;
 
+    /// Stream every decorator string from every live symbol through
+    /// `fn`. Holds the shared lock for the duration of the walk and
+    /// never copies the underlying `Symbol` / decorator vector — use
+    /// this when the caller only needs the decorator text (annotation
+    /// tally, decorator histogram in the digest) and the full Symbol
+    /// payload would be wasted memory. `fn` receives a `std::string_view`
+    /// that is valid until the next mutation of the index.
+    template <typename F> void for_each_symbol_decorator(F&& fn) const
+    {
+        std::shared_lock lock(m_mutex);
+        for (const auto& sym : m_symbols) {
+            for (const auto& dec : sym.decorators) {
+                fn(std::string_view{dec});
+            }
+        }
+    }
+
     /// Case-insensitive substring search over symbol names. Results
     /// are sorted by name. Capped at `limit` matches to keep the UI
     /// responsive on large indexes.

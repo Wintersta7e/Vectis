@@ -1,7 +1,10 @@
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <span>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -1190,6 +1193,204 @@ TEST(ArchitectureDetectorTest, BothManifestSignals_FireIndependently)
     const auto desc = detect_architecture(idx, "/fake");
     EXPECT_TRUE(has_manifest_signal(desc));
     EXPECT_TRUE(has_application_properties_signal(desc));
+}
+
+// ----- framework-hint corroborator lifts ---------------------------------
+
+namespace {
+
+/// Spin a unique scratch dir for a hint-lift test and write `manifest`
+/// at its root. The directory survives the test body; the caller is
+/// responsible for cleanup via `remove_all`. Used by the lift tests so
+/// each scenario sees its own clean manifest.
+[[nodiscard]] std::filesystem::path make_scratch_with_manifest(std::string_view scenario,
+                                                               std::string_view manifest_filename,
+                                                               std::string_view manifest_body)
+{
+    namespace fs = std::filesystem;
+    static std::uint64_t counter = 0;
+    ++counter;
+    const fs::path root = fs::temp_directory_path() / ("vectis_hint_lift_" + std::string{scenario} +
+                                                       "_" + std::to_string(counter));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+    std::ofstream(root / fs::path{manifest_filename}) << manifest_body;
+    return root;
+}
+
+[[nodiscard]] bool has_signal(const ArchitectureDescription& desc, std::string_view token)
+{
+    return std::ranges::any_of(desc.signals, [&](const std::string& s) { return s == token; });
+}
+
+} // namespace
+
+TEST(ArchitectureDetectorTest, ApiBackendWithFrameworkDep_LiftedToCorroboratedBand)
+{
+    namespace fs = std::filesystem;
+    const auto root = make_scratch_with_manifest("apibackend_express", "package.json", R"({
+        "dependencies": { "express": "^4.18.0" }
+    })");
+
+    CodeIndex idx;
+    add_file(idx, "routes/users.js", Language::JavaScript);
+    add_file(idx, "routes/orders.js", Language::JavaScript);
+    add_file(idx, "main.js", Language::JavaScript);
+
+    const auto desc = detect_architecture(idx, root);
+    EXPECT_EQ(desc.label, ArchitectureLabel::ApiBackend);
+    EXPECT_TRUE(has_signal(desc, "hint:web-backend"));
+    EXPECT_GE(desc.confidence, 85)
+        << "express dep + routes/ dir should land in the strong-corroborated band";
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST(ArchitectureDetectorTest, FrontendSpaWithReactDep_LiftedToCorroboratedBand)
+{
+    namespace fs = std::filesystem;
+    const auto root = make_scratch_with_manifest("frontendspa_react", "package.json", R"({
+        "dependencies": { "react": "^18.0.0", "react-dom": "^18.0.0" }
+    })");
+
+    CodeIndex idx;
+    add_file(idx, "src/components/Button.tsx", Language::TypeScript);
+    add_file(idx, "src/pages/index.tsx", Language::TypeScript);
+
+    const auto desc = detect_architecture(idx, root);
+    EXPECT_EQ(desc.label, ArchitectureLabel::FrontendSpa);
+    EXPECT_TRUE(has_signal(desc, "hint:web-frontend"));
+    EXPECT_EQ(desc.confidence, 90)
+        << "react dep + components+pages dir should reach the corroborated cap";
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST(ArchitectureDetectorTest, LayeredFallbackWithFrameworkDep_LiftedToStrongCorroborated)
+{
+    namespace fs = std::filesystem;
+    const auto root = make_scratch_with_manifest("layered_django", "pyproject.toml", R"(
+[project]
+name = "x"
+dependencies = ["django>=4.0"]
+)");
+
+    CodeIndex idx;
+    add_file(idx, "services/auth.py", Language::Python);
+    add_file(idx, "repository/user.py", Language::Python);
+    add_file(idx, "models/order.py", Language::Python);
+    add_file(idx, "utils/log.py", Language::Python);
+    add_file(idx, "main.py", Language::Python);
+
+    const auto desc = detect_architecture(idx, root);
+    EXPECT_EQ(desc.label, ArchitectureLabel::Layered);
+    EXPECT_TRUE(has_signal(desc, "hint:web-backend"));
+    EXPECT_GE(desc.confidence, 85) << "django + layered dirs corroborate";
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST(ArchitectureDetectorTest, NoFrameworkDep_NoLift)
+{
+    // A package.json with only generic deps must NOT fire a hint and
+    // therefore NOT lift confidence. Guards against false-positive
+    // matches in the keyword tables.
+    namespace fs = std::filesystem;
+    const auto root = make_scratch_with_manifest("apibackend_no_hint", "package.json", R"({
+        "dependencies": { "lodash": "^4.0.0", "axios": "^1.0.0" }
+    })");
+
+    CodeIndex idx;
+    add_file(idx, "routes/users.js", Language::JavaScript);
+    add_file(idx, "main.js", Language::JavaScript);
+
+    const auto desc = detect_architecture(idx, root);
+    EXPECT_EQ(desc.label, ArchitectureLabel::ApiBackend);
+    EXPECT_FALSE(has_signal(desc, "hint:web-backend"))
+        << "lodash and axios shouldn't be in the framework keyword table";
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+namespace {
+
+/// Add a single symbol carrying `decorators` to `idx`. Used by the
+/// annotation-tally tests to populate the decorator stream the
+/// matcher reads from without spinning up a real parser.
+void add_decorated_symbol(CodeIndex& idx, const std::string& path, Language lang,
+                          const std::string& symbol_name,
+                          std::initializer_list<std::string> decorators)
+{
+    FileEntry f;
+    f.path_relative = path;
+    f.language = lang;
+    f.line_count = 10;
+    const std::int64_t fid = idx.add_file(std::move(f));
+
+    vectis::code::Symbol s;
+    s.file_id = fid;
+    s.name = symbol_name;
+    s.kind = vectis::code::SymbolKind::Function;
+    s.line_start = 1;
+    s.line_end = 5;
+    s.decorators.assign(decorators.begin(), decorators.end());
+    const std::array<vectis::code::Symbol, 1> batch{std::move(s)};
+    idx.add_symbols(std::span<const vectis::code::Symbol>(batch.data(), batch.size()));
+}
+
+} // namespace
+
+TEST(ArchitectureDetectorTest, AnnotationTallyFiresWithoutManifestDep)
+{
+    // No manifest at all — the dep-keyword matcher can't fire.
+    // Three RestController-family annotations in the symbol table
+    // should fire hint:web-backend via the annotation matcher
+    // instead, and corroborate the ApiBackend label.
+    CodeIndex idx;
+    add_decorated_symbol(idx, "src/UserController.java", Language::Java, "UserController",
+                         {"RestController", "RequestMapping(\"/api/users\")"});
+    add_decorated_symbol(idx, "src/OrderController.java", Language::Java, "list",
+                         {"GetMapping(\"/orders\")"});
+    add_decorated_symbol(idx, "controllers/auth.js", Language::JavaScript, "auth", {});
+
+    const auto desc = detect_architecture(idx, "/fake-no-manifest");
+    EXPECT_TRUE(has_signal(desc, "hint:web-backend"))
+        << "three matching annotations should fire the corroborator";
+}
+
+TEST(ArchitectureDetectorTest, AnnotationTallyDedupsWithManifestHint)
+{
+    // A project that fires BOTH the manifest matcher (Spring Boot in
+    // deps) and the annotation matcher (route annotations in source)
+    // must still carry exactly one `hint:web-backend` token. Guards
+    // against a future "duplicate hint" regression.
+    namespace fs = std::filesystem;
+    const auto root = make_scratch_with_manifest("annotation_dedup", "package.json", R"({
+        "dependencies": { "express": "^4.18.0" }
+    })");
+
+    CodeIndex idx;
+    add_decorated_symbol(idx, "src/api/users.ts", Language::TypeScript, "list",
+                         {"Controller", "Get(\"/users\")"});
+    add_decorated_symbol(idx, "src/api/auth.ts", Language::TypeScript, "login",
+                         {"Post(\"/login\")"});
+    add_decorated_symbol(idx, "src/api/orders.ts", Language::TypeScript, "create",
+                         {"Post(\"/orders\")"});
+    add_file(idx, "routes/users.js", Language::JavaScript);
+
+    const auto desc = detect_architecture(idx, root);
+    const auto count =
+        static_cast<std::size_t>(std::ranges::count(desc.signals, std::string{"hint:web-backend"}));
+    EXPECT_EQ(count, 1U) << "hint:web-backend must appear exactly once even when both "
+                            "matchers fire";
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
 }
 
 } // namespace
