@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -46,6 +47,40 @@ bool index_has_symbol(const CodeIndex& index, std::string_view name)
     const auto matches = index.search_symbols(name);
     return std::any_of(matches.begin(), matches.end(),
                        [&](const Symbol& s) { return s.name == name; });
+}
+
+/// Outcome of the env-var gating shared by every `Optional*Corpus_*`
+/// smoke test. Either `skip_reason` is populated (caller emits
+/// `GTEST_SKIP()` with the message — gtest's skip macro must be invoked
+/// from the test body, not the helper, because it only short-circuits
+/// the enclosing function) or `corpus_root` holds the validated path.
+struct CorpusEnvResult
+{
+    std::optional<std::string> skip_reason;
+    std::filesystem::path corpus_root;
+};
+
+/// Validate the corpus-smoke env vars: `VECTIS_RUN_CORPUS_SMOKE=1` plus
+/// the per-corpus `dir_env_name`. `dir_kind` is a noun phrase appended
+/// to the skip hint (e.g. "a multi-module POM corpus") so the skip
+/// reason explains what shape of corpus to point at.
+[[nodiscard]] CorpusEnvResult resolve_corpus_dir(const char* dir_env_name,
+                                                 std::string_view dir_kind)
+{
+    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
+    if (enable == nullptr || std::string_view{enable} != "1") {
+        return {"set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests", {}};
+    }
+    const char* env_dir = std::getenv(dir_env_name);
+    if (env_dir == nullptr || *env_dir == '\0') {
+        return {std::string{"set "} + dir_env_name + " to point at " + std::string{dir_kind}, {}};
+    }
+    std::filesystem::path corpus_root{env_dir};
+    if (!std::filesystem::is_directory(corpus_root)) {
+        return {std::string{dir_env_name} + "='" + corpus_root.string() + "' is not a directory",
+                {}};
+    }
+    return {std::nullopt, std::move(corpus_root)};
 }
 
 /// Run a source-only scan of a fixture subdirectory.
@@ -215,20 +250,11 @@ TEST(FixturesTest, SamplePython_ScannerResolvesImports)
 /// calibrated against is documented in `docs/plans/` (gitignored).
 TEST(FixturesTest, OptionalJavaCorpus_SmokesPomCountAndKinds)
 {
-    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
-    if (enable == nullptr || std::string_view{enable} != "1") {
-        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests";
+    auto env = resolve_corpus_dir("VECTIS_JAVA_CORPUS_DIR", "a multi-module POM corpus");
+    if (env.skip_reason) {
+        GTEST_SKIP() << *env.skip_reason;
     }
-
-    const char* env_dir = std::getenv("VECTIS_JAVA_CORPUS_DIR");
-    if (env_dir == nullptr || *env_dir == '\0') {
-        GTEST_SKIP() << "set VECTIS_JAVA_CORPUS_DIR to point at a multi-module POM corpus";
-    }
-    const std::filesystem::path corpus_root{env_dir};
-    if (!std::filesystem::is_directory(corpus_root)) {
-        GTEST_SKIP() << "VECTIS_JAVA_CORPUS_DIR='" << corpus_root.string()
-                     << "' is not a directory";
-    }
+    const std::filesystem::path& corpus_root = env.corpus_root;
 
     // Manifest-only run — bypasses the source scanner entirely so the
     // smoke test stays sub-minute on a 36k-file corpus. The assertions
@@ -292,20 +318,11 @@ TEST(FixturesTest, OptionalJavaCorpus_SmokesPomCountAndKinds)
 /// `docs/plans/` (gitignored).
 TEST(FixturesTest, OptionalDotnetCorpus_SmokesCsprojCountAndCpmResolution)
 {
-    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
-    if (enable == nullptr || std::string_view{enable} != "1") {
-        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests";
+    auto env = resolve_corpus_dir("VECTIS_DOTNET_CORPUS_DIR", "a .NET solution corpus");
+    if (env.skip_reason) {
+        GTEST_SKIP() << *env.skip_reason;
     }
-
-    const char* env_dir = std::getenv("VECTIS_DOTNET_CORPUS_DIR");
-    if (env_dir == nullptr || *env_dir == '\0') {
-        GTEST_SKIP() << "set VECTIS_DOTNET_CORPUS_DIR to point at a .NET solution corpus";
-    }
-    const std::filesystem::path corpus_root{env_dir};
-    if (!std::filesystem::is_directory(corpus_root)) {
-        GTEST_SKIP() << "VECTIS_DOTNET_CORPUS_DIR='" << corpus_root.string()
-                     << "' is not a directory";
-    }
+    const std::filesystem::path& corpus_root = env.corpus_root;
 
     CodeIndex index;
     std::unordered_set<std::string> visited;
@@ -531,20 +548,11 @@ TEST(FixturesTest, SampleSpringXml_RegistersXmlFilesAndEmitsSpringEdges)
 /// calibrated against is documented in `docs/plans/` (gitignored).
 TEST(FixturesTest, OptionalSpringCorpus_SmokesBeansFileDetection)
 {
-    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
-    if (enable == nullptr || std::string_view{enable} != "1") {
-        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests";
+    auto env = resolve_corpus_dir("VECTIS_SPRING_CORPUS_DIR", "a Spring-XML corpus");
+    if (env.skip_reason) {
+        GTEST_SKIP() << *env.skip_reason;
     }
-
-    const char* env_dir = std::getenv("VECTIS_SPRING_CORPUS_DIR");
-    if (env_dir == nullptr || *env_dir == '\0') {
-        GTEST_SKIP() << "set VECTIS_SPRING_CORPUS_DIR to point at a Spring-XML corpus";
-    }
-    const std::filesystem::path corpus_root{env_dir};
-    if (!std::filesystem::is_directory(corpus_root)) {
-        GTEST_SKIP() << "VECTIS_SPRING_CORPUS_DIR='" << corpus_root.string()
-                     << "' is not a directory";
-    }
+    const std::filesystem::path& corpus_root = env.corpus_root;
 
     // Manifest-only run — bypasses the source scanner so the smoke
     // test stays fast on a large corpus.
@@ -652,20 +660,11 @@ TEST(FixturesTest, SampleProperties_RegistersFilesAndEmitsIncludeEdges)
 /// a properties-heavy corpus documented in `docs/plans/` (gitignored).
 TEST(FixturesTest, OptionalPropertiesCorpus_SmokesPropertiesFileDetection)
 {
-    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
-    if (enable == nullptr || std::string_view{enable} != "1") {
-        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests";
+    auto env = resolve_corpus_dir("VECTIS_PROPERTIES_CORPUS_DIR", "a .properties-heavy corpus");
+    if (env.skip_reason) {
+        GTEST_SKIP() << *env.skip_reason;
     }
-
-    const char* env_dir = std::getenv("VECTIS_PROPERTIES_CORPUS_DIR");
-    if (env_dir == nullptr || *env_dir == '\0') {
-        GTEST_SKIP() << "set VECTIS_PROPERTIES_CORPUS_DIR to point at a .properties-heavy corpus";
-    }
-    const std::filesystem::path corpus_root{env_dir};
-    if (!std::filesystem::is_directory(corpus_root)) {
-        GTEST_SKIP() << "VECTIS_PROPERTIES_CORPUS_DIR='" << corpus_root.string()
-                     << "' is not a directory";
-    }
+    const std::filesystem::path& corpus_root = env.corpus_root;
 
     // Default-exclude basenames used by BOTH the manifest scan and
     // the independent filesystem walk below. Sharing the same set
