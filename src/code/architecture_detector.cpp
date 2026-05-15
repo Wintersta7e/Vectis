@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "code/cmake_inspect.h"
 #include "code/code_index.h"
 #include "code/framework_hints.h"
 #include "code/language.h"
@@ -1568,14 +1569,16 @@ void augment_with_index_deps(std::vector<std::string>& deps, hints::Ecosystem ec
     }
 }
 
-/// Raise `out.confidence` based on framework-hint corroborators. Each
-/// lift represents the rubric's "strong single → strong corroborated"
-/// transition: a project that fired one signal now has a second (the
-/// framework keyword in the manifest or the annotation tally), so the
-/// confidence climbs into the band the rubric prescribes. Never lifts
-/// above 90 — only deterministic workspace manifests reach 95-100.
+/// Raise `out.confidence` based on corroborators. Framework hints
+/// (manifest deps and annotation tallies) push web/UI labels into the
+/// strong-corroborated band; a library-only root CMake target pushes
+/// the C/C++ Library label into the deterministic-manifest band
+/// because `add_library` IS the build-system saying "this is a
+/// library". Each lift is capped per the rubric so a weak starting
+/// value can't over-shoot.
 void apply_hint_corroborator_lifts(ArchitectureDescription& out,
-                                   const std::set<hints::FrameworkHint>& fired)
+                                   const std::set<hints::FrameworkHint>& fired,
+                                   std::optional<cmake::RootTargets> cmake_target)
 {
     const bool web_backend = fired.contains(hints::FrameworkHint::WebBackend);
     const bool web_frontend = fired.contains(hints::FrameworkHint::WebFrontend);
@@ -1611,11 +1614,20 @@ void apply_hint_corroborator_lifts(ArchitectureDescription& out,
             lift(/*cap=*/90);
         }
         break;
+    case ArchitectureLabel::Library:
+        // `add_library` at the root with no `add_executable` is a
+        // build-system declaration that this is a library. Lift into
+        // the deterministic-manifest band (95-100) where the rubric
+        // places explicit project-shape declarations.
+        if (cmake_target == cmake::RootTargets::LibraryOnly) {
+            lift(/*cap=*/95);
+        }
+        break;
     default:
-        // Monolith, Library, Monorepo, MVC, MVVM, DotNetSolution,
-        // Electron, Unknown — either already at a high confidence,
-        // covered by a more specific detector, or not hint-
-        // corroborable in a way the rubric permits.
+        // Monolith, Monorepo, MVC, MVVM, DotNetSolution, Electron,
+        // Unknown — either already at a high confidence, covered by
+        // a more specific detector, or not corroborable in a way the
+        // rubric permits.
         break;
     }
 }
@@ -1692,7 +1704,12 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     for (const auto h : fired_hints) {
         out.signals.emplace_back(hints::hint_signal(h));
     }
-    apply_hint_corroborator_lifts(out, fired_hints);
+
+    const auto cmake_target = cmake::inspect_root(project_root);
+    if (cmake_target == cmake::RootTargets::LibraryOnly) {
+        out.signals.emplace_back("cmake:library-only");
+    }
+    apply_hint_corroborator_lifts(out, fired_hints, cmake_target);
     return out;
 }
 

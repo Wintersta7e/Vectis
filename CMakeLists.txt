@@ -345,6 +345,7 @@ add_library(vectis_core STATIC
     src/core/service_registry.cpp
     src/core/task_queue.cpp
     src/code/architecture_detector.cpp
+    src/code/cmake_inspect.cpp
     src/code/code_index.cpp
     src/code/code_index_store.cpp
     src/code/complexity_analyzer.cpp

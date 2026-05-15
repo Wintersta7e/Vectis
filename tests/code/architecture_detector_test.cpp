@@ -1363,6 +1363,53 @@ TEST(ArchitectureDetectorTest, AnnotationTallyFiresWithoutManifestDep)
         << "three matching annotations should fire the corroborator";
 }
 
+TEST(ArchitectureDetectorTest, LibraryCCPPWithCMakeLibraryOnly_LiftsIntoDeterministicBand)
+{
+    // include/+src/+no-entry-point + CMakeLists.txt manifest starts at
+    // 85. `add_library` with no `add_executable` is the build-system
+    // declaring this is a library — lifts to the 95 floor of the
+    // deterministic-manifest band.
+    namespace fs = std::filesystem;
+    const auto root = make_scratch_with_manifest("library_cmake_only", "CMakeLists.txt",
+                                                 "add_library(foo src/foo.cpp src/bar.cpp)\n");
+
+    CodeIndex idx;
+    add_file(idx, "include/foo/foo.h", Language::Cpp);
+    add_file(idx, "src/foo.cpp", Language::Cpp);
+    add_file(idx, "src/bar.cpp", Language::Cpp);
+
+    const auto desc = detect_architecture(idx, root);
+    EXPECT_EQ(desc.label, ArchitectureLabel::Library);
+    EXPECT_TRUE(has_signal(desc, "cmake:library-only"));
+    EXPECT_EQ(desc.confidence, 95);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST(ArchitectureDetectorTest, LibraryCCPPMixedCMakeTargets_NoCMakeLift)
+{
+    // A project that builds both a library and an executable at the
+    // root shouldn't get the cmake:library-only signal. Without that
+    // signal, confidence stays at the layout-only baseline.
+    namespace fs = std::filesystem;
+    const auto root = make_scratch_with_manifest("library_cmake_mixed", "CMakeLists.txt",
+                                                 R"(add_library(foo src/foo.cpp)
+add_executable(foo_cli src/main.cpp)
+)");
+
+    CodeIndex idx;
+    add_file(idx, "include/foo/foo.h", Language::Cpp);
+    add_file(idx, "src/foo.cpp", Language::Cpp);
+
+    const auto desc = detect_architecture(idx, root);
+    EXPECT_FALSE(has_signal(desc, "cmake:library-only"))
+        << "mixed targets must not emit the library-only signal";
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 TEST(ArchitectureDetectorTest, AnnotationTallyDedupsWithManifestHint)
 {
     // A project that fires BOTH the manifest matcher (Spring Boot in
