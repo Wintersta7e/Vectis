@@ -868,7 +868,7 @@ namespace {
         VECTIS_LOG_WARN("predicate regex compile failed: pattern='{}' error='{}'", pattern,
                         e.what());
     }
-    const auto [it, _] = cache.emplace(pattern, std::move(compiled));
+    const auto it = cache.emplace(pattern, std::move(compiled)).first;
     return it->second.get();
 }
 

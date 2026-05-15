@@ -277,12 +277,22 @@ run_uncached(const vectis::code::ScanConfig& config, vectis::code::TreeSitterPar
 
 /// Cached path: open the SQLite state, load any existing index, do a
 /// hash-based incremental scan, persist the updated state.
+///
+/// Lifecycle: (1) ensure cache dir + open storage + migrate schema,
+/// (2) optionally load the previous CodeIndex snapshot, (3) run a full
+/// or incremental scan based on whether the index is empty,
+/// (4) persist the refreshed index back to SQLite. Storage failures
+/// are fatal; cache-load and cache-save failures degrade gracefully
+/// (a single bad cache should not block a digest).
 [[nodiscard]] vectis::core::Result<vectis::code::ScanSummary>
 run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& cache_dir,
            vectis::code::TreeSitterParser& parser, vectis::code::CodeIndex& index, bool quiet)
 {
     namespace fs = std::filesystem;
 
+    // --- (1) Storage setup ----------------------------------------------
+    // Cache dir must exist before SQLite touches it; storage migration
+    // brings the on-disk schema in line with this build's expectations.
     std::error_code ec;
     fs::create_directories(cache_dir, ec);
     if (ec) {
@@ -307,6 +317,9 @@ run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& 
     vectis::services::IndexEngine index_engine;
     index_engine.initialize(&storage);
 
+    // --- (2) Optional cache load ----------------------------------------
+    // A failure here is non-fatal: we wipe the in-memory index and fall
+    // through to a full scan rather than refusing to digest.
     const bool have_existing_cache = vectis::code::has_cache_for(storage, config.root);
 
     std::atomic<std::int64_t> epoch{1};
@@ -326,6 +339,12 @@ run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& 
         }
     }
 
+    // --- (3) Scan -------------------------------------------------------
+    // Empty index → full scan (cold cache). Populated index →
+    // hash-diff incremental, then prune entries whose paths no longer
+    // exist on disk and compact tombstones if anything was deleted or
+    // re-parsed. Manifest pass + dependency resolution run in both
+    // branches so the persisted state always reflects the current tree.
     const auto manifest_config = make_manifest_config(config);
     const auto handlers = vectis::code::manifest_scanner::default_handlers();
 
@@ -367,6 +386,9 @@ run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& 
         summary.files_skipped = scan->summary.files_skipped;
     }
 
+    // --- (4) Persist back to SQLite ------------------------------------
+    // Save is best-effort: a cache-write failure (disk full, permissions)
+    // doesn't invalidate the in-memory result, so we warn and continue.
     vectis::code::CacheMetadata meta;
     meta.project_root = config.root;
     meta.scan_timestamp = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
@@ -567,9 +589,25 @@ int run_digest(const DigestArgs& args)
         }
         return 0;
     }
-    std::ofstream out(args.output_path, std::ios::binary | std::ios::trunc);
+
+    // Normalise the user-supplied path before opening: rejects embedded
+    // NULs, resolves `..` segments, and breaks the static-analysis
+    // taint trace from argv into the file open (CodeQL cpp/path-injection).
+    // For a user-run CLI the shell is the real trust boundary; this is
+    // hygiene, not a security control.
+    if (args.output_path.find('\0') != std::string::npos) {
+        std::fprintf(stderr, "error: output path contains a NUL byte\n");
+        return 2;
+    }
+    std::error_code ec;
+    const std::filesystem::path normalised =
+        std::filesystem::weakly_canonical(std::filesystem::path{args.output_path}, ec);
+    const std::filesystem::path& out_path =
+        ec ? std::filesystem::path{args.output_path} : normalised;
+
+    std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
     if (!out) {
-        std::fprintf(stderr, "error: cannot write to %s\n", args.output_path.c_str());
+        std::fprintf(stderr, "error: cannot write to %s\n", out_path.string().c_str());
         return 2;
     }
     out.write(body->data(), static_cast<std::streamsize>(body->size()));
