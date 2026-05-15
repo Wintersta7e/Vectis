@@ -4,17 +4,21 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 #include <gtest/gtest.h>
 
 #include "code/code_index.h"
 #include "code/dependency.h"
+#include "code/exclude_dirs.h"
 #include "code/language.h"
 #include "code/manifest_scanner.h"
 #include "code/parser.h"
+#include "code/properties_reader.h"
 #include "code/scanner.h"
 #include "code/symbol.h"
 #include "core/task_queue.h"
+#include "platform/file_io.h"
 
 // VECTIS_FIXTURE_DIR is injected as a compile-time definition from
 // tests/CMakeLists.txt so the tests can find `tests/fixtures/code/`
@@ -586,6 +590,194 @@ TEST(FixturesTest, OptionalSpringCorpus_SmokesBeansFileDetection)
     // SampleSpringXml fixture test, which runs the source scanner too.
     EXPECT_EQ(bean_internal, 0U)
         << "manifest-only run indexes no .java targets; internal counts come from the fixture test";
+}
+
+TEST(FixturesTest, SampleProperties_RegistersFilesAndEmitsIncludeEdges)
+{
+    CodeIndex index;
+    scan_fixture_full_digest("sample-properties", index);
+
+    // 6 .properties files (no other file types in the fixture).
+    EXPECT_EQ(index.file_count(), 6U);
+
+    const auto app_id = index.file_id_for_path("application.properties");
+    const auto sec_id = index.file_id_for_path("secrets.properties");
+    const auto audit_id = index.file_id_for_path("audit.properties");
+    const auto audit_extra_id = index.file_id_for_path("audit-extra.properties");
+    const auto msg_id = index.file_id_for_path("Messages_en.properties");
+    const auto weird_id = index.file_id_for_path("weird.properties");
+    ASSERT_NE(app_id, 0);
+    ASSERT_NE(sec_id, 0);
+    ASSERT_NE(audit_id, 0);
+    ASSERT_NE(audit_extra_id, 0);
+    ASSERT_NE(msg_id, 0) << "i18n bundles must still appear in files[]";
+    ASSERT_NE(weird_id, 0);
+
+    std::size_t total_include_edges = 0;
+    std::size_t app_to_secrets = 0;
+    std::size_t log_to_extra = 0;
+    std::size_t edges_from_weird = 0;
+    std::size_t edges_from_messages = 0;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind != "properties-include") {
+            continue;
+        }
+        ++total_include_edges;
+        if (d.source_file_id == app_id && d.target_file_id == sec_id) {
+            ++app_to_secrets;
+        }
+        else if (d.source_file_id == audit_id && d.target_file_id == audit_extra_id) {
+            ++log_to_extra;
+        }
+        else if (d.source_file_id == weird_id) {
+            ++edges_from_weird;
+        }
+        else if (d.source_file_id == msg_id) {
+            ++edges_from_messages;
+        }
+    }
+    EXPECT_EQ(total_include_edges, 2U)
+        << "expected exactly two include edges: application->secrets and audit->audit-extra";
+    EXPECT_EQ(app_to_secrets, 1U);
+    EXPECT_EQ(log_to_extra, 1U);
+    EXPECT_EQ(edges_from_weird, 0U)
+        << "filterParameters.include / dataset.container.version.include must NOT emit edges";
+    EXPECT_EQ(edges_from_messages, 0U) << "i18n bundle must emit no edges";
+}
+
+/// Optional smoke test against a real `.properties`-heavy corpus.
+/// Activated when both `VECTIS_RUN_CORPUS_SMOKE=1` and
+/// `VECTIS_PROPERTIES_CORPUS_DIR=<path>` are set; otherwise skipped so
+/// the suite stays sub-second on default runs. Calibrated against
+/// a properties-heavy corpus documented in `docs/plans/` (gitignored).
+TEST(FixturesTest, OptionalPropertiesCorpus_SmokesPropertiesFileDetection)
+{
+    const char* enable = std::getenv("VECTIS_RUN_CORPUS_SMOKE");
+    if (enable == nullptr || std::string_view{enable} != "1") {
+        GTEST_SKIP() << "set VECTIS_RUN_CORPUS_SMOKE=1 to run corpus smoke tests";
+    }
+
+    const char* env_dir = std::getenv("VECTIS_PROPERTIES_CORPUS_DIR");
+    if (env_dir == nullptr || *env_dir == '\0') {
+        GTEST_SKIP() << "set VECTIS_PROPERTIES_CORPUS_DIR to point at a .properties-heavy corpus";
+    }
+    const std::filesystem::path corpus_root{env_dir};
+    if (!std::filesystem::is_directory(corpus_root)) {
+        GTEST_SKIP() << "VECTIS_PROPERTIES_CORPUS_DIR='" << corpus_root.string()
+                     << "' is not a directory";
+    }
+
+    // Default-exclude basenames used by BOTH the manifest scan and
+    // the independent filesystem walk below. Sharing the same set
+    // keeps the two counts apples-to-apples — a corpus with
+    // `.properties` under `target` / `build` / `node_modules` is
+    // skipped consistently in both, so the equality assertion holds.
+    const auto& default_excludes = vectis::code::default_scanner_exclude_dir_names();
+
+    // Manifest-only run — bypasses the source scanner for speed.
+    CodeIndex index;
+    std::unordered_set<std::string> visited;
+    vectis::code::manifest_scanner::Config mc;
+    mc.root = corpus_root;
+    mc.epoch = 1;
+    mc.exclude_dir_names = default_excludes;
+    vectis::code::manifest_scanner::scan_manifests(
+        mc, index, visited, vectis::code::manifest_scanner::default_handlers());
+
+    // Independent recursive `find`-equivalent count of .properties
+    // files in the corpus, respecting the same default-exclude
+    // basenames the manifest scanner uses (apples-to-apples). Spec
+    // assertion: the index's Properties count must MATCH this count
+    // exactly — every physical file should be registered.
+    std::size_t physical_count = 0;
+    {
+        std::error_code walk_ec;
+        using DirIter = std::filesystem::recursive_directory_iterator;
+        const auto walk_options = std::filesystem::directory_options::skip_permission_denied;
+        DirIter walk_it{corpus_root, walk_options, walk_ec};
+        const DirIter walk_end{};
+        while (walk_it != walk_end) {
+            const auto& walk_entry = *walk_it;
+            if (walk_entry.is_directory(walk_ec) && !walk_ec) {
+                if (default_excludes.contains(walk_entry.path().filename().string())) {
+                    walk_it.disable_recursion_pending();
+                }
+            }
+            else if (walk_entry.is_regular_file(walk_ec) && !walk_ec &&
+                     walk_entry.path().extension() == ".properties") {
+                ++physical_count;
+            }
+            walk_ec.clear();
+            walk_it.increment(walk_ec);
+            if (walk_ec) {
+                // Fail loudly rather than silently undercounting — a
+                // partial walk would make `properties_files ==
+                // physical_count` pass on low-vs-low and hide a real
+                // coverage drop.
+                ADD_FAILURE() << "directory iteration aborted mid-walk: " << walk_ec.message();
+                walk_ec.clear();
+                break;
+            }
+        }
+    }
+
+    std::size_t properties_files = 0;
+    for (const auto& f : index.snapshot_files()) {
+        if (f.language == Language::Properties) {
+            ++properties_files;
+        }
+    }
+    EXPECT_EQ(properties_files, physical_count)
+        << "every .properties file under the corpus (respecting default excludes) "
+           "must be registered with Language::Properties — index count must match "
+           "the independent filesystem walk count";
+
+    // Per-edge source-key validation: every properties-include edge
+    // must originate from an exact `spring.config.import` OR `include`
+    // key in the source file, with the edge's import_string equal to
+    // that key's value. A regression to substring matching (e.g.
+    // emitting an edge from `filterParameters.include=foo`) would
+    // fail this assertion immediately because the source file does
+    // not contain an exact-key entry with value `foo`.
+    const auto files_snapshot = index.snapshot_files();
+    std::size_t include_edges = 0;
+    std::size_t spurious_edges = 0;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind != "properties-include") {
+            continue;
+        }
+        ++include_edges;
+        const vectis::code::FileEntry* source = nullptr;
+        for (const auto& f : files_snapshot) {
+            if (f.id == d.source_file_id) {
+                source = &f;
+                break;
+            }
+        }
+        if (source == nullptr) {
+            ++spurious_edges;
+            continue;
+        }
+        auto content_result = vectis::platform::read_file(corpus_root / source->path_relative);
+        if (!content_result) {
+            ++spurious_edges;
+            continue;
+        }
+        const auto entries = vectis::code::properties::parse_properties(*content_result);
+        const bool legit = std::ranges::any_of(entries, [&](const auto& kv) {
+            return (kv.key == "spring.config.import" || kv.key == "include") &&
+                   kv.value == d.import_string;
+        });
+        if (!legit) {
+            ++spurious_edges;
+        }
+    }
+    EXPECT_EQ(spurious_edges, 0U) << "every properties-include edge must come from an exact "
+                                     "spring.config.import / include key with matching value "
+                                     "(substring matches and value mismatches are forbidden)";
+    EXPECT_LT(include_edges, 50U)
+        << "exact-key matching must keep include edges sparse on the calibration corpus "
+           "(<50 per spec); an explosion suggests substring matching has crept back in";
 }
 
 } // namespace

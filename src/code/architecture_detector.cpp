@@ -962,6 +962,29 @@ detect_ecosystem_library(const std::filesystem::path& project_root, const Manife
     });
 }
 
+/// True if the index holds an `application.properties` file (Java
+/// properties with that exact basename) at the project root or under
+/// `src/main/resources/`. Drives the `manifest:application.properties`
+/// architecture signal. The basename is intentionally specific — only
+/// Spring Boot's canonical config file raises the signal; arbitrary
+/// `.properties` files (logging configs, i18n bundles, etc.) do not.
+[[nodiscard]] bool has_application_properties(const CodeIndex& index)
+{
+    return std::ranges::any_of(index.snapshot_files(), [](const FileEntry& file) {
+        if (file.language != Language::Properties) {
+            return false;
+        }
+        if (file.path_relative.filename() != "application.properties") {
+            return false;
+        }
+        const std::string rel = file.path_relative.generic_string();
+        if (rel.find('/') == std::string::npos) {
+            return true; // root-level
+        }
+        return rel.starts_with("src/main/resources/");
+    });
+}
+
 } // namespace
 
 std::string_view architecture_label_name(ArchitectureLabel label) noexcept
@@ -1454,6 +1477,9 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     ArchitectureDescription out = detect_architecture_impl(index, project_root, exclude_dir_names);
     if (has_spring_context_xml(index)) {
         out.signals.emplace_back("manifest:applicationContext.xml");
+    }
+    if (has_application_properties(index)) {
+        out.signals.emplace_back("manifest:application.properties");
     }
     return out;
 }

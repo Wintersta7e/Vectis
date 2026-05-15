@@ -28,6 +28,8 @@ add_executable(vectis_tests
     code/maven_pom_handler_test.cpp
     code/pagerank_test.cpp
     code/parser_test.cpp
+    code/properties_handler_test.cpp
+    code/properties_reader_test.cpp
     code/scanner_test.cpp
     code/spring_xml_test.cpp
     code/spring_xml_handler_test.cpp

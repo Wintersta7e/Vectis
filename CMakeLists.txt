@@ -364,6 +364,8 @@ add_library(vectis_core STATIC
     src/code/pagerank.cpp
     src/code/parser.cpp
     src/code/parser_queries.cpp
+    src/code/properties_handler.cpp
+    src/code/properties_reader.cpp
     src/code/scanner.cpp
     src/code/spring_xml.cpp
     src/code/spring_xml_handler.cpp

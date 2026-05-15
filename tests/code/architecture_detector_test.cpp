@@ -39,6 +39,13 @@ void add_file(CodeIndex& idx, const std::string& path, Language lang = Language:
         desc.signals, [](const std::string& s) { return s == "manifest:applicationContext.xml"; });
 }
 
+/// True if `desc` carries the `manifest:application.properties` signal.
+[[nodiscard]] bool has_application_properties_signal(const ArchitectureDescription& desc)
+{
+    return std::ranges::any_of(
+        desc.signals, [](const std::string& s) { return s == "manifest:application.properties"; });
+}
+
 TEST(ArchitectureDetectorTest, EmptyProject_IsUnknown)
 {
     CodeIndex idx;
@@ -1110,6 +1117,79 @@ TEST(ArchitectureDetectorTest, NoSpringXml_NoManifestSignal)
     add_file(idx, "src/main/java/com/example/App.java", Language::Java);
 
     EXPECT_FALSE(has_manifest_signal(detect_architecture(idx, "/fake")));
+}
+
+TEST(ArchitectureDetectorTest, AppPropertiesUnderResources_AddsManifestSignal)
+{
+    CodeIndex idx;
+    add_file(idx, "src/main/java/com/example/App.java", Language::Java);
+    add_file(idx, "src/main/resources/application.properties", Language::Properties);
+
+    EXPECT_TRUE(has_application_properties_signal(detect_architecture(idx, "/fake")));
+}
+
+TEST(ArchitectureDetectorTest, AppPropertiesAtRoot_AddsManifestSignal)
+{
+    CodeIndex idx;
+    add_file(idx, "Main.java", Language::Java);
+    add_file(idx, "application.properties", Language::Properties);
+
+    EXPECT_TRUE(has_application_properties_signal(detect_architecture(idx, "/fake")));
+}
+
+TEST(ArchitectureDetectorTest, OtherPropertiesFile_NoApplicationSignal)
+{
+    // A non-application `.properties` file at root must NOT trigger the
+    // application.properties signal — the signal is specifically tied
+    // to the canonical Spring Boot file basename.
+    CodeIndex idx;
+    add_file(idx, "Main.java", Language::Java);
+    add_file(idx, "audit.properties", Language::Properties);
+
+    EXPECT_FALSE(has_application_properties_signal(detect_architecture(idx, "/fake")))
+        << "signal is filename-specific: only application.properties triggers it";
+}
+
+TEST(ArchitectureDetectorTest, AppPropertiesInTestResources_NoApplicationSignal)
+{
+    // application.properties under src/test/resources/ is test-scoped
+    // config and must NOT raise a project-level architecture signal —
+    // mirrors the SpringXmlElsewhere_NoManifestSignal precedent.
+    CodeIndex idx;
+    add_file(idx, "src/main/java/com/example/App.java", Language::Java);
+    add_file(idx, "src/test/resources/application.properties", Language::Properties);
+
+    EXPECT_FALSE(has_application_properties_signal(detect_architecture(idx, "/fake")))
+        << "test-resources application.properties must not raise the signal";
+}
+
+TEST(ArchitectureDetectorTest, AppPropertiesNestedUnderResources_AddsManifestSignal)
+{
+    // `application.properties` nested under `src/main/resources/...` is
+    // still under the Spring Boot resources tree; the prefix check is
+    // `starts_with`, not exact-depth match. Pins the behaviour so a
+    // future tighten-to-exact-directory regression is caught.
+    CodeIndex idx;
+    add_file(idx, "src/main/java/com/example/App.java", Language::Java);
+    add_file(idx, "src/main/resources/config/application.properties", Language::Properties);
+
+    EXPECT_TRUE(has_application_properties_signal(detect_architecture(idx, "/fake")))
+        << "application.properties nested below src/main/resources/ must still raise the signal";
+}
+
+TEST(ArchitectureDetectorTest, BothManifestSignals_FireIndependently)
+{
+    // A project with both Spring XML and application.properties must
+    // raise both signals. Guards against an accidental `else if`
+    // coupling between the two branches sneaking in later.
+    CodeIndex idx;
+    add_file(idx, "src/main/java/com/example/App.java", Language::Java);
+    add_file(idx, "src/main/resources/applicationContext.xml", Language::SpringXml);
+    add_file(idx, "src/main/resources/application.properties", Language::Properties);
+
+    const auto desc = detect_architecture(idx, "/fake");
+    EXPECT_TRUE(has_manifest_signal(desc));
+    EXPECT_TRUE(has_application_properties_signal(desc));
 }
 
 } // namespace
