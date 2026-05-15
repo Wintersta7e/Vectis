@@ -37,7 +37,6 @@ private:
     {
         std::int64_t file_id = 0;
         std::filesystem::path absolute_path;
-        std::filesystem::path relative_path;
         CsprojData parsed;
     };
 
@@ -45,7 +44,6 @@ private:
     {
         std::int64_t file_id = 0;
         std::filesystem::path absolute_path;
-        std::filesystem::path relative_path;
         std::vector<SolutionProjectEntry> projects;
         bool is_xml_format = false;
     };

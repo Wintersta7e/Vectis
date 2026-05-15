@@ -242,7 +242,6 @@ void SpringXmlHandler::register_files(const manifest_scanner::Config& config, Co
         Entry stored;
         stored.file_id = file_id;
         stored.absolute_path = path;
-        stored.relative_path = rel;
         stored.parsed = std::move(parsed);
         m_entries.push_back(std::move(stored));
     }

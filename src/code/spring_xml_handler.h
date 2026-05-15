@@ -36,7 +36,6 @@ private:
     {
         std::int64_t file_id = 0;
         std::filesystem::path absolute_path;
-        std::filesystem::path relative_path; // relative to scan root
         ParsedSpringXml parsed;
     };
 

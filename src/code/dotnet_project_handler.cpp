@@ -353,7 +353,6 @@ void DotNetHandler::register_files(const manifest_scanner::Config& config, CodeI
             CsprojEntry stored;
             stored.file_id = file_id;
             stored.absolute_path = file.absolute_path;
-            stored.relative_path = std::filesystem::path{rel_str};
             stored.parsed = parse_csproj(doc->root());
             m_csprojs.push_back(std::move(stored));
             break;
@@ -367,7 +366,6 @@ void DotNetHandler::register_files(const manifest_scanner::Config& config, CodeI
             SolutionEntry stored;
             stored.file_id = file_id;
             stored.absolute_path = file.absolute_path;
-            stored.relative_path = std::filesystem::path{rel_str};
             stored.projects = std::move(*projects);
             stored.is_xml_format = (file.kind == FileKind::Slnx);
             m_solutions.push_back(std::move(stored));
