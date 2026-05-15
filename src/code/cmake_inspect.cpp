@@ -1,6 +1,7 @@
 #include "code/cmake_inspect.h"
 
 #include <cctype>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 
@@ -11,11 +12,12 @@ namespace vectis::code::cmake {
 
 namespace {
 
-/// Strip CMake line comments: a `#` outside any quoted string starts
-/// a comment that runs to end-of-line. The parser only needs lexical
-/// approximation — we don't tokenize escape sequences, just skip
-/// double-quoted spans so a `#` inside `set(MSG "use #foo")` is left
-/// alone. Returns a fresh string with comments removed.
+/// Strip CMake `#` line comments. Tracks double-quoted spans so a `#`
+/// inside `"use #foo"` is preserved. Does **not** parse CMake bracket
+/// arguments (`[[ … ]]` / `[=[ … ]=]`) or bracket comments (`#[[ … ]]`)
+/// — those are rare at the root and would over-engineer this
+/// corroborator-only lexer. Newlines are preserved so any future error
+/// reporting can still cite source line numbers.
 [[nodiscard]] std::string strip_comments(std::string_view src)
 {
     std::string out;
@@ -36,8 +38,6 @@ namespace {
             continue;
         }
         if (c == '#') {
-            // Skip to next newline. The newline itself is kept so line
-            // numbers stay aligned for any future error reporting.
             while (i < src.size() && src[i] != '\n') {
                 ++i;
             }
@@ -51,41 +51,19 @@ namespace {
     return out;
 }
 
-/// Identifier-ish predicate covering ASCII letters, digits, and `_`.
-/// CMake target names and command names are restricted to this set;
-/// allowing `-` and `.` would over-match.
-[[nodiscard]] bool is_identifier_byte(char c) noexcept
-{
-    const auto u = static_cast<unsigned char>(c);
-    return std::isalnum(u) != 0 || c == '_';
-}
-
-/// Scan `src` for `<keyword>(<name> [maybe-form])` calls. Returns the
-/// count of qualifying calls.
-///
-/// `excluded_second_token` lets the caller reject `add_library` calls
-/// whose second token is `ALIAS` or `IMPORTED` (those don't define a
-/// new buildable target — they reference an existing one or import
-/// from outside the project). Pass an empty initialiser list to count
-/// every call indiscriminately.
+/// Scan `src` for `<keyword>(<name> [maybe-form])` calls. The caller
+/// supplies `excluded_second_token` to reject calls whose second token
+/// is e.g. `ALIAS` or `IMPORTED` — these reference an existing target
+/// or import from outside the project, so they don't count as a new
+/// declaration.
 [[nodiscard]] std::size_t count_calls(std::string_view src, std::string_view keyword,
                                       std::initializer_list<std::string_view> excluded_second_token)
 {
     std::size_t count = 0;
     std::size_t pos = 0;
-    while ((pos = src.find(keyword, pos)) != std::string::npos) {
-        // Boundary check: the keyword must start at the file head or
-        // after a non-identifier byte. Otherwise `qmake_add_library`
-        // or `try_add_library` would match.
-        const bool prefix_ok = pos == 0 || !is_identifier_byte(src[pos - 1]);
+    while ((pos = vectis::core::find_word_boundary(src, keyword, pos)) != std::string_view::npos) {
         std::size_t after = pos + keyword.size();
-        if (!prefix_ok) {
-            pos = after;
-            continue;
-        }
-        // The keyword must be followed by `(` (with optional intervening
-        // whitespace). CMake is whitespace-tolerant: `add_library (foo)`
-        // is legal.
+        // CMake tolerates whitespace before `(`: `add_library (foo)`.
         while (after < src.size() && (src[after] == ' ' || src[after] == '\t')) {
             ++after;
         }
@@ -93,13 +71,12 @@ namespace {
             pos = after;
             continue;
         }
-        ++after; // step past `(`
-        // Skip whitespace, then capture the target name. CMake target
-        // names may contain `::` (namespaced aliases like `Qt6::Core`),
-        // so we read up to the next whitespace, `(`, or `)`.
+        ++after;
         while (after < src.size() && std::isspace(static_cast<unsigned char>(src[after])) != 0) {
             ++after;
         }
+        // Target names can contain `::` (namespaced aliases like
+        // `Qt6::Core`), so read up to the next whitespace or `)`.
         const std::size_t name_start = after;
         while (after < src.size() && src[after] != ' ' && src[after] != '\t' &&
                src[after] != '\r' && src[after] != '\n' && src[after] != ')') {
@@ -109,13 +86,12 @@ namespace {
             pos = after;
             continue;
         }
-        // Optionally read the second token (ALIAS / IMPORTED / INTERFACE / ...).
         std::size_t cursor = after;
         while (cursor < src.size() && (src[cursor] == ' ' || src[cursor] == '\t')) {
             ++cursor;
         }
         const std::size_t second_start = cursor;
-        while (cursor < src.size() && is_identifier_byte(src[cursor])) {
+        while (cursor < src.size() && vectis::core::is_ascii_identifier_byte(src[cursor])) {
             ++cursor;
         }
         const std::string_view second_token = src.substr(second_start, cursor - second_start);
@@ -137,7 +113,20 @@ namespace {
 
 } // namespace
 
-std::optional<RootTargets> inspect_root(const std::filesystem::path& project_root)
+std::string_view signal_for(RootTargetShape shape) noexcept
+{
+    switch (shape) {
+    case RootTargetShape::LibraryOnly:
+        return "cmake:library-only";
+    case RootTargetShape::ExecutableOnly:
+        return "cmake:executable-only";
+    case RootTargetShape::Mixed:
+        return "cmake:mixed-targets";
+    }
+    return "cmake:unknown";
+}
+
+std::optional<RootTargetShape> inspect_root(const std::filesystem::path& project_root)
 {
     const auto cmake_path = project_root / "CMakeLists.txt";
     auto contents = vectis::platform::read_file(cmake_path);
@@ -157,12 +146,12 @@ std::optional<RootTargets> inspect_root(const std::filesystem::path& project_roo
         return std::nullopt;
     }
     if (lib_count > 0 && exe_count == 0) {
-        return RootTargets::LibraryOnly;
+        return RootTargetShape::LibraryOnly;
     }
     if (lib_count == 0 && exe_count > 0) {
-        return RootTargets::ExecutableOnly;
+        return RootTargetShape::ExecutableOnly;
     }
-    return RootTargets::Mixed;
+    return RootTargetShape::Mixed;
 }
 
 } // namespace vectis::code::cmake

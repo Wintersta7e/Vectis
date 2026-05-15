@@ -1578,7 +1578,7 @@ void augment_with_index_deps(std::vector<std::string>& deps, hints::Ecosystem ec
 /// value can't over-shoot.
 void apply_hint_corroborator_lifts(ArchitectureDescription& out,
                                    const std::set<hints::FrameworkHint>& fired,
-                                   std::optional<cmake::RootTargets> cmake_target)
+                                   std::optional<cmake::RootTargetShape> cmake_target)
 {
     const bool web_backend = fired.contains(hints::FrameworkHint::WebBackend);
     const bool web_frontend = fired.contains(hints::FrameworkHint::WebFrontend);
@@ -1619,7 +1619,7 @@ void apply_hint_corroborator_lifts(ArchitectureDescription& out,
         // build-system declaration that this is a library. Lift into
         // the deterministic-manifest band (95-100) where the rubric
         // places explicit project-shape declarations.
-        if (cmake_target == cmake::RootTargets::LibraryOnly) {
+        if (cmake_target == cmake::RootTargetShape::LibraryOnly) {
             lift(/*cap=*/95);
         }
         break;
@@ -1706,8 +1706,8 @@ detect_architecture(const CodeIndex& index, const std::filesystem::path& project
     }
 
     const auto cmake_target = cmake::inspect_root(project_root);
-    if (cmake_target == cmake::RootTargets::LibraryOnly) {
-        out.signals.emplace_back("cmake:library-only");
+    if (cmake_target == cmake::RootTargetShape::LibraryOnly) {
+        out.signals.emplace_back(cmake::signal_for(*cmake_target));
     }
     apply_hint_corroborator_lifts(out, fired_hints, cmake_target);
     return out;

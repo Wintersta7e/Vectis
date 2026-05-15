@@ -60,4 +60,29 @@ namespace vectis::core {
     return s.substr(start, end - start + 1);
 }
 
+/// True if `c` is an ASCII identifier byte: letter, digit, or `_`. Used
+/// to anchor word-boundary scans across lexer-light parsers.
+[[nodiscard]] inline bool is_ascii_identifier_byte(char c) noexcept
+{
+    const auto u = static_cast<unsigned char>(c);
+    return std::isalnum(u) != 0 || c == '_';
+}
+
+/// Find `key` in `src` at a position whose preceding byte is not an
+/// ASCII identifier byte. Skips matches inside larger identifiers —
+/// `find_word_boundary("install_requires=…", "requires")` rejects the
+/// `requires` substring at offset 8 and returns `npos`. Searches start
+/// at `from`. Returns the matched position or `string::npos`.
+[[nodiscard]] inline std::size_t find_word_boundary(std::string_view src, std::string_view key,
+                                                    std::size_t from = 0) noexcept
+{
+    while ((from = src.find(key, from)) != std::string_view::npos) {
+        if (from == 0 || !is_ascii_identifier_byte(src[from - 1])) {
+            return from;
+        }
+        from += key.size();
+    }
+    return std::string_view::npos;
+}
+
 } // namespace vectis::core

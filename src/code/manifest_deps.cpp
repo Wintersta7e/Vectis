@@ -355,30 +355,12 @@ std::vector<std::string> extract_setup_py(const std::filesystem::path& setup_py)
     // `requires = [ ... ]`). Anything past the closing bracket is
     // ignored. We do NOT execute Python — list comprehensions,
     // concatenation, and read_requirements() calls all return empty.
-    //
-    // Word-boundary anchoring: `requires` is a substring of
-    // `install_requires`, so a naive `src.find("requires")` would hit
-    // the trailing 8 chars of the install_requires keyword. Require
-    // the preceding character to be a non-identifier (start of file,
-    // whitespace, or punctuation) before accepting a match.
-    const auto find_keyword = [&src](std::string_view key) -> std::size_t {
-        std::size_t pos = 0;
-        while ((pos = src.find(key, pos)) != std::string::npos) {
-            const bool boundary_ok =
-                pos == 0 || (std::isalnum(static_cast<unsigned char>(src[pos - 1])) == 0 &&
-                             src[pos - 1] != '_');
-            if (boundary_ok) {
-                return pos;
-            }
-            pos += key.size();
-        }
-        return std::string::npos;
-    };
-
+    // `find_word_boundary` rejects the `requires` substring at the
+    // tail of `install_requires`.
     std::set<std::string> deps;
     for (std::string_view key :
          {std::string_view{"install_requires"}, std::string_view{"requires"}}) {
-        const std::size_t key_pos = find_keyword(key);
+        const std::size_t key_pos = vectis::core::find_word_boundary(src, key);
         if (key_pos == std::string::npos) {
             continue;
         }

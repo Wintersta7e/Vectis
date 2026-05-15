@@ -9,7 +9,7 @@
 namespace {
 
 using ::vectis::code::cmake::inspect_root;
-using ::vectis::code::cmake::RootTargets;
+using ::vectis::code::cmake::RootTargetShape;
 
 class CMakeInspectFixture : public ::testing::Test
 {
@@ -36,7 +36,7 @@ TEST_F(CMakeInspectFixture, LibraryOnlyTarget)
     write_root_cmake("add_library(foo src/foo.cpp src/bar.cpp)\n");
     const auto kind = inspect_root(m_root);
     ASSERT_TRUE(kind.has_value());
-    EXPECT_EQ(*kind, RootTargets::LibraryOnly);
+    EXPECT_EQ(*kind, RootTargetShape::LibraryOnly);
 }
 
 TEST_F(CMakeInspectFixture, ExecutableOnlyTarget)
@@ -44,7 +44,7 @@ TEST_F(CMakeInspectFixture, ExecutableOnlyTarget)
     write_root_cmake("add_executable(app src/main.cpp)\n");
     const auto kind = inspect_root(m_root);
     ASSERT_TRUE(kind.has_value());
-    EXPECT_EQ(*kind, RootTargets::ExecutableOnly);
+    EXPECT_EQ(*kind, RootTargetShape::ExecutableOnly);
 }
 
 TEST_F(CMakeInspectFixture, MixedTargets)
@@ -54,7 +54,7 @@ add_executable(foo_cli src/main.cpp)
 )");
     const auto kind = inspect_root(m_root);
     ASSERT_TRUE(kind.has_value());
-    EXPECT_EQ(*kind, RootTargets::Mixed);
+    EXPECT_EQ(*kind, RootTargetShape::Mixed);
 }
 
 TEST_F(CMakeInspectFixture, InterfaceLibraryCountsAsLibrary)
@@ -64,7 +64,7 @@ TEST_F(CMakeInspectFixture, InterfaceLibraryCountsAsLibrary)
     write_root_cmake("add_library(foo INTERFACE)\n");
     const auto kind = inspect_root(m_root);
     ASSERT_TRUE(kind.has_value());
-    EXPECT_EQ(*kind, RootTargets::LibraryOnly);
+    EXPECT_EQ(*kind, RootTargetShape::LibraryOnly);
 }
 
 TEST_F(CMakeInspectFixture, AliasLibraryDoesNotCount)
@@ -92,7 +92,7 @@ add_library(my::foo ALIAS foo)
 )");
     const auto kind = inspect_root(m_root);
     ASSERT_TRUE(kind.has_value());
-    EXPECT_EQ(*kind, RootTargets::LibraryOnly);
+    EXPECT_EQ(*kind, RootTargetShape::LibraryOnly);
 }
 
 TEST_F(CMakeInspectFixture, CommentedOutCallIsIgnored)
@@ -102,7 +102,7 @@ add_library(foo src/foo.cpp)
 )");
     const auto kind = inspect_root(m_root);
     ASSERT_TRUE(kind.has_value());
-    EXPECT_EQ(*kind, RootTargets::LibraryOnly);
+    EXPECT_EQ(*kind, RootTargetShape::LibraryOnly);
 }
 
 TEST_F(CMakeInspectFixture, HashInsideStringIsNotAComment)
@@ -113,7 +113,7 @@ add_library(foo src/foo.cpp)
 )");
     const auto kind = inspect_root(m_root);
     ASSERT_TRUE(kind.has_value());
-    EXPECT_EQ(*kind, RootTargets::LibraryOnly);
+    EXPECT_EQ(*kind, RootTargetShape::LibraryOnly);
 }
 
 TEST_F(CMakeInspectFixture, IdentifierPrefixDoesNotMatch)
@@ -144,7 +144,7 @@ TEST_F(CMakeInspectFixture, WhitespaceBeforeParen)
     write_root_cmake("add_library  (foo src/foo.cpp)\n");
     const auto kind = inspect_root(m_root);
     ASSERT_TRUE(kind.has_value());
-    EXPECT_EQ(*kind, RootTargets::LibraryOnly);
+    EXPECT_EQ(*kind, RootTargetShape::LibraryOnly);
 }
 
 } // namespace
