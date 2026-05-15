@@ -80,10 +80,10 @@ struct PathSignals
     std::string python_sample_pkg;
 };
 
-[[nodiscard]] PathSignals collect_path_signals(const CodeIndex& index)
+[[nodiscard]] PathSignals collect_path_signals(std::span<const FileEntry> files)
 {
     PathSignals out;
-    for (const FileEntry& file : index.snapshot_files()) {
+    for (const FileEntry& file : files) {
         std::filesystem::path dir = file.path_relative;
         if (dir.has_filename()) {
             dir.remove_filename();
@@ -162,10 +162,10 @@ struct PathSignals
 /// — the hallmark of a .NET solution layout with one project per
 /// dotted-name directory. The leaf filename is explicitly excluded
 /// (otherwise every `main.py` or `vite.config.ts` would count).
-[[nodiscard]] std::size_t count_dotted_project_dirs(const CodeIndex& index)
+[[nodiscard]] std::size_t count_dotted_project_dirs(std::span<const FileEntry> files)
 {
     std::unordered_set<std::string> dotted;
-    for (const FileEntry& file : index.snapshot_files()) {
+    for (const FileEntry& file : files) {
         std::filesystem::path dir = file.path_relative;
         if (dir.has_filename()) {
             dir.remove_filename();
@@ -367,7 +367,7 @@ detect_npm_monorepo(const std::filesystem::path& project_root)
 ///   * Poetry / PEP 621 multi-package project (same, heuristically).
 /// Returns a reasoning string if the signal fires, nullopt otherwise.
 [[nodiscard]] std::optional<WorkspaceHit>
-detect_python_packages(const std::filesystem::path& project_root, const CodeIndex& index)
+detect_python_packages(const std::filesystem::path& project_root, std::span<const FileEntry> files)
 {
     std::error_code ec;
     const bool has_pyproject = std::filesystem::exists(project_root / "pyproject.toml", ec) && !ec;
@@ -380,7 +380,7 @@ detect_python_packages(const std::filesystem::path& project_root, const CodeInde
     // src-layout + multiple packages). One package is a normal library;
     // zero means the pyproject describes something else (tool config).
     std::unordered_set<std::string> src_packages;
-    for (const FileEntry& file : index.snapshot_files()) {
+    for (const FileEntry& file : files) {
         if (file.path_relative.filename().string() != "__init__.py") {
             continue;
         }
@@ -951,9 +951,9 @@ detect_ecosystem_library(const std::filesystem::path& project_root, const Manife
 /// True if the index holds a Spring `<beans>` XML file (Language::
 /// SpringXml) at the project root or under `src/main/resources/`.
 /// Drives the `manifest:applicationContext.xml` architecture signal.
-[[nodiscard]] bool has_spring_context_xml(const CodeIndex& index)
+[[nodiscard]] bool has_spring_context_xml(std::span<const FileEntry> files)
 {
-    return std::ranges::any_of(index.snapshot_files(), [](const FileEntry& file) {
+    return std::ranges::any_of(files, [](const FileEntry& file) {
         if (file.language != Language::SpringXml) {
             return false;
         }
@@ -968,9 +968,9 @@ detect_ecosystem_library(const std::filesystem::path& project_root, const Manife
 /// architecture signal. The basename is intentionally specific — only
 /// Spring Boot's canonical config file raises the signal; arbitrary
 /// `.properties` files (logging configs, i18n bundles, etc.) do not.
-[[nodiscard]] bool has_application_properties(const CodeIndex& index)
+[[nodiscard]] bool has_application_properties(std::span<const FileEntry> files)
 {
-    return std::ranges::any_of(index.snapshot_files(), [](const FileEntry& file) {
+    return std::ranges::any_of(files, [](const FileEntry& file) {
         if (file.language != Language::Properties) {
             return false;
         }
@@ -1021,12 +1021,13 @@ std::string_view architecture_label_name(ArchitectureLabel label) noexcept
 // TU-local: the public detect_architecture wrapper below is the only
 // entry point, so the manifest signal is never silently skipped.
 static ArchitectureDescription
-detect_architecture_impl(const CodeIndex& index, const std::filesystem::path& project_root,
+detect_architecture_impl(std::span<const FileEntry> files,
+                         const std::filesystem::path& project_root,
                          const std::unordered_set<std::string>& exclude_dir_names)
 {
     ArchitectureDescription out;
 
-    const std::size_t file_count = index.file_count();
+    const std::size_t file_count = files.size();
     if (file_count == 0) {
         out.label = ArchitectureLabel::Unknown;
         out.reasoning = "no source files found";
@@ -1055,7 +1056,7 @@ detect_architecture_impl(const CodeIndex& index, const std::filesystem::path& pr
             out.confidence = 90;
             return out;
         }
-        if (auto r = detect_python_packages(project_root, index); r) {
+        if (auto r = detect_python_packages(project_root, files); r) {
             out.label = ArchitectureLabel::Monorepo;
             out.reasoning = std::move(r->reasoning);
             out.signals = std::move(r->signals);
@@ -1064,7 +1065,7 @@ detect_architecture_impl(const CodeIndex& index, const std::filesystem::path& pr
         }
     }
 
-    auto signals = collect_path_signals(index);
+    auto signals = collect_path_signals(files);
     // Empty caller-supplied set means "no overrides" — fall back to the
     // canonical scanner list so the disk walk still skips noise dirs.
     const auto& effective_excludes =
@@ -1212,7 +1213,7 @@ detect_architecture_impl(const CodeIndex& index, const std::filesystem::path& pr
     // Several sibling directories with dotted names like
     // `FlowForge.UI` / `FlowForge.CLI` / `FlowForge.Core` strongly
     // suggest a `.sln` with one `.csproj` per dotted directory.
-    if (count_dotted_project_dirs(index) >= 2) {
+    if (count_dotted_project_dirs(files) >= 2) {
         out.label = ArchitectureLabel::DotNetSolution;
         out.reasoning = "multiple sibling directories with dotted "
                         "names (typical .NET multi-project solution)";
@@ -1474,11 +1475,16 @@ ArchitectureDescription
 detect_architecture(const CodeIndex& index, const std::filesystem::path& project_root,
                     const std::unordered_set<std::string>& exclude_dir_names)
 {
-    ArchitectureDescription out = detect_architecture_impl(index, project_root, exclude_dir_names);
-    if (has_spring_context_xml(index)) {
+    // Snapshot once, fan out to every helper. snapshot_files() copies
+    // the file list; without this, each helper paid for its own copy.
+    const std::vector<FileEntry> files_owned = index.snapshot_files();
+    const std::span<const FileEntry> files{files_owned};
+
+    ArchitectureDescription out = detect_architecture_impl(files, project_root, exclude_dir_names);
+    if (has_spring_context_xml(files)) {
         out.signals.emplace_back("manifest:applicationContext.xml");
     }
-    if (has_application_properties(index)) {
+    if (has_application_properties(files)) {
         out.signals.emplace_back("manifest:application.properties");
     }
     return out;
