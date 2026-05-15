@@ -22,8 +22,12 @@ pipelines, scripts).
   / managed-dependency / BOM edges from Maven `pom.xml` files;
   project / package / import / solution edges from `.csproj` /
   `.fsproj` / `.vbproj` / `.sln` / `.slnx` with Central Package
-  Management resolution via nearest-ancestor `Directory.Packages.props`.
-  Spring `<beans>` XML and `.properties` are next.
+  Management resolution via nearest-ancestor `Directory.Packages.props`;
+  `spring-bean` / `spring-import` / `spring-component-scan` edges
+  from Spring `<beans>` XML (`classpath:` resolution + Java FQCN
+  candidates); `properties-include` edges from Java `.properties`
+  files. Spring `applicationContext.xml` and `application.properties`
+  at canonical locations raise architecture signals.
 - **11 architecture labels** with 0–100 confidence — Monolith,
   Layered, MVC, MVVM, Clean Architecture, Monorepo, Frontend SPA,
   API Backend, .NET Solution, Library, Electron. The first ten are
@@ -160,8 +164,9 @@ work on both subcommands. `vectis --help` lists everything.
   parse files (tree-sitter, 12 grammars)
         │  symbols + raw imports + namespaces
         ▼
-  manifest pass (pom.xml, .csproj, .sln/.slnx, .props/.targets)
-        │  + maven / csproj / sln edges
+  manifest pass (pom.xml, .csproj, .sln/.slnx, .props/.targets,
+                 Spring XML, .properties)
+        │  + maven / csproj / sln / spring-* / properties-include edges
         ▼
   resolve dependencies (paths + namespace index + go.mod)
         │
