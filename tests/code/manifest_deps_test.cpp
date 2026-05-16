@@ -1,10 +1,13 @@
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "code/manifest_deps.h"
 
@@ -23,7 +26,15 @@ class ManifestDepsFixture : public ::testing::Test
 protected:
     void SetUp() override
     {
-        m_tmp = std::filesystem::temp_directory_path() / "vectis-manifest-deps-test";
+        // Per-test-instance tmp dir so parallel ctest workers (CI uses
+        // -j) don't fight over the same path. The counter increments on
+        // every SetUp so successive tests in the same process also get
+        // distinct scratch space.
+        static std::atomic<std::uint64_t> counter{0};
+        const auto seq = counter.fetch_add(1, std::memory_order_relaxed);
+        m_tmp =
+            std::filesystem::temp_directory_path() /
+            ("vectis-manifest-deps-test-" + std::to_string(::getpid()) + "-" + std::to_string(seq));
         std::filesystem::remove_all(m_tmp);
         std::filesystem::create_directories(m_tmp);
     }

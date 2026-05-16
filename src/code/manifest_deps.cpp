@@ -43,8 +43,8 @@ std::string extract_pep508_name(std::string_view spec)
     }
     std::size_t end = start;
     while (end < spec.size()) {
-        const unsigned char c = static_cast<unsigned char>(spec[end]);
-        if (!(std::isalnum(c) != 0 || c == '.' || c == '_' || c == '-')) {
+        const auto c = static_cast<unsigned char>(spec[end]);
+        if (std::isalnum(c) == 0 && c != '.' && c != '_' && c != '-') {
             break;
         }
         ++end;
@@ -58,7 +58,7 @@ std::string extract_pep508_name(std::string_view spec)
 void collect_pep508_array(const toml::array& arr, std::set<std::string>& sink)
 {
     for (const auto& node : arr) {
-        if (auto* str = node.as_string()) {
+        if (const auto* str = node.as_string()) {
             auto name = extract_pep508_name(str->get());
             if (!name.empty()) {
                 sink.insert(std::move(name));
@@ -379,9 +379,11 @@ std::vector<std::string> extract_setup_py(const std::filesystem::path& setup_py)
         const std::string_view body{src.data() + open + 1, close - open - 1};
 
         // Scan for quoted PEP 508 specifiers — single or double quotes.
-        for (std::size_t i = 0; i < body.size(); ++i) {
+        std::size_t i = 0;
+        while (i < body.size()) {
             const char quote = body[i];
             if (quote != '"' && quote != '\'') {
+                ++i;
                 continue;
             }
             const std::size_t start = i + 1;
@@ -393,7 +395,7 @@ std::vector<std::string> extract_setup_py(const std::filesystem::path& setup_py)
             if (!name.empty()) {
                 deps.insert(std::move(name));
             }
-            i = end;
+            i = end + 1;
         }
     }
     return {deps.begin(), deps.end()};

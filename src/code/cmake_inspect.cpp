@@ -23,30 +23,34 @@ namespace {
     std::string out;
     out.reserve(src.size());
     bool in_string = false;
-    for (std::size_t i = 0; i < src.size(); ++i) {
+    std::size_t i = 0;
+    while (i < src.size()) {
         const char c = src[i];
         if (in_string) {
             out.push_back(c);
             if (c == '"' && (i == 0 || src[i - 1] != '\\')) {
                 in_string = false;
             }
+            ++i;
             continue;
         }
         if (c == '"') {
             in_string = true;
             out.push_back(c);
+            ++i;
             continue;
         }
         if (c == '#') {
-            while (i < src.size() && src[i] != '\n') {
-                ++i;
+            const std::size_t nl = src.find('\n', i);
+            if (nl == std::string_view::npos) {
+                break;
             }
-            if (i < src.size()) {
-                out.push_back('\n');
-            }
+            out.push_back('\n');
+            i = nl + 1;
             continue;
         }
         out.push_back(c);
+        ++i;
     }
     return out;
 }

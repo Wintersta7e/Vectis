@@ -602,12 +602,14 @@ int run_digest(const DigestArgs& args)
     std::error_code ec;
     const std::filesystem::path normalised =
         std::filesystem::weakly_canonical(std::filesystem::path{args.output_path}, ec);
-    const std::filesystem::path& out_path =
-        ec ? std::filesystem::path{args.output_path} : normalised;
+    if (ec) {
+        std::fprintf(stderr, "error: cannot resolve output path: %s\n", ec.message().c_str());
+        return 2;
+    }
 
-    std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+    std::ofstream out(normalised, std::ios::binary | std::ios::trunc);
     if (!out) {
-        std::fprintf(stderr, "error: cannot write to %s\n", out_path.string().c_str());
+        std::fprintf(stderr, "error: cannot write to %s\n", normalised.string().c_str());
         return 2;
     }
     out.write(body->data(), static_cast<std::streamsize>(body->size()));

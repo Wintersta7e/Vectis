@@ -113,9 +113,10 @@ public:
     template <typename F> void for_each_symbol_decorator(F&& fn) const
     {
         std::shared_lock lock(m_mutex);
+        auto&& visitor = std::forward<F>(fn);
         for (const auto& sym : m_symbols) {
             for (const auto& dec : sym.decorators) {
-                fn(std::string_view{dec});
+                visitor(std::string_view{dec});
             }
         }
     }

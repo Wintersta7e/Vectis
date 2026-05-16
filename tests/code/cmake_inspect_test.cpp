@@ -1,8 +1,12 @@
+#include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <string_view>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "code/cmake_inspect.h"
 
@@ -16,7 +20,11 @@ class CMakeInspectFixture : public ::testing::Test
 protected:
     void SetUp() override
     {
-        m_root = std::filesystem::temp_directory_path() / "vectis-cmake-inspect-test";
+        static std::atomic<std::uint64_t> counter{0};
+        const auto seq = counter.fetch_add(1, std::memory_order_relaxed);
+        m_root =
+            std::filesystem::temp_directory_path() /
+            ("vectis-cmake-inspect-test-" + std::to_string(::getpid()) + "-" + std::to_string(seq));
         std::filesystem::remove_all(m_root);
         std::filesystem::create_directories(m_root);
     }

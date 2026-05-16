@@ -80,6 +80,16 @@ struct CorpusEnvResult
         return {std::string{dir_env_name} + "='" + corpus_root.string() + "' is not a directory",
                 {}};
     }
+    // Canonicalise so the env-supplied string isn't passed verbatim into
+    // later filesystem operations — same hygiene step the digest CLI
+    // applies to `--output`. Breaks the CodeQL cpp/path-injection
+    // taint flow that would otherwise track env_dir into every file
+    // read the test does against the corpus tree.
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(corpus_root, ec);
+    if (!ec) {
+        corpus_root = std::move(canonical);
+    }
     return {std::nullopt, std::move(corpus_root)};
 }
 

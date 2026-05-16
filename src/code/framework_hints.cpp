@@ -18,7 +18,7 @@ using Table = std::unordered_map<std::string_view, FrameworkHint>;
 /// constants in many languages.
 const std::unordered_set<std::string_view>& web_backend_annotations() noexcept
 {
-    static const std::unordered_set<std::string_view> t = {
+    static const std::unordered_set<std::string_view> k_table = {
         // Spring (Java) — single application marker + per-route mappings.
         "RestController",
         "Controller",
@@ -58,7 +58,7 @@ const std::unordered_set<std::string_view>& web_backend_annotations() noexcept
         // Django REST framework — view marker.
         "api_view",
     };
-    return t;
+    return k_table;
 }
 
 constexpr std::size_t k_min_annotation_count = 3;
@@ -71,7 +71,7 @@ constexpr std::size_t k_min_annotation_count = 3;
 
 const Table& npm_table()
 {
-    static const Table t = {
+    static const Table k_table = {
         // Browser-rendering frameworks (frontend).
         {"react", FrameworkHint::WebFrontend},
         {"react-dom", FrameworkHint::WebFrontend},
@@ -96,12 +96,12 @@ const Table& npm_table()
         {"electron", FrameworkHint::DesktopUI},
         {"@tauri-apps/api", FrameworkHint::DesktopUI},
     };
-    return t;
+    return k_table;
 }
 
 const Table& pyproject_table()
 {
-    static const Table t = {
+    static const Table k_table = {
         {"django", FrameworkHint::WebBackend},    {"flask", FrameworkHint::WebBackend},
         {"fastapi", FrameworkHint::WebBackend},   {"sanic", FrameworkHint::WebBackend},
         {"tornado", FrameworkHint::WebBackend},   {"bottle", FrameworkHint::WebBackend},
@@ -110,25 +110,25 @@ const Table& pyproject_table()
         {"starlette", FrameworkHint::WebBackend}, {"litestar", FrameworkHint::WebBackend},
         {"masonite", FrameworkHint::WebBackend},
     };
-    return t;
+    return k_table;
 }
 
 const Table& cargo_table()
 {
-    static const Table t = {
+    static const Table k_table = {
         {"actix-web", FrameworkHint::WebBackend}, {"rocket", FrameworkHint::WebBackend},
         {"axum", FrameworkHint::WebBackend},      {"warp", FrameworkHint::WebBackend},
         {"poem", FrameworkHint::WebBackend},      {"tide", FrameworkHint::WebBackend},
         {"salvo", FrameworkHint::WebBackend},
     };
-    return t;
+    return k_table;
 }
 
 const Table& go_table()
 {
     // Module paths are normalised by stripping a trailing /vN before
     // lookup, so keys here use the un-versioned form.
-    static const Table t = {
+    static const Table k_table = {
         {"github.com/gin-gonic/gin", FrameworkHint::WebBackend},
         {"github.com/labstack/echo", FrameworkHint::WebBackend},
         {"github.com/gofiber/fiber", FrameworkHint::WebBackend},
@@ -138,12 +138,12 @@ const Table& go_table()
         {"github.com/beego/beego", FrameworkHint::WebBackend},
         {"github.com/revel/revel", FrameworkHint::WebBackend},
     };
-    return t;
+    return k_table;
 }
 
 const Table& composer_table()
 {
-    static const Table t = {
+    static const Table k_table = {
         {"laravel/framework", FrameworkHint::WebBackend},
         {"symfony/framework-bundle", FrameworkHint::WebBackend},
         {"symfony/symfony", FrameworkHint::WebBackend},
@@ -152,23 +152,23 @@ const Table& composer_table()
         {"slim/slim", FrameworkHint::WebBackend},
         {"codeigniter/framework", FrameworkHint::WebBackend},
     };
-    return t;
+    return k_table;
 }
 
 const Table& gemfile_table()
 {
-    static const Table t = {
+    static const Table k_table = {
         {"rails", FrameworkHint::WebBackend},  {"sinatra", FrameworkHint::WebBackend},
         {"hanami", FrameworkHint::WebBackend}, {"roda", FrameworkHint::WebBackend},
         {"grape", FrameworkHint::WebBackend},
     };
-    return t;
+    return k_table;
 }
 
 const Table& maven_table()
 {
     // Keys are post-normalised groupId:artifactId (no version).
-    static const Table t = {
+    static const Table k_table = {
         {"org.springframework.boot:spring-boot-starter-web", FrameworkHint::WebBackend},
         {"org.springframework.boot:spring-boot-starter-webflux", FrameworkHint::WebBackend},
         {"org.springframework.boot:spring-boot-starter", FrameworkHint::WebBackend},
@@ -187,14 +187,14 @@ const Table& maven_table()
         {"org.openjfx:javafx-controls", FrameworkHint::DesktopUI},
         {"org.openjfx:javafx-fxml", FrameworkHint::DesktopUI},
     };
-    return t;
+    return k_table;
 }
 
 const Table& dotnet_table()
 {
     // Keys are post-normalised PackageId (no version). Comparison is
     // case-sensitive — .NET package IDs use canonical capitalisation.
-    static const Table t = {
+    static const Table k_table = {
         {"Microsoft.AspNetCore.App", FrameworkHint::WebBackend},
         {"Microsoft.AspNetCore.Mvc", FrameworkHint::WebBackend},
         {"Microsoft.AspNetCore.WebApi", FrameworkHint::WebBackend},
@@ -207,7 +207,7 @@ const Table& dotnet_table()
         {"Microsoft.Maui.Controls", FrameworkHint::DesktopUI},
         {"WindowsBase", FrameworkHint::DesktopUI},
     };
-    return t;
+    return k_table;
 }
 
 /// Strip a trailing `/v<digits>` major-version suffix from a Go module
@@ -280,8 +280,8 @@ const Table& dotnet_table()
     case Ecosystem::DotNet:
         return dotnet_table();
     }
-    static const Table empty;
-    return empty;
+    static const Table k_empty;
+    return k_empty;
 }
 
 } // namespace
