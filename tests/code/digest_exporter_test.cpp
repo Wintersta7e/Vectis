@@ -391,6 +391,62 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
     EXPECT_TRUE(parsed["dependency_graph"]["stats"]["cycles"].is_number_unsigned());
 }
 
+TEST(DigestExporterTest, Hotspots_EmitStructuredDrivers)
+{
+    // The slim JSON's hotspots used to encode complexity / fan-in /
+    // fan-out only inside the `reason` string ("high complexity (42)
+    // in 'gnarly'"). Agent consumers had to string-parse to get the
+    // numbers. Hotspot now carries those values as structured fields;
+    // the exporter mirrors them in the JSON.
+    CodeIndex index;
+    FileEntry f;
+    f.path_relative = "src/gnarly.cpp";
+    f.language = Language::Cpp;
+    f.size = 12000;
+    f.line_count = 800; // > default 500 → large-file hotspot too
+    const std::int64_t fid = index.add_file(std::move(f));
+
+    Symbol gnarly{.file_id = fid,
+                  .name = "gnarly",
+                  .kind = SymbolKind::Method,
+                  .line_start = 42,
+                  .line_end = 200,
+                  .complexity = 50};
+    const std::array<Symbol, 1> batch = {gnarly};
+    index.add_symbols(batch);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("hotspots"));
+    ASSERT_FALSE(parsed["hotspots"].empty());
+
+    // Find the complexity-driven entry — sort is by severity, then
+    // alphabetical reason, so the symbol hotspot may not be first.
+    bool saw_complexity = false;
+    bool saw_large_file = false;
+    for (const auto& h : parsed["hotspots"]) {
+        if (h.contains("complexity")) {
+            saw_complexity = true;
+            EXPECT_EQ(h["complexity"], 50);
+            EXPECT_EQ(h["name"], "gnarly");
+            EXPECT_EQ(h["line"], 42);
+            EXPECT_EQ(h["kind"], "method");
+            EXPECT_TRUE(h.contains("symbol_id"));
+        }
+        if (h.contains("line_count")) {
+            saw_large_file = true;
+            EXPECT_EQ(h["line_count"], 800);
+            // File-level hotspots don't carry a symbol locator.
+            EXPECT_FALSE(h.contains("name"));
+            EXPECT_FALSE(h.contains("symbol_id"));
+        }
+    }
+    EXPECT_TRUE(saw_complexity);
+    EXPECT_TRUE(saw_large_file);
+}
+
 TEST(DigestExporterTest, BothFormats_StatsCarryCycleCount)
 {
     // Two files with mutual deps form a single 2-cycle. Both slim and

@@ -316,6 +316,24 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
         node["severity"] = h.severity;
         if (h.symbol_id != 0) {
             node["symbol_id"] = h.symbol_id;
+            node["name"] = h.symbol_name;
+            node["line"] = h.line;
+            node["kind"] = std::string{symbol_kind_name(h.kind)};
+        }
+        // Structured drivers — emit only the trigger(s) that actually
+        // fired so a consumer can tell "complexity hotspot" from
+        // "fan-in hotspot" without parsing `reason`.
+        if (h.complexity != 0) {
+            node["complexity"] = h.complexity;
+        }
+        if (h.fan_in != 0) {
+            node["fan_in"] = h.fan_in;
+        }
+        if (h.fan_out != 0) {
+            node["fan_out"] = h.fan_out;
+        }
+        if (h.line_count != 0) {
+            node["line_count"] = h.line_count;
         }
         if (include_excerpts) {
             std::string excerpt = build_hotspot_excerpt(index, h, project_root, lookup);
