@@ -13,6 +13,7 @@
 
 #include "code/architecture_detector.h"
 #include "code/code_index.h"
+#include "code/dependency.h"
 #include "code/language.h"
 #include "code/symbol.h"
 
@@ -21,6 +22,7 @@ namespace {
 using vectis::code::ArchitectureDescription;
 using vectis::code::ArchitectureLabel;
 using vectis::code::CodeIndex;
+using vectis::code::Dependency;
 using vectis::code::detect_architecture;
 using vectis::code::FileEntry;
 using vectis::code::Language;
@@ -1243,6 +1245,60 @@ TEST(ArchitectureDetectorTest, ApiBackendWithFrameworkDep_LiftedToCorroboratedBa
     EXPECT_TRUE(has_signal(desc, "hint:web-backend"));
     EXPECT_GE(desc.confidence, 85)
         << "express dep + routes/ dir should land in the strong-corroborated band";
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST(ArchitectureDetectorTest, ApiBackendShape_WithCamelDep_RelabelsAsIntegrationFramework)
+{
+    // The ApiBackend signature (handlers/ + manifest:pom.xml) fires
+    // identically for an EIP/integration runtime like Apache Camel,
+    // but a Camel project routes messages between systems rather
+    // than serving HTTP requests. The hint:integration corroborator
+    // from `camel-core` in the manifest is the disambiguator.
+    namespace fs = std::filesystem;
+    const auto root = make_scratch_with_manifest("camel_routes", "pom.xml", R"(
+        <project>
+          <dependencies>
+            <dependency>
+              <groupId>org.apache.camel</groupId>
+              <artifactId>camel-core</artifactId>
+              <version>4.0.0</version>
+            </dependency>
+          </dependencies>
+        </project>
+    )");
+
+    CodeIndex idx;
+    // Avoid `com.example` Java package — the detector's
+    // non-source-subtree filter treats `example` (singular) as
+    // an example-sources marker and short-circuits the segment
+    // walk before `handlers/` is recorded.
+    add_file(idx, "src/main/java/com/acme/handlers/InboundHandler.java", Language::Java);
+    add_file(idx, "src/main/java/com/acme/handlers/OutboundHandler.java", Language::Java);
+    add_file(idx, "src/main/java/com/acme/Routes.java", Language::Java);
+
+    // The maven_pom_handler would normally register pom.xml and emit
+    // a `kind=maven` dependency edge per `<dependency>`. The detector
+    // can't read pom.xml itself (`extract_pom` doesn't exist), so we
+    // seed the edge here to mirror what the scanner would do.
+    FileEntry pom;
+    pom.path_relative = "pom.xml";
+    pom.language = Language::Unknown;
+    const std::int64_t pom_id = idx.add_file(std::move(pom));
+    Dependency camel_dep;
+    camel_dep.source_file_id = pom_id;
+    camel_dep.target_file_id = 0;
+    camel_dep.import_string = "org.apache.camel:camel-core";
+    camel_dep.kind = "maven";
+    idx.add_dependency(std::move(camel_dep));
+
+    const auto desc = detect_architecture(idx, root);
+    EXPECT_EQ(desc.label, ArchitectureLabel::IntegrationFramework);
+    EXPECT_TRUE(has_signal(desc, "hint:integration"));
+    EXPECT_EQ(desc.confidence, 90) << "handlers/ + camel-core manifest is the strong-corroborated "
+                                      "band for the integration label";
 
     std::error_code ec;
     fs::remove_all(root, ec);

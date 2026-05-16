@@ -18,6 +18,13 @@ enum class FrameworkHint : std::uint8_t
     WebBackend,  ///< Server-side HTTP framework (Spring Boot, Django, Express, …).
     WebFrontend, ///< Browser-rendering framework (React, Vue, Svelte, Angular, …).
     DesktopUI,   ///< Native or quasi-native desktop UI (Electron, Tauri, Avalonia, MAUI).
+    /// Enterprise Integration Patterns runtime (Apache Camel, Spring
+    /// Integration, Mule, ServiceMix). These projects route and
+    /// transform messages between systems rather than serving HTTP
+    /// requests directly — they share the `handlers/` / `routes/`
+    /// shape with API backends but are functionally distinct, so the
+    /// architecture detector uses this hint to disambiguate the label.
+    Integration,
 };
 
 /// Build/runtime ecosystem the keyword table is keyed off. Coarser

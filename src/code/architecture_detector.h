@@ -48,6 +48,13 @@ enum class ArchitectureLabel : std::uint8_t
     /// the more specific Electron label fits better than the generic
     /// fallback.
     Electron,
+    /// EIP / message-routing runtime (Apache Camel, Spring Integration,
+    /// Mule, ServiceMix). Surfaces from the API-Backend branch when a
+    /// `hint:integration` corroborator fires: a project with a
+    /// `handlers/` / `routes/` shape AND `camel-core` (or peer) in its
+    /// manifest is functionally an integration framework, not a web
+    /// API backend, even though the directory shape is identical.
+    IntegrationFramework,
 };
 
 /// Description returned by `detect_architecture`.

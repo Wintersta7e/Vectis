@@ -186,6 +186,18 @@ const Table& maven_table()
         // JavaFX is a desktop UI toolkit.
         {"org.openjfx:javafx-controls", FrameworkHint::DesktopUI},
         {"org.openjfx:javafx-fxml", FrameworkHint::DesktopUI},
+        // Integration / EIP runtimes. Camel's `camel-core` is the
+        // authoritative marker — projects that just route through a
+        // single Camel component still declare it. Spring Integration
+        // and Mule are the other dominant Java integration platforms.
+        {"org.apache.camel:camel-core", FrameworkHint::Integration},
+        {"org.apache.camel:camel-core-engine", FrameworkHint::Integration},
+        {"org.apache.camel:camel-api", FrameworkHint::Integration},
+        {"org.apache.camel:camel-spring-boot-starter", FrameworkHint::Integration},
+        {"org.springframework.integration:spring-integration-core", FrameworkHint::Integration},
+        {"org.mule.runtime:mule-core", FrameworkHint::Integration},
+        {"org.mule:mule-core", FrameworkHint::Integration},
+        {"org.apache.servicemix:servicemix-core", FrameworkHint::Integration},
     };
     return k_table;
 }
@@ -295,6 +307,8 @@ std::string_view hint_signal(FrameworkHint h) noexcept
         return "hint:web-frontend";
     case FrameworkHint::DesktopUI:
         return "hint:desktop-ui";
+    case FrameworkHint::Integration:
+        return "hint:integration";
     }
     return "hint:unknown";
 }

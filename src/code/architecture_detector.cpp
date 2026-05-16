@@ -1039,6 +1039,8 @@ std::string_view architecture_label_name(ArchitectureLabel label) noexcept
         return "Library";
     case ArchitectureLabel::Electron:
         return "Electron";
+    case ArchitectureLabel::IntegrationFramework:
+        return "Integration Framework";
     case ArchitectureLabel::Unknown:
         return "Unknown";
     }
@@ -1582,6 +1584,7 @@ void apply_hint_corroborator_lifts(ArchitectureDescription& out,
 {
     const bool web_backend = fired.contains(hints::FrameworkHint::WebBackend);
     const bool web_frontend = fired.contains(hints::FrameworkHint::WebFrontend);
+    const bool integration = fired.contains(hints::FrameworkHint::Integration);
 
     const auto lift = [&out](std::uint8_t cap) {
         // +15-point lift: a corroborator typically moves a value into
@@ -1595,6 +1598,20 @@ void apply_hint_corroborator_lifts(ArchitectureDescription& out,
 
     switch (out.label) {
     case ArchitectureLabel::ApiBackend:
+        // Integration runtimes (Camel, Spring Integration, Mule) share
+        // the `handlers/` / `routes/` shape with web API backends but
+        // route messages between systems rather than serving HTTP
+        // requests directly. A `hint:integration` corroborator from the
+        // manifest is the disambiguator — when it fires we relabel
+        // rather than just lift confidence on a misleading label.
+        // Integration wins over web_backend even if both fire (Camel's
+        // ecosystem pulls in Spring/Servlet deps transitively).
+        if (integration) {
+            out.label = ArchitectureLabel::IntegrationFramework;
+            out.reasoning = "found `handlers/` / `routes/` shape + integration runtime in manifest";
+            out.confidence = 90;
+            break;
+        }
         if (web_backend) {
             lift(/*cap=*/90);
         }
@@ -1625,9 +1642,9 @@ void apply_hint_corroborator_lifts(ArchitectureDescription& out,
         break;
     default:
         // Monolith, Monorepo, MVC, MVVM, DotNetSolution, Electron,
-        // Unknown — either already at a high confidence, covered by
-        // a more specific detector, or not corroborable in a way the
-        // rubric permits.
+        // IntegrationFramework, Unknown — either already at a high
+        // confidence, covered by a more specific detector, or not
+        // corroborable in a way the rubric permits.
         break;
     }
 }
