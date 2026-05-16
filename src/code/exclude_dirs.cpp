@@ -64,6 +64,14 @@ const std::unordered_set<std::string>& default_scanner_exclude_dir_names()
         "obj",
         "cmake-build-debug",
         "cmake-build-release",
+        // Codegen outputs (Maven build plugins, JAXB/Protobuf, etc.).
+        // Camel ships ~3.4k files under per-module `src/generated/java/`;
+        // those are derived artifacts that skew symbol counts and
+        // hotspots toward auto-generated ConverterLoader / BulkConverter
+        // classes that look complex but aren't authored.
+        "generated",
+        "generated-sources",
+        "generated-test-sources",
         ".gradle",
         ".next",
         ".nuxt",

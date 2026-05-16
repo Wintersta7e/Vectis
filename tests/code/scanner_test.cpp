@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include "code/code_index.h"
+#include "code/exclude_dirs.h"
 #include "code/parser.h"
 #include "code/scanner.h"
 #include "core/task_queue.h"
@@ -113,6 +114,27 @@ TEST_F(ScannerFixture, RespectsExcludeDirectoryNames)
     const auto files = index.snapshot_files();
     ASSERT_EQ(files.size(), 1U);
     EXPECT_EQ(files[0].path_relative.filename().string(), "kept.py");
+}
+
+TEST_F(ScannerFixture, ExcludesCodegenOutputDirsByDefault)
+{
+    // `generated/`, `generated-sources/`, `generated-test-sources/`
+    // are Maven/JAXB/Protobuf build-plugin destinations. They contain
+    // derived artifacts (Camel's per-module ConverterLoader classes,
+    // for instance) that look complex but aren't authored — so they
+    // skew symbol counts and hotspots if indexed.
+    write("kept.java", "class Kept {}\n");
+    write("src/generated/java/org/example/Foo.java", "class Foo {}\n");
+    write("module/src/generated-sources/java/Bar.java", "class Bar {}\n");
+    write("nested/generated-test-sources/baz.py", "def baz(): pass\n");
+
+    CodeIndex index;
+    const bool ok = run_scan(index, vectis::code::default_scanner_exclude_dir_names());
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(index.file_count(), 1U);
+    const auto files = index.snapshot_files();
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0].path_relative.filename().string(), "kept.java");
 }
 
 TEST_F(ScannerFixture, SkipsVendoredJavaScriptByFilename)
