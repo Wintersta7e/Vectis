@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -576,6 +577,84 @@ TEST(DependencyResolverTest, Java_DottedCandidates_NoMatch_EmptyVector)
     const auto candidates = match_java_dotted_candidates(files, "com.x.Foo");
 
     EXPECT_TRUE(candidates.empty());
+}
+
+// -----------------------------------------------------------------------------
+// Regression guard for the O(imports × files) Java resolver. Before the
+// `PathLookup` rewrite, each unresolved Java import scanned the full file
+// snapshot up to 3× (direct match + suffix match), so resolution scaled as
+// N² in file count. Camel (~36k files, ~219k imports) was killed after 4 h
+// of CPU; spring-framework took ~35 min. At 1000 files × ~21 imports per
+// file the same hot path is ~6 seconds — well under a 2 s wall-time cap
+// when fixed, well over it if anyone regresses to a linear scan.
+// -----------------------------------------------------------------------------
+TEST(DependencyResolverTest, Java_ScaleResolutionStaysSubLinear)
+{
+    constexpr std::size_t k_packages = 100;
+    constexpr std::size_t k_files_per_package = 10;
+    constexpr std::size_t k_external_per_file = 20;
+
+    CodeIndex idx;
+    std::vector<std::int64_t> internal_ids;
+    internal_ids.reserve(k_packages * k_files_per_package);
+
+    for (std::size_t p = 0; p < k_packages; ++p) {
+        for (std::size_t f = 0; f < k_files_per_package; ++f) {
+            const std::string path = "src/main/java/com/example/pkg" + std::to_string(p) +
+                                     "/Class" + std::to_string(f) + ".java";
+            internal_ids.push_back(add(idx, path, Language::Java));
+        }
+    }
+
+    std::vector<FileImports> per_file;
+    per_file.reserve(internal_ids.size());
+
+    std::size_t cursor = 0;
+    for (std::size_t p = 0; p < k_packages; ++p) {
+        const std::string pkg = "com.example.pkg" + std::to_string(p);
+        const std::string sibling = "com.example.pkg" + std::to_string((p + 1) % k_packages);
+        for (std::size_t f = 0; f < k_files_per_package; ++f) {
+            const std::string path = "src/main/java/com/example/pkg" + std::to_string(p) +
+                                     "/Class" + std::to_string(f) + ".java";
+            std::vector<RawImport> imports;
+            imports.reserve(k_external_per_file + 1);
+            // Unresolvable imports — the camel-killer pattern.
+            for (std::size_t i = 0; i < k_external_per_file; ++i) {
+                imports.push_back(RawImport{"java.util.External" + std::to_string(i), "import",
+                                            static_cast<int>(i)});
+            }
+            // One wildcard at a sibling package — exercises the namespace
+            // fallout path that fans out to every file in that package.
+            imports.push_back(RawImport{sibling, "import", static_cast<int>(k_external_per_file)});
+            per_file.push_back(
+                make_fi(internal_ids[cursor++], Language::Java, path, std::move(imports), {pkg}));
+        }
+    }
+
+    const auto t_start = std::chrono::steady_clock::now();
+    resolve_all(idx, "/fake/java", per_file);
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - t_start)
+                                .count();
+    EXPECT_LT(elapsed_ms, 2000) << "resolve_all took " << elapsed_ms
+                                << " ms — Java fanout regressed to a linear scan?";
+
+    // Correctness: every file gets (k_external_per_file) external edges plus
+    // wildcard fanout to k_files_per_package files in its sibling package.
+    std::size_t internal_edges = 0;
+    std::size_t external_edges = 0;
+    for (const std::int64_t id : internal_ids) {
+        for (const Dependency& d : idx.dependencies_of(id)) {
+            if (d.target_file_id == 0) {
+                ++external_edges;
+            }
+            else {
+                ++internal_edges;
+            }
+        }
+    }
+    EXPECT_EQ(external_edges, k_packages * k_files_per_package * k_external_per_file);
+    EXPECT_EQ(internal_edges, k_packages * k_files_per_package * k_files_per_package);
 }
 
 } // namespace

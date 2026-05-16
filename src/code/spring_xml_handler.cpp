@@ -257,6 +257,7 @@ void SpringXmlHandler::register_files(const manifest_scanner::Config& config, Co
 void SpringXmlHandler::emit_edges(const manifest_scanner::Config& config, CodeIndex& index)
 {
     const std::vector<FileEntry> files = index.snapshot_files();
+    const vectis::code::PathLookup path_lookup = vectis::code::build_path_lookup(files);
     std::vector<vectis::code::Dependency> pending;
 
     for (const auto& entry : m_entries) {
@@ -269,7 +270,7 @@ void SpringXmlHandler::emit_edges(const manifest_scanner::Config& config, CodeIn
             // but keep the original FQCN in import_string above.
             const std::string_view stripped = fqcn_without_nested(bean.fqcn);
             const std::vector<std::int64_t> candidates =
-                match_java_dotted_candidates(files, stripped);
+                match_java_dotted_candidates(path_lookup, stripped);
             if (candidates.size() == 1) {
                 edge.target_file_id = candidates.front();
             }
