@@ -24,17 +24,17 @@ class CodeIndex;
 struct Hotspot
 {
     std::int64_t file_id = 0;
-    std::int64_t symbol_id = 0;            ///< 0 when the hotspot is file-level
-    std::string symbol_name;               ///< empty when file-level
-    int line = 0;                          ///< 1-based start line; 0 for file-level
-    SymbolKind kind = SymbolKind::Unknown; ///< Unknown for file-level
+    std::int64_t symbol_id = 0;
+    std::string symbol_name;
+    int line = 0; ///< 1-based start line
+    SymbolKind kind = SymbolKind::Unknown;
     std::string reason; ///< "high complexity (24)", "large file (823 lines)", ...
     int severity = 1;   ///< 1 = minor, 2 = moderate, 3 = major
 
-    int complexity = 0; ///< symbol's cyclomatic complexity (0 = not a complexity hotspot)
-    int fan_in = 0;     ///< file's incoming dep count (0 = not a fan-in hotspot)
-    int fan_out = 0;    ///< file's outgoing dep count (0 = not a fan-out hotspot)
-    int line_count = 0; ///< file's line count (0 = not a large-file hotspot)
+    int complexity = 0;
+    int fan_in = 0;
+    int fan_out = 0;
+    int line_count = 0;
 };
 
 /// Default thresholds used by `detect_hotspots`. Conservative and

@@ -70,15 +70,14 @@ std::vector<Hotspot> detect_hotspots(const CodeIndex& index, HotspotThresholds t
     for (const FileEntry& file : files) {
         std::vector<std::string> reasons;
         int worst_severity = 0;
-        int triggered_line_count = 0;
-        int triggered_fan_in = 0;
-        int triggered_fan_out = 0;
+        Hotspot h;
+        h.file_id = file.id;
 
         if (file.line_count > thresholds.file_line_count) {
             reasons.push_back("large file (" + std::to_string(file.line_count) + " lines)");
             worst_severity = std::max(
                 worst_severity, severity_from_ratio(file.line_count, thresholds.file_line_count));
-            triggered_line_count = file.line_count;
+            h.line_count = file.line_count;
         }
 
         const int fan_out = static_cast<int>(index.dependencies_of(file.id).size());
@@ -86,7 +85,7 @@ std::vector<Hotspot> detect_hotspots(const CodeIndex& index, HotspotThresholds t
             reasons.push_back("high fan-out (" + std::to_string(fan_out) + " dependencies)");
             worst_severity =
                 std::max(worst_severity, severity_from_ratio(fan_out, thresholds.file_fan_out));
-            triggered_fan_out = fan_out;
+            h.fan_out = fan_out;
         }
 
         const int fan_in = static_cast<int>(index.dependents_of(file.id).size());
@@ -94,19 +93,13 @@ std::vector<Hotspot> detect_hotspots(const CodeIndex& index, HotspotThresholds t
             reasons.push_back("high fan-in (" + std::to_string(fan_in) + " dependents)");
             worst_severity =
                 std::max(worst_severity, severity_from_ratio(fan_in, thresholds.file_fan_in));
-            triggered_fan_in = fan_in;
+            h.fan_in = fan_in;
         }
 
         if (reasons.empty()) {
             continue;
         }
-        Hotspot h;
-        h.file_id = file.id;
-        h.symbol_id = 0;
         h.severity = worst_severity;
-        h.line_count = triggered_line_count;
-        h.fan_in = triggered_fan_in;
-        h.fan_out = triggered_fan_out;
         h.reason = reasons[0];
         for (std::size_t i = 1; i < reasons.size(); ++i) {
             h.reason += "; ";

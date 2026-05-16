@@ -393,11 +393,10 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
 
 TEST(DigestExporterTest, Hotspots_EmitStructuredDrivers)
 {
-    // The slim JSON's hotspots used to encode complexity / fan-in /
-    // fan-out only inside the `reason` string ("high complexity (42)
-    // in 'gnarly'"). Agent consumers had to string-parse to get the
-    // numbers. Hotspot now carries those values as structured fields;
-    // the exporter mirrors them in the JSON.
+    // Agents consume hotspot numbers as structured fields, not by
+    // regex-parsing `reason`. Symbol-level entries carry name/line/
+    // kind/complexity; file-level entries carry the trigger(s) that
+    // actually fired.
     CodeIndex index;
     FileEntry f;
     f.path_relative = "src/gnarly.cpp";

@@ -320,9 +320,8 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
             node["line"] = h.line;
             node["kind"] = std::string{symbol_kind_name(h.kind)};
         }
-        // Structured drivers — emit only the trigger(s) that actually
-        // fired so a consumer can tell "complexity hotspot" from
-        // "fan-in hotspot" without parsing `reason`.
+        // Emit only the trigger that fired; agents can branch on which
+        // numeric field is present instead of parsing `reason`.
         if (h.complexity != 0) {
             node["complexity"] = h.complexity;
         }
