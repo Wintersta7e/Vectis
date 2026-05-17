@@ -37,9 +37,16 @@ for f in "$BASE" "$CUR"; do
     fi
 done
 
+# Digests are intentionally timestamp-free for determinism, so we
+# attribute snapshots to wall clock via the file mtime instead.
+BASE_MTIME=$(date -u -r "$BASE" '+%Y-%m-%dT%H:%M:%SZ')
+CUR_MTIME=$(date -u -r "$CUR"  '+%Y-%m-%dT%H:%M:%SZ')
+
 DELTA=$(jq -n \
     --slurpfile b "$BASE" \
     --slurpfile c "$CUR" \
+    --arg base_mtime "$BASE_MTIME" \
+    --arg cur_mtime  "$CUR_MTIME" \
     '
     def files_set(d): d.files | map(.path) | unique;
     def hotspot_key: "\(.file)#\(.symbol_id // "")";
@@ -56,12 +63,12 @@ DELTA=$(jq -n \
     | central_set($cur) as $ccent
     | {
         base: {
-            generated_at: $base.generated_at,
+            snapshot_mtime: $base_mtime,
             project: $base.project,
             architecture: $base.architecture
         },
         current: {
-            generated_at: $cur.generated_at,
+            snapshot_mtime: $cur_mtime,
             project: $cur.project,
             architecture: $cur.architecture
         },
@@ -103,8 +110,8 @@ jq -r '
     def cap(arr; n): if (arr | length) > n then arr[0:n] + ["… +\(arr|length - n) more"] else arr end;
 
     "vectis-diff",
-    "  baseline: \(.base.generated_at)  (\(.base.project.name))",
-    "  current:  \(.current.generated_at)  (\(.current.project.name))",
+    "  baseline: \(.base.snapshot_mtime)  (\(.base.project.name))",
+    "  current:  \(.current.snapshot_mtime)  (\(.current.project.name))",
     "",
     "Architecture: \(.base.architecture.label) (\(.base.architecture.confidence)%) → \(.current.architecture.label) (\(.current.architecture.confidence)%)",
     "Scale: \(.scale.files.base) → \(.scale.files.current) files (\(fmt_signed(.scale.files.delta))), " +
