@@ -64,9 +64,17 @@ Result<void> StorageEngine::open(const std::filesystem::path& db_path)
     }
 
     const std::string path_str = db_path.string();
-    const int rc =
-        sqlite3_open_v2(path_str.c_str(), &m_impl->db,
-                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr);
+    // FULLMUTEX gives serialized mode: every sqlite3_* call on this
+    // connection is internally serialised by a per-connection recursive
+    // mutex. The header advertises that DML is serialised internally,
+    // and Statement::execute() (and the per-step loops in query() /
+    // query_each()) do not lock m_impl->write_mutex — only the
+    // begin/commit/rollback path does — so SQLite has to provide the
+    // bottom-level guarantee itself. The cost is one cheap mutex
+    // acquisition per API call, negligible at our scale.
+    const int rc = sqlite3_open_v2(
+        path_str.c_str(), &m_impl->db,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
 
     if (rc != SQLITE_OK) {
         std::string msg =
