@@ -77,6 +77,11 @@ struct FileEntry
     int line_count = 0;
     std::filesystem::file_time_type last_modified;
     std::string content_hash;
+    /// Namespaces / packages this file declares (Java `package`, C#
+    /// `namespace`, PHP `namespace`, Python module path, …). Kept on
+    /// the file so an incremental rescan can rebuild the resolver's
+    /// namespace index for unchanged files without re-parsing them.
+    std::vector<std::string> declared_namespaces;
 };
 
 /// Reverse of `symbol_kind_name`: parses a string back to a SymbolKind.

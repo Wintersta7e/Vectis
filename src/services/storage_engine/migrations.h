@@ -101,6 +101,17 @@ inline constexpr std::array k_migrations = {
         CREATE INDEX IF NOT EXISTS idx_deps_source ON dependencies(source_file_id);
         CREATE INDEX IF NOT EXISTS idx_deps_target ON dependencies(target_file_id);
     )"},
+    Migration{5, "file_declared_namespaces", R"(
+        -- The dependency resolver builds its namespace → files lookup
+        -- from the FileImports records produced during a scan. An
+        -- incremental rescan only re-extracts imports for changed
+        -- files, so namespaces declared in unchanged files vanished
+        -- from the lookup and every new import targeting them was
+        -- misclassified as external. Persist the namespaces per file
+        -- so the warm path can restore the full lookup without
+        -- re-parsing every source.
+        ALTER TABLE files ADD COLUMN namespaces TEXT NOT NULL DEFAULT '';
+    )"},
 };
 // clang-format on
 

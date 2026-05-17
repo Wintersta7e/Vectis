@@ -376,4 +376,67 @@ TEST_F(ScannerFixture, PruneMissingRemovesPathsAbsentFromVisitedSet)
     EXPECT_EQ(files[0].path_relative.filename().string(), "a.py");
 }
 
+TEST_F(ScannerFixture, IncrementalScanResolvesImportsAgainstUnchangedNamespaces)
+{
+    // Regression: an incremental rescan re-extracts imports only for
+    // changed files, but it built the resolver's namespace → file-ids
+    // lookup from those changed files alone. A new `using` in a
+    // touched file pointing at a namespace declared by an unchanged
+    // file resolved as external. Fix: unchanged files contribute their
+    // persisted declared_namespaces back into the per_file batch.
+
+    write("Models/User.cs", "namespace SampleApp.Models;\n"
+                            "public class User { public string Name; }\n");
+    write("Services/Service.cs", "namespace SampleApp.Services;\n"
+                                 "public class Service { }\n");
+
+    CodeIndex index;
+    ASSERT_TRUE(run_scan(index));
+    ASSERT_EQ(index.file_count(), 2U);
+
+    std::int64_t models_id = 0;
+    for (const auto& f : index.snapshot_files()) {
+        if (f.path_relative.generic_string() == "Models/User.cs") {
+            models_id = f.id;
+        }
+    }
+    ASSERT_NE(models_id, 0);
+
+    // Touch only Services/Service.cs — adds an import targeting the
+    // namespace declared by the (still on-disk, unchanged) User.cs.
+    write("Services/Service.cs", "namespace SampleApp.Services;\n"
+                                 "using SampleApp.Models;\n"
+                                 "public class Service { public User u; }\n");
+
+    ScanConfig cfg;
+    cfg.root = m_root;
+    cfg.epoch = 1;
+    std::atomic<std::int64_t> epoch{1};
+    const CancellationToken token{};
+
+    const auto result =
+        Scanner::run_incremental(cfg, index, m_parser, [](const ScanProgress&) {}, token, epoch);
+    ASSERT_TRUE(result.has_value());
+
+    // Service.cs got a fresh id when it was removed-and-re-added; look
+    // it up by path.
+    std::int64_t new_services_id = 0;
+    for (const auto& f : index.snapshot_files()) {
+        if (f.path_relative.generic_string() == "Services/Service.cs") {
+            new_services_id = f.id;
+        }
+    }
+    ASSERT_NE(new_services_id, 0);
+
+    bool resolved_to_models = false;
+    for (const auto& d : index.dependencies_of(new_services_id)) {
+        if (d.target_file_id == models_id) {
+            resolved_to_models = true;
+        }
+    }
+    EXPECT_TRUE(resolved_to_models)
+        << "incremental scan did not resolve `using SampleApp.Models` against the unchanged "
+        << "Models/User.cs — namespace context was dropped for unchanged files";
+}
+
 } // namespace

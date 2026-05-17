@@ -106,10 +106,12 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
         return r;
     }
 
-    // Insert files.
+    // Insert files. `namespaces` is the newline-joined set declared by
+    // this file — restored on the next load so an incremental rescan
+    // sees the full namespace context even for files it skips.
     auto ins_file = storage.prepare("INSERT INTO files (id, path, language, size, line_count, "
-                                    "last_modified, last_indexed, content_hash) "
-                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                                    "last_modified, last_indexed, content_hash, namespaces) "
+                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (!ins_file) {
         return tl::unexpected(ins_file.error());
     }
@@ -128,6 +130,8 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
         ins_file->bind(6, to_epoch_seconds(f.last_modified));
         ins_file->bind(7, static_cast<std::int64_t>(now_epoch));
         ins_file->bind(8, std::string_view{f.content_hash});
+        const auto ns_str = join_members(f.declared_namespaces);
+        ins_file->bind(9, std::string_view{ns_str});
         if (auto r = ins_file->execute(); !r) {
             return r;
         }
@@ -247,7 +251,7 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
 
     // Load files.
     auto sel_files = storage.prepare("SELECT id, path, language, size, line_count, last_modified, "
-                                     "content_hash FROM files ORDER BY id ASC");
+                                     "content_hash, namespaces FROM files ORDER BY id ASC");
     if (!sel_files) {
         return tl::unexpected(sel_files.error());
     }
@@ -275,6 +279,7 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
         f.line_count = static_cast<int>(row.get_int(4));
         f.last_modified = from_epoch_seconds(row.get_int(5));
         f.content_hash = row.get_text(6);
+        f.declared_namespaces = split_members(row.get_text(7));
         index.add_file_preserving_id(std::move(f));
     }
 

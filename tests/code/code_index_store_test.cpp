@@ -321,6 +321,37 @@ TEST_F(CodeIndexStoreTest, LoadFromEmptyDB_ReturnsError)
     EXPECT_EQ(r.error().kind, vectis::core::ErrorKind::StorageError);
 }
 
+TEST_F(CodeIndexStoreTest, DeclaredNamespacesRoundTrip)
+{
+    // The incremental dep resolver relies on persisted per-file
+    // namespaces to rebuild its lookup for files it skips. Verify the
+    // round-trip preserves them so the warm path has the same data
+    // available as a cold scan.
+    FileEntry f;
+    f.path_relative = "Models/User.cs";
+    f.language = Language::CSharp;
+    f.size = 64;
+    f.line_count = 3;
+    f.content_hash = "feedfacefeedface";
+    f.declared_namespaces = {"SampleApp.Models", "SampleApp.Models.Auth"};
+    const std::int64_t f_id = m_index.add_file(std::move(f));
+    (void)f_id;
+
+    CacheMetadata meta;
+    meta.project_root = "/some/project";
+    meta.scan_timestamp = "2026-05-18T00:00:00Z";
+    ASSERT_TRUE(save_index(m_storage, m_index, meta));
+
+    CodeIndex reloaded;
+    ASSERT_TRUE(load_index(m_storage, reloaded));
+
+    const auto files = reloaded.snapshot_files();
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files[0].declared_namespaces.size(), 2U);
+    EXPECT_EQ(files[0].declared_namespaces[0], "SampleApp.Models");
+    EXPECT_EQ(files[0].declared_namespaces[1], "SampleApp.Models.Auth");
+}
+
 TEST_F(CodeIndexStoreTest, NonContiguousFileIdsSurviveSaveLoadResave)
 {
     // Reproduces the FK violation triggered by an update/delete in an
