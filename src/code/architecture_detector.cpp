@@ -656,9 +656,34 @@ detect_node_library(const std::filesystem::path& project_root)
         return std::nullopt;
     }
     // Apps in monorepos are commonly marked private to block accidental
-    // publishes — a strong signal that this isn't a library.
-    if (pkg.find(R"("private": true)") != std::string::npos ||
-        pkg.find(R"("private":true)") != std::string::npos) {
+    // publishes — a strong signal that this isn't a library. Accept the
+    // common spacing variants (`"private":true`, `"private": true`,
+    // `"private" : true`) without dragging in a real JSON parser.
+    const auto matches_private_true = [&pkg]() {
+        std::size_t pos = 0;
+        while ((pos = pkg.find(R"("private")", pos)) != std::string::npos) {
+            std::size_t i = pos + std::char_traits<char>::length(R"("private")");
+            while (i < pkg.size() && (pkg[i] == ' ' || pkg[i] == '\t')) {
+                ++i;
+            }
+            if (i >= pkg.size() || pkg[i] != ':') {
+                pos = i;
+                continue;
+            }
+            ++i; // skip ':'
+            while (i < pkg.size() &&
+                   (pkg[i] == ' ' || pkg[i] == '\t' || pkg[i] == '\n' || pkg[i] == '\r')) {
+                ++i;
+            }
+            constexpr std::string_view k_true = "true";
+            if (pkg.compare(i, k_true.size(), k_true) == 0) {
+                return true;
+            }
+            pos = i;
+        }
+        return false;
+    };
+    if (matches_private_true()) {
         return std::nullopt;
     }
     const auto hit = [](std::string entry, std::string signal_value) {

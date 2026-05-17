@@ -785,6 +785,43 @@ TEST(ArchitectureDetectorTest, NodeLibrary_PrivatePackageIsNotLibrary)
     fs::remove_all(root);
 }
 
+TEST(ArchitectureDetectorTest, NodeLibrary_PrivateWithExtraSpaceIsNotLibrary)
+{
+    // Prettier and many hand-formatted package.jsons emit `"private" : true`
+    // (space before the colon). The detector must treat this as the same
+    // signal as the no-space variant — otherwise valid apps land in the
+    // Library bucket at 80% confidence.
+    const fs::path root = fresh_tmp("node_private_spaced");
+    write_file(root / "package.json", R"({"name":"foo","main":"index.js","private" : true})");
+    write_file(root / "index.js", "console.log('hi');\n");
+
+    CodeIndex idx;
+    add_file(idx, "index.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
+TEST(ArchitectureDetectorTest, NodeLibrary_PrivateAcrossNewlineIsNotLibrary)
+{
+    // A prettified JSON splits the key and value across lines. The
+    // tolerant matcher should still detect the private flag.
+    const fs::path root = fresh_tmp("node_private_newline");
+    write_file(root / "package.json", "{\n  \"name\":\"foo\",\n  \"main\":\"index.js\",\n"
+                                      "  \"private\":\n  true\n}\n");
+    write_file(root / "index.js", "console.log('hi');\n");
+
+    CodeIndex idx;
+    add_file(idx, "index.js", Language::JavaScript);
+
+    const auto result = detect_architecture(idx, root);
+    EXPECT_NE(result.label, ArchitectureLabel::Library) << "reasoning: " << result.reasoning;
+
+    fs::remove_all(root);
+}
+
 TEST(ArchitectureDetectorTest, PhpLibrary_TypeLibraryInComposer)
 {
     const fs::path root = fresh_tmp("php_lib_type");
