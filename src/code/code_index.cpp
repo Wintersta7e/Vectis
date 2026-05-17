@@ -108,6 +108,30 @@ std::int64_t CodeIndex::add_file(FileEntry file)
     return insert_file_locked(std::move(file), std::move(key));
 }
 
+std::int64_t CodeIndex::add_file_preserving_id(FileEntry file)
+{
+    const std::int64_t preserved_id = file.id;
+    std::string key = file.path_relative.generic_string();
+    const std::unique_lock lock(m_mutex);
+
+    const std::uint32_t bit = language_bit(file.language);
+    const std::size_t new_index = m_files.size();
+    m_files.push_back(std::move(file));
+    m_index_by_path.emplace(std::move(key), new_index);
+    m_file_count.fetch_add(1, std::memory_order_acq_rel);
+
+    if (bit != 0U) {
+        m_language_bits.fetch_or(bit, std::memory_order_acq_rel);
+    }
+    // Keep the monotonic counter strictly ahead of every restored id so
+    // any subsequent `add_file` cannot collide with a preserved id.
+    if (m_next_file_id <= preserved_id) {
+        m_next_file_id = preserved_id + 1;
+    }
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
+    return preserved_id;
+}
+
 std::int64_t CodeIndex::add_or_update_file_by_path(FileEntry file)
 {
     std::string key = file.path_relative.generic_string();
@@ -216,6 +240,31 @@ void CodeIndex::add_symbols(std::span<const Symbol> symbols)
         const std::size_t symbol_index = m_symbols.size();
         m_by_file[copy.file_id].push_back(symbol_index);
         m_symbols.push_back(std::move(copy));
+    }
+    m_symbol_count.fetch_add(symbols.size(), std::memory_order_acq_rel);
+    m_generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void CodeIndex::add_symbols_preserving_ids(std::span<const Symbol> symbols)
+{
+    if (symbols.empty()) {
+        return;
+    }
+
+    const std::unique_lock lock(m_mutex);
+
+    m_symbols.reserve(m_symbols.size() + symbols.size());
+    std::int64_t max_id_seen = 0;
+    for (const Symbol& incoming : symbols) {
+        const std::size_t symbol_index = m_symbols.size();
+        m_by_file[incoming.file_id].push_back(symbol_index);
+        m_symbols.push_back(incoming);
+        if (incoming.id > max_id_seen) {
+            max_id_seen = incoming.id;
+        }
+    }
+    if (m_next_symbol_id <= max_id_seen) {
+        m_next_symbol_id = max_id_seen + 1;
     }
     m_symbol_count.fetch_add(symbols.size(), std::memory_order_acq_rel);
     m_generation.fetch_add(1, std::memory_order_acq_rel);

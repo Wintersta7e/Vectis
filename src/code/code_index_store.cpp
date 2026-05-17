@@ -263,15 +263,19 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
 
     for (const auto& row : *file_rows) {
         FileEntry f;
-        // id will be reassigned by add_file; we rely on ORDER BY id ASC
-        // so the assigned IDs match the original ones.
+        // Preserve the cached id verbatim. `remove_file` + `compact`
+        // leave gaps in the id space, and the on-disk `dependencies`
+        // rows reference those exact ids — re-numbering on load would
+        // break every cross-file edge and trip the FK constraint on
+        // the next save.
+        f.id = row.get_int(0);
         f.path_relative = row.get_text(1);
         f.language = language_from_name(row.get_text(2));
         f.size = static_cast<std::uint64_t>(row.get_int(3));
         f.line_count = static_cast<int>(row.get_int(4));
         f.last_modified = from_epoch_seconds(row.get_int(5));
         f.content_hash = row.get_text(6);
-        index.add_file(std::move(f));
+        index.add_file_preserving_id(std::move(f));
     }
 
     // Load symbols — batch by file_id for add_symbols.
@@ -291,7 +295,10 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
     std::vector<Symbol> batch;
     const auto flush_batch = [&]() {
         if (!batch.empty()) {
-            index.add_symbols(batch);
+            // Preserve original symbol ids so `parent_id` chains stay
+            // valid across the cache round-trip. The non-preserving
+            // `add_symbols` would renumber and silently corrupt them.
+            index.add_symbols_preserving_ids(batch);
             batch.clear();
         }
     };
@@ -302,6 +309,7 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
                 current_file = file_id;
             }
             Symbol s;
+            s.id = row.get_int(0);
             s.file_id = file_id;
             s.name = row.get_text(2);
             s.kind = symbol_kind_from_name(row.get_text(3));

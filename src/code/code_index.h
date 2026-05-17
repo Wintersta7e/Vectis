@@ -61,6 +61,20 @@ public:
     /// already exist in the index.
     void add_symbols(std::span<const Symbol> symbols);
 
+    /// Restore a file with its already-assigned `file.id` (instead of
+    /// allocating a new id from the monotonic counter). Used by the
+    /// cache loader to round-trip non-contiguous ids that survive
+    /// `remove_file` + `compact` without renumbering. Bumps the
+    /// internal counter so subsequent `add_file` calls do not collide.
+    /// Caller must ensure ids are non-zero and unique within the index.
+    std::int64_t add_file_preserving_id(FileEntry file);
+
+    /// Restore a batch of symbols with their original `s.id` values
+    /// (and `s.parent_id` chains) intact. Counterpart to
+    /// `add_file_preserving_id` for the symbol table. Bumps the
+    /// internal symbol counter past the largest id observed.
+    void add_symbols_preserving_ids(std::span<const Symbol> symbols);
+
     /// Register one dependency edge. Called by the dependency
     /// resolver after a scan completes. Updates both the outgoing and
     /// incoming indexes for O(1) later lookup.

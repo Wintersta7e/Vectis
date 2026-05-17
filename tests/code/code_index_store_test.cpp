@@ -321,4 +321,68 @@ TEST_F(CodeIndexStoreTest, LoadFromEmptyDB_ReturnsError)
     EXPECT_EQ(r.error().kind, vectis::core::ErrorKind::StorageError);
 }
 
+TEST_F(CodeIndexStoreTest, NonContiguousFileIdsSurviveSaveLoadResave)
+{
+    // Reproduces the FK violation triggered by an update/delete in an
+    // incremental scan: when remove_file + compact leave gaps in the id
+    // space, the saved dependencies reference those gap ids. Reloading
+    // and resaving must NOT renumber the files, or the second save's
+    // FK constraint on dependencies(source_file_id) will fail.
+    populate_index();
+
+    // Add a third file with edges to/from it, then delete the *second*
+    // file so the surviving ids skip the deleted slot.
+    FileEntry f3;
+    f3.path_relative = "src/extra.cpp";
+    f3.language = Language::Cpp;
+    f3.size = 256;
+    f3.line_count = 12;
+    f3.content_hash = "deadbeefcafebabe";
+    const std::int64_t file3_id = m_index.add_file(std::move(f3));
+
+    Dependency e13;
+    e13.source_file_id = m_file1_id;
+    e13.target_file_id = file3_id;
+    e13.kind = "include";
+    e13.import_string = "extra.cpp";
+    m_index.add_dependency(std::move(e13));
+
+    m_index.remove_file(m_file2_id);
+    m_index.compact();
+
+    // After compact, file1 keeps id=1 and file3 keeps id=3 — a gap at 2.
+    const auto live_files = m_index.snapshot_files();
+    ASSERT_EQ(live_files.size(), 2U);
+    bool saw_gap = false;
+    for (const auto& f : live_files) {
+        if (f.id == file3_id) {
+            saw_gap = (file3_id > m_file1_id + 1);
+        }
+    }
+    ASSERT_TRUE(saw_gap) << "test setup did not produce a non-contiguous id";
+
+    CacheMetadata meta;
+    meta.project_root = "/some/project";
+    meta.scan_timestamp = "2026-05-18T00:00:00Z";
+    ASSERT_TRUE(save_index(m_storage, m_index, meta));
+
+    CodeIndex reloaded;
+    ASSERT_TRUE(load_index(m_storage, reloaded));
+
+    // Ids must come back unchanged so the in-memory edge targets line
+    // up with the persisted dependency rows.
+    const auto reloaded_files = reloaded.snapshot_files();
+    ASSERT_EQ(reloaded_files.size(), 2U);
+    for (const auto& f : reloaded_files) {
+        const bool ok = (f.id == m_file1_id) || (f.id == file3_id);
+        EXPECT_TRUE(ok) << "id " << f.id << " was renumbered on load";
+    }
+
+    // The classic failure mode: re-saving the reloaded index trips the
+    // dependencies → files FK because the edges still reference the
+    // pre-renumber ids. With preserved ids, the save must succeed.
+    auto resave = save_index(m_storage, reloaded, meta);
+    EXPECT_TRUE(resave) << resave.error().message;
+}
+
 } // namespace
