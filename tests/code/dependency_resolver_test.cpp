@@ -476,6 +476,45 @@ TEST(DependencyResolverTest, Go_ModuleImportResolvesToPackageFiles)
     fs::remove_all(tmp, ec);
 }
 
+// `go.mod` allows inline `// comment` text on the module line; without
+// the strip, the comment leaked into the prefix and every internal
+// import was misclassified as external.
+TEST(DependencyResolverTest, Go_ModuleLineStripsInlineComment)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("vectis_go_comment_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(&tmp)));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp, ec);
+    {
+        std::ofstream out(tmp / "go.mod");
+        out << "module example.com/app // local module fork\n\ngo 1.22\n";
+    }
+
+    CodeIndex idx;
+    const auto main_go = add(idx, "main.go", Language::Go);
+    const auto user_go = add(idx, "user/user.go", Language::Go);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(main_go, Language::Go, "main.go",
+                               {RawImport{"example.com/app/user", "import", 4}}));
+
+    resolve_all(idx, tmp, per_file);
+
+    bool linked = false;
+    for (const Dependency& d : idx.dependencies_of(main_go)) {
+        if (d.target_file_id == user_go) {
+            linked = true;
+        }
+    }
+    EXPECT_TRUE(linked) << "Inline `// comment` on module line broke prefix matching";
+
+    fs::remove_all(tmp, ec);
+}
+
 // -----------------------------------------------------------------------------
 // PHP — `use Slim\Factory\X;` resolves via PSR-4 path matching, with the
 // project's own namespace tree under any source root (`Slim/`, `src/Slim/`,

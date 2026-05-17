@@ -295,7 +295,14 @@ struct ResolveCtx
         constexpr std::string_view k_prefix = "module ";
         if (line.compare(start, k_prefix.size(), k_prefix) == 0) {
             std::string path = line.substr(start + k_prefix.size());
-            // Trim trailing comment / whitespace / quotes.
+            // Drop the trailing `// comment` first — go.mod allows
+            // inline comments on the `module` line and `//` cannot
+            // appear in a module path, so the first occurrence safely
+            // delimits where the path ends.
+            if (const std::size_t comment = path.find("//"); comment != std::string::npos) {
+                path.erase(comment);
+            }
+            // Trim trailing whitespace / quotes.
             while (!path.empty() && (std::isspace(static_cast<unsigned char>(path.back())) != 0 ||
                                      path.back() == '"' || path.back() == '\'')) {
                 path.pop_back();
