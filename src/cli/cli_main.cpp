@@ -660,8 +660,8 @@ int run_digest(const DigestArgs& args)
         .description =
             "Generate a structured digest of a source tree. Returns architecture label, "
             "scale, languages, hotspots, central files (PageRank), and dependency graph. "
-            "Default format is `slim` JSON (~5-50KB depending on project size); use `md` "
-            "for human-readable Markdown or `json` for the full digest with symbol bodies.",
+            "Default format is `slim` JSON (~5-50KB depending on project size); use `json` "
+            "for the full digest with symbol bodies.",
         .input_schema_json = R"({
             "type": "object",
             "properties": {
@@ -671,9 +671,9 @@ int run_digest(const DigestArgs& args)
                 },
                 "format": {
                     "type": "string",
-                    "enum": ["slim", "json", "md"],
+                    "enum": ["slim", "json"],
                     "default": "slim",
-                    "description": "Output format. `slim` is the agent-optimised JSON; `json` is the full digest; `md` is human-readable Markdown."
+                    "description": "Output format. `slim` is the agent-optimised JSON; `json` is the full digest with symbol bodies."
                 }
             },
             "required": ["path"]
@@ -689,7 +689,7 @@ int run_digest(const DigestArgs& args)
                     throw McpHandlerError{-32602, "`format` must be a string"};
                 }
                 if (!parse_format(fmt_it->get<std::string>(), cli_args.format)) {
-                    throw McpHandlerError{-32602, "unknown format (expected slim|json|md)"};
+                    throw McpHandlerError{-32602, "unknown format (expected slim|json)"};
                 }
             }
             auto body = compute_digest_body(cli_args);
