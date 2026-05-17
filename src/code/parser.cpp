@@ -855,8 +855,14 @@ namespace {
 /// so a broken pattern doesn't repeatedly throw.
 [[nodiscard]] const std::regex* compiled_regex_for(std::string_view pattern)
 {
-    thread_local std::unordered_map<std::string_view, std::unique_ptr<std::regex>> cache;
-    if (const auto it = cache.find(pattern); it != cache.end()) {
+    // Owned-key cache: the predicate strings live inside the TSQuery,
+    // which is freed by the parser's destructor. The cache is
+    // thread_local and survives across parser teardown, so keying by
+    // string_view would leave us hashing/comparing dangling pointers
+    // on the next parser created on the same thread.
+    thread_local std::unordered_map<std::string, std::unique_ptr<std::regex>> cache;
+    std::string key{pattern};
+    if (const auto it = cache.find(key); it != cache.end()) {
         return it->second.get();
     }
     std::unique_ptr<std::regex> compiled;
@@ -868,7 +874,7 @@ namespace {
         VECTIS_LOG_WARN("predicate regex compile failed: pattern='{}' error='{}'", pattern,
                         e.what());
     }
-    const auto it = cache.emplace(pattern, std::move(compiled)).first;
+    const auto it = cache.emplace(std::move(key), std::move(compiled)).first;
     return it->second.get();
 }
 
