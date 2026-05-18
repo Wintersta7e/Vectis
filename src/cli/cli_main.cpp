@@ -301,6 +301,17 @@ run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& 
         return vectis::core::make_error(vectis::core::ErrorKind::IoError, "cannot create cache dir",
                                         ec.message());
     }
+    // Drop a `.gitignore` so `git add -A` in the scanned repo never
+    // stages the cache. The default cache location is
+    // `<scanned>/vectis-data/` which sits inside the user's tree;
+    // this keeps the side effect from leaking into commits.
+    const fs::path cache_gitignore = cache_dir / ".gitignore";
+    if (!fs::exists(cache_gitignore, ec)) {
+        std::ofstream out{cache_gitignore};
+        if (out) {
+            out << "*\n";
+        }
+    }
 
     vectis::services::StorageEngine storage;
     const fs::path db_path = cache_dir / "vectis.db";
