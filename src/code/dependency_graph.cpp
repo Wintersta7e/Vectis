@@ -119,12 +119,12 @@ struct TarjanState
 
 } // namespace
 
-std::vector<DependencyCycle> detect_cycles(const CodeIndex& index)
+std::vector<DependencyCycle> detect_cycles(std::span<const Dependency> deps)
 {
     TarjanState state;
 
     // Build the adjacency list from internal (resolved) edges only.
-    for (const Dependency& dep : index.all_dependencies()) {
+    for (const Dependency& dep : deps) {
         if (dep.target_file_id == 0) {
             continue; // external, doesn't participate in cycles
         }
@@ -154,6 +154,12 @@ std::vector<DependencyCycle> detect_cycles(const CodeIndex& index)
     }
 
     return state.cycles;
+}
+
+std::vector<DependencyCycle> detect_cycles(const CodeIndex& index)
+{
+    const std::vector<Dependency> deps = index.all_dependencies();
+    return detect_cycles(std::span<const Dependency>{deps});
 }
 
 } // namespace vectis::code

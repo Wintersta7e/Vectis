@@ -150,8 +150,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 /// - `cycles`: array of arrays of paths, one per detected cycle.
 ///   Full format only — slim drops cycles to stay token-cheap.
 /// - `stats`: totals for quick scanning.
-[[nodiscard]] nlohmann::json
-build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, bool include_cycles)
+[[nodiscard]] nlohmann::json build_dependency_graph_json(std::span<const Dependency> deps_in,
+                                                         const FileIdToPath& lookup,
+                                                         bool include_cycles)
 {
     nlohmann::json graph;
     nlohmann::json edges_array = nlohmann::json::array();
@@ -164,7 +165,7 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
     // index. Source-language imports and manifest-pass edges land at
     // different points in the pipeline, so insertion order isn't
     // stable across the warm-cache path.
-    auto deps = index.all_dependencies();
+    std::vector<Dependency> deps(deps_in.begin(), deps_in.end());
     std::ranges::sort(deps, dependency_emission_less);
 
     for (const Dependency& dep : deps) {
@@ -191,7 +192,7 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
     // (paths per cycle, full format only) and the `stats.cycles`
     // count (always — slim consumers need this to flag tangled
     // graphs without parsing the array).
-    const std::vector<DependencyCycle> cycles = detect_cycles(index);
+    const std::vector<DependencyCycle> cycles = detect_cycles(deps_in);
     if (include_cycles) {
         nlohmann::json cycles_array = nlohmann::json::array();
         for (const DependencyCycle& cycle : cycles) {
@@ -355,12 +356,13 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
 /// cap). Always emits the `score` rounded to 6 decimal places — small
 /// enough to keep round-trip diffs stable but precise enough to break
 /// ties between adjacent ranks.
-[[nodiscard]] nlohmann::json build_central_files_json(const CodeIndex& index,
+[[nodiscard]] nlohmann::json build_central_files_json(std::span<const FileEntry> files,
+                                                      std::span<const Dependency> deps,
                                                       const FileIdToPath& lookup,
                                                       std::size_t max_entries)
 {
     auto out = nlohmann::json::array();
-    const std::vector<PageRankResult> ranked = compute_pagerank(index);
+    const std::vector<PageRankResult> ranked = compute_pagerank(files, deps);
     const std::size_t cap = max_entries == 0 ? ranked.size() : std::min(max_entries, ranked.size());
     for (std::size_t i = 0; i < cap; ++i) {
         const PageRankResult& r = ranked[i];
@@ -395,7 +397,10 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
                                         bool include_file_details)
 {
     const std::vector<FileEntry> files = index.snapshot_files();
+    const std::vector<Dependency> deps_snapshot = index.all_dependencies();
     const FileIdToPath lookup = build_file_id_to_path(files);
+    const std::span<const FileEntry> files_span{files};
+    const std::span<const Dependency> deps_span{deps_snapshot};
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
@@ -441,28 +446,27 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
 
     // Dependency graph: full format includes externals + cycles;
     // slim includes only resolved edges (no cycles, no externals).
-    root["dependency_graph"] = build_dependency_graph_json(index, lookup, include_file_details);
+    root["dependency_graph"] = build_dependency_graph_json(deps_span, lookup, include_file_details);
 
     // Architecture is cheap (~150 bytes) and the single highest-value
     // orientation signal — worth emitting in both slim and full.
     root["architecture"] = build_architecture_json(index, options);
     if (include_file_details) {
-        root["hotspots"] = build_hotspots_json(index, std::span<const FileEntry>{files}, lookup,
-                                               options.project_root,
+        root["hotspots"] = build_hotspots_json(index, files_span, lookup, options.project_root,
                                                /*include_excerpts=*/true,
                                                /*max_entries=*/0);
-        root["central_files"] = build_central_files_json(index, lookup,
+        root["central_files"] = build_central_files_json(files_span, deps_span, lookup,
                                                          /*max_entries=*/0);
         root["symbols"] = std::move(symbols_flat);
     }
     else {
         constexpr std::size_t k_slim_hotspot_cap = 10;
         constexpr std::size_t k_slim_central_files_cap = 10;
-        root["hotspots"] = build_hotspots_json(index, std::span<const FileEntry>{files}, lookup,
-                                               options.project_root,
+        root["hotspots"] = build_hotspots_json(index, files_span, lookup, options.project_root,
                                                /*include_excerpts=*/false,
                                                /*max_entries=*/k_slim_hotspot_cap);
-        root["central_files"] = build_central_files_json(index, lookup, k_slim_central_files_cap);
+        root["central_files"] =
+            build_central_files_json(files_span, deps_span, lookup, k_slim_central_files_cap);
     }
 
     return root;
