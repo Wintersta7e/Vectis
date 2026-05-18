@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -146,6 +147,19 @@ void scan_fixture_full_digest(std::string_view fixture_name, CodeIndex& index)
         mc, index, collect->visited_paths, vectis::code::manifest_scanner::default_handlers());
 
     Scanner::resolve(index, fixture_root, collect->per_file_imports);
+}
+
+/// Collect every `csproj-sdk-flag` import_string sourced from `csproj_id`.
+/// Three fixture tests assert against the same set, so factor the walk.
+std::set<std::string> collect_sdk_flag_markers(const CodeIndex& index, std::int64_t csproj_id)
+{
+    std::set<std::string> markers;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind == "csproj-sdk-flag" && d.source_file_id == csproj_id) {
+            markers.insert(d.import_string);
+        }
+    }
+    return markers;
 }
 
 TEST(FixturesTest, SamplePython_ScansAndExtractsSymbols)
@@ -513,46 +527,40 @@ TEST(FixturesTest, SampleDotnetWpf_EmitsSdkFlagEdgesForUseWpfAndSdk)
 
     const auto csproj_id = index.file_id_for_path("WpfApp.csproj");
     ASSERT_NE(csproj_id, 0);
+    const auto markers = collect_sdk_flag_markers(index, csproj_id);
+    EXPECT_TRUE(markers.contains("Microsoft.NET.Sdk.WindowsDesktop"));
+    EXPECT_TRUE(markers.contains("Microsoft.NET.Sdk.WindowsDesktop.WPF"));
+}
 
-    bool sdk_marker = false;
-    bool wpf_marker = false;
-    for (const auto& d : index.all_dependencies()) {
-        if (d.kind != "csproj-sdk-flag" || d.source_file_id != csproj_id) {
-            continue;
-        }
-        if (d.import_string == "Microsoft.NET.Sdk.WindowsDesktop") {
-            sdk_marker = true;
-        }
-        else if (d.import_string == "Microsoft.NET.Sdk.WindowsDesktop.WPF") {
-            wpf_marker = true;
-        }
-    }
-    EXPECT_TRUE(sdk_marker) << "Sdk=Microsoft.NET.Sdk.WindowsDesktop must emit a sdk-flag edge";
-    EXPECT_TRUE(wpf_marker) << "<UseWPF>true</UseWPF> must emit a sdk-flag edge";
+TEST(FixturesTest, SampleDotnetFlagsTitlecase_HandlesMixedCaseUseFlags)
+{
+    // Visual Studio's "WPF support" dialog writes <UseWPF>True</UseWPF>
+    // (capital T) when a developer flips the option through the UI.
+    // property_is_true must accept those mixed-case forms via
+    // to_lower_ascii, and likewise reject `FALSE` (all-caps false).
+    CodeIndex index;
+    scan_fixture_full_digest("sample-dotnet-flags-titlecase", index);
+
+    const auto csproj_id = index.file_id_for_path("TitleCaseApp.csproj");
+    ASSERT_NE(csproj_id, 0);
+    const auto markers = collect_sdk_flag_markers(index, csproj_id);
+    EXPECT_TRUE(markers.contains("Microsoft.NET.Sdk.WindowsDesktop.WPF"))
+        << "<UseWPF>True</UseWPF> (Title Case) must emit the marker";
+    EXPECT_FALSE(markers.contains("Microsoft.NET.Sdk.WindowsDesktop.WindowsForms"))
+        << "<UseWindowsForms>FALSE</UseWindowsForms> must NOT emit the marker";
 }
 
 TEST(FixturesTest, SampleDotnetFlagsFalse_EmitsNoSdkFlagEdgesWhenAllUseFlagsFalse)
 {
     // Regression test for the property_is_true negative path: an
     // explicit `<UseWPF>false</UseWPF>` (and siblings) must NOT emit
-    // a csproj-sdk-flag edge. A regression in property_is_true that
-    // treated "false" as truthy would otherwise misclassify every
-    // class library that explicitly opts out of WPF/WinForms/WinUI.
+    // any csproj-sdk-flag edge.
     CodeIndex index;
     scan_fixture_full_digest("sample-dotnet-flags-false", index);
 
     const auto csproj_id = index.file_id_for_path("PlainLib.csproj");
     ASSERT_NE(csproj_id, 0);
-
-    bool any_sdk_flag = false;
-    for (const auto& d : index.all_dependencies()) {
-        if (d.kind == "csproj-sdk-flag" && d.source_file_id == csproj_id) {
-            any_sdk_flag = true;
-            break;
-        }
-    }
-    EXPECT_FALSE(any_sdk_flag)
-        << "explicit <UseWPF>false</UseWPF> et al must NOT emit any sdk-flag edge";
+    EXPECT_TRUE(collect_sdk_flag_markers(index, csproj_id).empty());
 }
 
 TEST(FixturesTest, SampleDotnetWinuiSlnx_FiresDesktopUiHintViaSlnxRoot)

@@ -432,6 +432,32 @@ TEST_F(ManifestDepsFixture, SetupPyDjangoCanonicalises)
     EXPECT_NE(std::ranges::find(deps, "some-dotted-name"), deps.end());
 }
 
+TEST_F(ManifestDepsFixture, RequirementsTxtLeadingAndTrailingSeparatorsStripped)
+{
+    // Real packages exist with leading/trailing separator characters
+    // (e.g. `_pytest`, the internal pytest helpers package). Canonical
+    // PEP 503 output drops them so the matcher sees the bare name.
+    const auto path = write_file("requirements.txt", "_pytest==7.0\n"
+                                                     ".dotleading\n"
+                                                     "trailing-\n");
+    const auto deps = extract_requirements_txt(path);
+    EXPECT_NE(std::ranges::find(deps, "pytest"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "dotleading"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "trailing"), deps.end());
+}
+
+TEST_F(ManifestDepsFixture, RequirementsTxtConsecutiveSeparatorsCollapsed)
+{
+    // Runs of `[_.-]` collapse to a single `-` so `some__pkg` and
+    // `some..pkg` and `some--pkg` all canonicalise identically.
+    const auto path = write_file("requirements.txt", "some__pkg==1.0\n"
+                                                     "some..pkg==1.0\n"
+                                                     "some--pkg==1.0\n");
+    const auto deps = extract_requirements_txt(path);
+    EXPECT_EQ(deps.size(), 1U);
+    EXPECT_NE(std::ranges::find(deps, "some-pkg"), deps.end());
+}
+
 // ----- extract_cargo -----------------------------------------------------
 
 TEST_F(ManifestDepsFixture, CargoExtractsSimpleDependencies)

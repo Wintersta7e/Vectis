@@ -30,13 +30,9 @@ void collect_object_keys(const nlohmann::json& parent, std::string_view child_na
     }
 }
 
-/// Extract the leading package-name token from a PEP 508 requirement
-/// string. PEP 508 starts with an identifier ([A-Za-z0-9._-]+) and
-/// Normalise a python distribution name per PEP 503: lowercase, then
-/// collapse runs of `[_.-]` to a single `-`. The framework_hints py
-/// table is keyed by the canonical lowercase short name (e.g. `django`,
-/// `flask`); a Poetry `Django = "^4.0"` or a setup.py `"Flask>=2"`
-/// must canonicalise to match, not just the requirements.txt path.
+/// Canonicalise a Python distribution name per PEP 503: lowercase and
+/// collapse runs of `[_.-]` into a single `-`, then strip any leading
+/// or trailing separators.
 [[nodiscard]] std::string normalise_pep503(std::string_view raw)
 {
     std::string out;
