@@ -31,6 +31,7 @@
 #include "core/log.h"
 #include "core/result.h"
 #include "core/task_queue.h"
+#include "platform/file_io.h"
 #include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
 
@@ -304,15 +305,12 @@ run_cached(const vectis::code::ScanConfig& config, const std::filesystem::path& 
                                         ec.message());
     }
     // Drop a `.gitignore` so `git add -A` in the scanned repo never
-    // stages the cache. The default cache location is
-    // `<scanned>/vectis-data/` which sits inside the user's tree;
-    // this keeps the side effect from leaking into commits.
+    // stages the cache. Default cache lives at `<scanned>/vectis-data/`
+    // which sits inside the user's tree.
     const fs::path cache_gitignore = cache_dir / ".gitignore";
-    if (!fs::exists(cache_gitignore, ec)) {
-        std::ofstream out{cache_gitignore};
-        if (out) {
-            out << "*\n";
-        }
+    std::error_code gi_ec;
+    if (!fs::exists(cache_gitignore, gi_ec)) {
+        (void)vectis::platform::write_file(cache_gitignore, "*\n");
     }
 
     vectis::services::StorageEngine storage;
@@ -671,6 +669,27 @@ void reject_unknown_args(const nlohmann::json& args,
     }
 }
 
+/// Apply optional `cache` / `cache_dir` keys from an MCP arguments
+/// object onto the matching CLI fields. Mirrors the CLI: `cache_dir`
+/// implies `cache`.
+void apply_mcp_cache_args(const nlohmann::json& args, bool& use_cache,
+                          std::filesystem::path& cache_dir)
+{
+    if (const auto it = args.find("cache"); it != args.end()) {
+        if (!it->is_boolean()) {
+            throw McpHandlerError{-32602, "`cache` must be a boolean"};
+        }
+        use_cache = it->get<bool>();
+    }
+    if (const auto it = args.find("cache_dir"); it != args.end()) {
+        if (!it->is_string()) {
+            throw McpHandlerError{-32602, "`cache_dir` must be a string"};
+        }
+        cache_dir = it->get<std::string>();
+        use_cache = true;
+    }
+}
+
 /// Map a Result error to McpHandlerError. IoError maps to JSON-RPC's
 /// "Invalid params" since the caller-supplied path is the usual root
 /// cause; everything else is "Internal error".
@@ -736,19 +755,7 @@ void reject_unknown_args(const nlohmann::json& args,
                     throw McpHandlerError{-32602, "unknown format (expected slim|json)"};
                 }
             }
-            if (const auto cache_it = args.find("cache"); cache_it != args.end()) {
-                if (!cache_it->is_boolean()) {
-                    throw McpHandlerError{-32602, "`cache` must be a boolean"};
-                }
-                cli_args.use_cache = cache_it->get<bool>();
-            }
-            if (const auto cd_it = args.find("cache_dir"); cd_it != args.end()) {
-                if (!cd_it->is_string()) {
-                    throw McpHandlerError{-32602, "`cache_dir` must be a string"};
-                }
-                cli_args.cache_dir = cd_it->get<std::string>();
-                cli_args.use_cache = true; // mirrors the CLI: --cache-dir implies --cache
-            }
+            apply_mcp_cache_args(args, cli_args.use_cache, cli_args.cache_dir);
             auto body = compute_digest_body(cli_args);
             if (!body) {
                 throw_handler_error(body.error());
@@ -792,19 +799,7 @@ void reject_unknown_args(const nlohmann::json& args,
             ExplainArgs cli_args;
             cli_args.project_root = require_string_arg(args, "path");
             cli_args.quiet = true;
-            if (const auto cache_it = args.find("cache"); cache_it != args.end()) {
-                if (!cache_it->is_boolean()) {
-                    throw McpHandlerError{-32602, "`cache` must be a boolean"};
-                }
-                cli_args.use_cache = cache_it->get<bool>();
-            }
-            if (const auto cd_it = args.find("cache_dir"); cd_it != args.end()) {
-                if (!cd_it->is_string()) {
-                    throw McpHandlerError{-32602, "`cache_dir` must be a string"};
-                }
-                cli_args.cache_dir = cd_it->get<std::string>();
-                cli_args.use_cache = true;
-            }
+            apply_mcp_cache_args(args, cli_args.use_cache, cli_args.cache_dir);
             auto body = compute_explain_body(cli_args);
             if (!body) {
                 throw_handler_error(body.error());

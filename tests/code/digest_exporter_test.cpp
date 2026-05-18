@@ -29,6 +29,15 @@ using vectis::code::Symbol;
 using vectis::code::SymbolKind;
 using vectis::code::Visibility;
 
+std::int64_t add_cpp_file(CodeIndex& index, const std::string& path, int line_count)
+{
+    FileEntry f;
+    f.path_relative = path;
+    f.language = Language::Cpp;
+    f.line_count = line_count;
+    return index.add_file(std::move(f));
+}
+
 /// Populate a small synthetic index with two files and four symbols.
 /// Used by every test in this file so the assertions share a fixture.
 void populate_synthetic_index(CodeIndex& index)
@@ -574,61 +583,38 @@ TEST(DigestExporterTest, SlimJson_DiversifiesHotspotBuckets)
     // fan-out, and size each get representation when present.
     CodeIndex index;
 
-    // 20 high-fan-in hubs (every other file depends on each one).
     std::vector<std::int64_t> hub_ids;
     hub_ids.reserve(20);
     for (int i = 0; i < 20; ++i) {
-        FileEntry f;
-        f.path_relative = "src/hub_" + std::to_string(i) + ".h";
-        f.language = Language::Cpp;
-        f.line_count = 50;
-        hub_ids.push_back(index.add_file(std::move(f)));
+        hub_ids.push_back(add_cpp_file(index, "src/hub_" + std::to_string(i) + ".h", 50));
     }
-    // 35 dependent files referencing every hub → each hub gets fan-in 35.
     std::vector<std::int64_t> dep_ids;
     dep_ids.reserve(35);
     for (int i = 0; i < 35; ++i) {
-        FileEntry f;
-        f.path_relative = "src/dep_" + std::to_string(i) + ".cpp";
-        f.language = Language::Cpp;
-        f.line_count = 100;
-        dep_ids.push_back(index.add_file(std::move(f)));
+        dep_ids.push_back(add_cpp_file(index, "src/dep_" + std::to_string(i) + ".cpp", 100));
     }
+    std::vector<Dependency> deps;
+    deps.reserve(hub_ids.size() * dep_ids.size() + 16);
     for (std::int64_t hub : hub_ids) {
         for (std::int64_t dep : dep_ids) {
-            index.add_dependency(vectis::code::Dependency{.source_file_id = dep,
-                                                          .target_file_id = hub,
-                                                          .import_string = "",
-                                                          .kind = "cpp-include"});
+            deps.push_back(Dependency{.source_file_id = dep,
+                                      .target_file_id = hub,
+                                      .import_string = "",
+                                      .kind = "include"});
         }
     }
-
-    // One high-fan-out file (depends on 16 things → > default 15).
-    FileEntry fan_out;
-    fan_out.path_relative = "src/wide.cpp";
-    fan_out.language = Language::Cpp;
-    fan_out.line_count = 100;
-    const std::int64_t fan_out_id = index.add_file(std::move(fan_out));
+    const std::int64_t fan_out_id = add_cpp_file(index, "src/wide.cpp", 100);
     for (int i = 0; i < 16; ++i) {
-        index.add_dependency(vectis::code::Dependency{.source_file_id = fan_out_id,
-                                                      .target_file_id = hub_ids[i],
-                                                      .import_string = "",
-                                                      .kind = "cpp-include"});
+        deps.push_back(Dependency{.source_file_id = fan_out_id,
+                                  .target_file_id = hub_ids[i],
+                                  .import_string = "",
+                                  .kind = "include"});
     }
+    index.add_dependencies(deps);
 
-    // One large file (> default 500 lines).
-    FileEntry big;
-    big.path_relative = "src/big.cpp";
-    big.language = Language::Cpp;
-    big.line_count = 1500;
-    index.add_file(std::move(big));
+    (void)add_cpp_file(index, "src/big.cpp", 1500);
 
-    // One high-complexity function.
-    FileEntry host;
-    host.path_relative = "src/host.cpp";
-    host.language = Language::Cpp;
-    host.line_count = 100;
-    const std::int64_t host_id = index.add_file(std::move(host));
+    const std::int64_t host_id = add_cpp_file(index, "src/host.cpp", 100);
     const std::array<Symbol, 1> batch = {Symbol{.file_id = host_id,
                                                 .name = "gnarly",
                                                 .kind = SymbolKind::Method,
