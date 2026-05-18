@@ -193,7 +193,7 @@ TEST(FrameworkHintsTest, DotNetMauiFiresDesktopUI)
 
 TEST(FrameworkHintsTest, DotNetWinUI2FiresDesktopUI)
 {
-    // PowerToys-class apps ship WinUI 2 via the standalone
+    // Hybrid WPF + WinUI apps ship WinUI 2 via the standalone
     // Microsoft.UI.Xaml package rather than WindowsAppSDK, so the
     // hint must fire on that key too.
     const std::vector<std::string> deps = {"Microsoft.UI.Xaml:2.8.6"};
@@ -204,6 +204,31 @@ TEST(FrameworkHintsTest, DotNetWinUI2FiresDesktopUI)
 TEST(FrameworkHintsTest, DotNetWpfBehaviorsFiresDesktopUI)
 {
     const std::vector<std::string> deps = {"Microsoft.Xaml.Behaviors.Wpf:1.1.135"};
+    const auto hits = match(Ecosystem::DotNet, deps);
+    EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
+}
+
+TEST(FrameworkHintsTest, DotNetSdkOnlyWpfFiresDesktopUI)
+{
+    // The csproj handler emits versionless synthetic markers when a
+    // project sets <UseWPF>true</UseWPF> with no nuget refs. They land
+    // in the deps stream alongside real PackageReferences and must
+    // still fire DesktopUI.
+    const std::vector<std::string> deps = {"Microsoft.NET.Sdk.WindowsDesktop.WPF"};
+    const auto hits = match(Ecosystem::DotNet, deps);
+    EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
+}
+
+TEST(FrameworkHintsTest, DotNetSdkOnlyWinFormsFiresDesktopUI)
+{
+    const std::vector<std::string> deps = {"Microsoft.NET.Sdk.WindowsDesktop.WindowsForms"};
+    const auto hits = match(Ecosystem::DotNet, deps);
+    EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
+}
+
+TEST(FrameworkHintsTest, DotNetWindowsDesktopSdkFiresDesktopUI)
+{
+    const std::vector<std::string> deps = {"Microsoft.NET.Sdk.WindowsDesktop"};
     const auto hits = match(Ecosystem::DotNet, deps);
     EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
 }

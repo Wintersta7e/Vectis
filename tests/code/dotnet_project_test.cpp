@@ -177,6 +177,32 @@ TEST(ParseCsprojTest, HandlesMultiplePropertyGroupBlocks)
     EXPECT_EQ(data.properties.at("Foo"), "FOO_VALUE");
 }
 
+TEST(ParseCsprojTest, CapturesRootSdkAttribute)
+{
+    // The root `<Project Sdk="...">` attribute is required to detect
+    // SDK-only WPF / WinForms apps that carry no PackageReference.
+    constexpr std::string_view input =
+        R"xml(<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+</Project>)xml";
+    const auto data = parse_csproj_or_die(input);
+    EXPECT_EQ(data.properties.at("__SdkAttribute"), "Microsoft.NET.Sdk.WindowsDesktop");
+    EXPECT_EQ(data.properties.at("UseWPF"), "true");
+}
+
+TEST(ParseCsprojTest, MissingSdkAttributeLeavesNoSyntheticKey)
+{
+    constexpr std::string_view input = R"xml(<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>)xml";
+    const auto data = parse_csproj_or_die(input);
+    EXPECT_EQ(data.properties.find("__SdkAttribute"), data.properties.end());
+}
+
 // ----- packages.props (CPM) ------------------------------------------
 
 TEST(ParsePackagesPropsTest, ExtractsPackageVersionEntries)

@@ -1574,8 +1574,9 @@ ecosystem_for_manifest(std::string_view filename) noexcept
 }
 
 /// For Java/.NET ecosystems, augment `deps` with the dep-edge coords
-/// already in the index (the manifest scanner emits `maven*` and
-/// `csproj-package` edges). For other ecosystems the file-based
+/// already in the index (the manifest scanner emits `maven*`,
+/// `csproj-package`, and `csproj-sdk-flag` edges). For other
+/// ecosystems the file-based
 /// extractor in `detect_root_manifest` already populated `deps`, so
 /// this is a no-op.
 void augment_with_index_deps(std::vector<std::string>& deps, hints::Ecosystem eco,
@@ -1587,7 +1588,7 @@ void augment_with_index_deps(std::vector<std::string>& deps, hints::Ecosystem ec
     for (const auto& edge : index.all_dependencies()) {
         const bool is_maven_kind =
             edge.kind == "maven" || edge.kind == "maven-managed" || edge.kind == "maven-bom";
-        const bool is_dotnet_kind = edge.kind == "csproj-package";
+        const bool is_dotnet_kind = edge.kind == "csproj-package" || edge.kind == "csproj-sdk-flag";
         const bool keep = (eco == hints::Ecosystem::Maven && is_maven_kind) ||
                           (eco == hints::Ecosystem::DotNet && is_dotnet_kind);
         if (keep) {

@@ -229,6 +229,14 @@ const Table& dotnet_table()
         // unambiguous when they do appear.
         {"Microsoft.Xaml.Behaviors.Wpf", FrameworkHint::DesktopUI},
         {"Microsoft.Toolkit.Wpf.UI.Controls", FrameworkHint::DesktopUI},
+        // Synthetic SDK-flag markers emitted by the csproj handler
+        // when `<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">`,
+        // `<UseWPF>true</UseWPF>`, or `<UseWindowsForms>true</...>`
+        // is present. These cover the SDK-only WPF / WinForms case
+        // that has no PackageReference equivalent.
+        {"Microsoft.NET.Sdk.WindowsDesktop", FrameworkHint::DesktopUI},
+        {"Microsoft.NET.Sdk.WindowsDesktop.WPF", FrameworkHint::DesktopUI},
+        {"Microsoft.NET.Sdk.WindowsDesktop.WindowsForms", FrameworkHint::DesktopUI},
     };
     return k_table;
 }

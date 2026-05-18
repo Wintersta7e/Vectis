@@ -502,6 +502,34 @@ TEST(FixturesTest, SampleDotnetCpm_RegistersFiveManifestsAndResolvesViaCPM)
     EXPECT_EQ(sln_internal, 2U) << "Solution.sln → App.csproj and Lib.csproj";
 }
 
+TEST(FixturesTest, SampleDotnetWpf_EmitsSdkFlagEdgesForUseWpfAndSdk)
+{
+    // SDK-only WPF apps carry no PackageReference, so the handler emits
+    // `csproj-sdk-flag` markers from <UseWPF> and the root Sdk attribute
+    // to keep the desktop-UI hint detectable end-to-end.
+    CodeIndex index;
+    scan_fixture_full_digest("sample-dotnet-wpf", index);
+
+    const auto csproj_id = index.file_id_for_path("WpfApp.csproj");
+    ASSERT_NE(csproj_id, 0);
+
+    bool sdk_marker = false;
+    bool wpf_marker = false;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind != "csproj-sdk-flag" || d.source_file_id != csproj_id) {
+            continue;
+        }
+        if (d.import_string == "Microsoft.NET.Sdk.WindowsDesktop") {
+            sdk_marker = true;
+        }
+        else if (d.import_string == "Microsoft.NET.Sdk.WindowsDesktop.WPF") {
+            wpf_marker = true;
+        }
+    }
+    EXPECT_TRUE(sdk_marker) << "Sdk=Microsoft.NET.Sdk.WindowsDesktop must emit a sdk-flag edge";
+    EXPECT_TRUE(wpf_marker) << "<UseWPF>true</UseWPF> must emit a sdk-flag edge";
+}
+
 TEST(FixturesTest, SampleSpringXml_RegistersXmlFilesAndEmitsSpringEdges)
 {
     CodeIndex index;

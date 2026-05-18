@@ -254,6 +254,41 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
         edge.import_string.append(version);
         pending.push_back(std::move(edge));
     }
+
+    // SDK / Use-flag markers: SDK-only WPF / WinForms apps and projects
+    // targeting the WindowsDesktop SDK have no unique PackageReference,
+    // so they used to slip past the manifest hint matcher. Emit one
+    // synthetic `csproj-sdk-flag` edge per active marker so the same
+    // dep-driven hint path picks them up. Marker names use the canonical
+    // SDK/property names rather than the raw property values so the
+    // import_string is self-describing in slim digests.
+    const auto property_is_true = [&](std::string_view key) {
+        const auto it = cs.parsed.properties.find(key);
+        if (it == cs.parsed.properties.end()) {
+            return false;
+        }
+        const std::string& v = it->second;
+        return v.size() == 4 && (v[0] == 't' || v[0] == 'T') && (v[1] == 'r' || v[1] == 'R') &&
+               (v[2] == 'u' || v[2] == 'U') && (v[3] == 'e' || v[3] == 'E');
+    };
+    const auto emit_marker = [&](std::string_view name) {
+        vectis::code::Dependency edge;
+        edge.source_file_id = cs.file_id;
+        edge.kind = "csproj-sdk-flag";
+        edge.import_string = std::string{name};
+        pending.push_back(std::move(edge));
+    };
+    if (const auto sdk = cs.parsed.properties.find("__SdkAttribute");
+        sdk != cs.parsed.properties.end() &&
+        sdk->second.find("Microsoft.NET.Sdk.WindowsDesktop") != std::string::npos) {
+        emit_marker("Microsoft.NET.Sdk.WindowsDesktop");
+    }
+    if (property_is_true("UseWPF")) {
+        emit_marker("Microsoft.NET.Sdk.WindowsDesktop.WPF");
+    }
+    if (property_is_true("UseWindowsForms")) {
+        emit_marker("Microsoft.NET.Sdk.WindowsDesktop.WindowsForms");
+    }
 }
 
 const PropertyMap* DotNetHandler::find_nearest_cpm(const std::filesystem::path& start_dir,
