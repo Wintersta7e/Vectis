@@ -63,12 +63,11 @@ CsprojData parse_csproj(const xml::Element& root)
     collect_property_groups(root, data.properties);
 
     // The root `<Project Sdk="...">` attribute is not a PropertyGroup
-    // child, but downstream desktop-UI / WPF / WinForms detection needs
-    // it. Stash under a reserved synthetic key (real MSBuild property
-    // names never start with `__`) so the rest of the pipeline can
-    // read it like any other property.
+    // child, so it gets its own typed field — never goes through the
+    // property map. A crafted `<PropertyGroup>` child therefore can't
+    // impersonate or override the real SDK declaration downstream.
     if (const auto sdk = root.attribute("Sdk"); !sdk.empty()) {
-        data.properties.emplace("__SdkAttribute", std::string{sdk});
+        data.sdk_attribute = std::string{sdk};
     }
 
     for (const auto& ig : root.children("ItemGroup")) {

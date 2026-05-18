@@ -50,6 +50,11 @@ struct CsprojData
     /// already substitutes these into `<PackageReference Version=...>`
     /// at read time; exposed so tests can inspect them.
     PropertyMap properties;
+    /// Value of the root `<Project Sdk="...">` attribute, empty when
+    /// the attribute is absent. Stored as its own field rather than a
+    /// synthetic property-map key so a crafted `<PropertyGroup>` child
+    /// cannot impersonate the real SDK declaration.
+    std::string sdk_attribute;
     std::vector<ProjectReference> project_references;
     std::vector<PackageReference> package_references;
     std::vector<ProjectImport> imports;

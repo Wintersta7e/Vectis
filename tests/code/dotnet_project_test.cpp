@@ -188,11 +188,11 @@ TEST(ParseCsprojTest, CapturesRootSdkAttribute)
   </PropertyGroup>
 </Project>)xml";
     const auto data = parse_csproj_or_die(input);
-    EXPECT_EQ(data.properties.at("__SdkAttribute"), "Microsoft.NET.Sdk.WindowsDesktop");
+    EXPECT_EQ(data.sdk_attribute, "Microsoft.NET.Sdk.WindowsDesktop");
     EXPECT_EQ(data.properties.at("UseWPF"), "true");
 }
 
-TEST(ParseCsprojTest, MissingSdkAttributeLeavesNoSyntheticKey)
+TEST(ParseCsprojTest, MissingSdkAttributeLeavesFieldEmpty)
 {
     constexpr std::string_view input = R"xml(<Project>
   <PropertyGroup>
@@ -200,7 +200,24 @@ TEST(ParseCsprojTest, MissingSdkAttributeLeavesNoSyntheticKey)
   </PropertyGroup>
 </Project>)xml";
     const auto data = parse_csproj_or_die(input);
-    EXPECT_EQ(data.properties.find("__SdkAttribute"), data.properties.end());
+    EXPECT_TRUE(data.sdk_attribute.empty());
+}
+
+TEST(ParseCsprojTest, PropertyGroupChildCannotImpersonateSdkAttribute)
+{
+    // Regression test for the digest-poisoning vector: a crafted
+    // csproj that names a PropertyGroup child after a reserved field
+    // must NOT shadow the real Sdk declaration. The typed field
+    // ensures the property map and the Sdk attribute never share a
+    // namespace.
+    constexpr std::string_view input =
+        R"xml(<Project Sdk="MyHarmlessSdk">
+  <PropertyGroup>
+    <sdk_attribute>Microsoft.NET.Sdk.WindowsDesktop</sdk_attribute>
+  </PropertyGroup>
+</Project>)xml";
+    const auto data = parse_csproj_or_die(input);
+    EXPECT_EQ(data.sdk_attribute, "MyHarmlessSdk");
 }
 
 // ----- packages.props (CPM) ------------------------------------------

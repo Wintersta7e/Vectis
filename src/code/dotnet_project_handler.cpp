@@ -255,21 +255,13 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
         pending.push_back(std::move(edge));
     }
 
-    // SDK / Use-flag markers: SDK-only WPF / WinForms apps and projects
-    // targeting the WindowsDesktop SDK have no unique PackageReference,
-    // so they used to slip past the manifest hint matcher. Emit one
-    // synthetic `csproj-sdk-flag` edge per active marker so the same
-    // dep-driven hint path picks them up. Marker names use the canonical
-    // SDK/property names rather than the raw property values so the
-    // import_string is self-describing in slim digests.
+    // SDK-only WPF / WinForms / WinUI apps carry no PackageReference,
+    // so emit synthetic `csproj-sdk-flag` edges to keep them detectable
+    // through the same dep-driven hint path as nuget-referenced ones.
     const auto property_is_true = [&](std::string_view key) {
         const auto it = cs.parsed.properties.find(key);
-        if (it == cs.parsed.properties.end()) {
-            return false;
-        }
-        const std::string& v = it->second;
-        return v.size() == 4 && (v[0] == 't' || v[0] == 'T') && (v[1] == 'r' || v[1] == 'R') &&
-               (v[2] == 'u' || v[2] == 'U') && (v[3] == 'e' || v[3] == 'E');
+        return it != cs.parsed.properties.end() &&
+               vectis::core::to_lower_ascii(it->second) == "true";
     };
     const auto emit_marker = [&](std::string_view name) {
         vectis::code::Dependency edge;
@@ -278,9 +270,7 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
         edge.import_string = std::string{name};
         pending.push_back(std::move(edge));
     };
-    if (const auto sdk = cs.parsed.properties.find("__SdkAttribute");
-        sdk != cs.parsed.properties.end() &&
-        sdk->second.find("Microsoft.NET.Sdk.WindowsDesktop") != std::string::npos) {
+    if (cs.parsed.sdk_attribute.find("Microsoft.NET.Sdk.WindowsDesktop") != std::string::npos) {
         emit_marker("Microsoft.NET.Sdk.WindowsDesktop");
     }
     if (property_is_true("UseWPF")) {
@@ -290,9 +280,6 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
         emit_marker("Microsoft.NET.Sdk.WindowsDesktop.WindowsForms");
     }
     if (property_is_true("UseWinUI")) {
-        // WinUI 3 apps target the standard Microsoft.NET.Sdk and
-        // opt in via <UseWinUI>. The marker is the same shape as
-        // WPF/WinForms so the hint matcher treats it uniformly.
         emit_marker("Microsoft.NET.Sdk.WinUI");
     }
 }
@@ -434,10 +421,16 @@ void DotNetHandler::register_files(const manifest_scanner::Config& config, CodeI
 
 void DotNetHandler::emit_edges(const manifest_scanner::Config& config, CodeIndex& index)
 {
+    // Per csproj, emit_csproj_edges may also push up to four
+    // `csproj-sdk-flag` markers (WindowsDesktop SDK + UseWPF +
+    // UseWindowsForms + UseWinUI). Budgeting the upper bound keeps
+    // the reserve correct on solutions with hundreds of WPF/WinUI
+    // csprojs.
+    constexpr std::size_t k_max_sdk_flags_per_csproj = 4;
     std::size_t projected = 0;
     for (const auto& cs : m_csprojs) {
         projected += cs.parsed.project_references.size() + cs.parsed.package_references.size() +
-                     cs.parsed.imports.size();
+                     cs.parsed.imports.size() + k_max_sdk_flags_per_csproj;
     }
     for (const auto& sln : m_solutions) {
         projected += sln.projects.size();

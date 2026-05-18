@@ -54,6 +54,13 @@ namespace vectis::code {
 ///     `sln-project`    — `.sln` `Project(...) = "name", "X.csproj"` OR
 ///                        `.slnx` `<Project Path="X.csproj"/>` (filtered
 ///                        to C#/F#/VB by GUID or file extension)
+///     `csproj-sdk-flag`— synthetic marker emitted when the csproj sets
+///                        `<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">`,
+///                        `<UseWPF>true</UseWPF>`, `<UseWindowsForms>true`,
+///                        or `<UseWinUI>true</UseWinUI>`. `import_string`
+///                        holds the canonical SDK / Use-flag name; the
+///                        framework-hint matcher consumes these alongside
+///                        `csproj-package` to detect SDK-only desktop apps.
 ///
 ///   Spring XML edges (ISSUE-07 phase 3):
 ///     `spring-bean`           — `<bean class="FQCN">` (resolved

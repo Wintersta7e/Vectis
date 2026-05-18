@@ -531,6 +531,30 @@ TEST(FixturesTest, SampleDotnetWpf_EmitsSdkFlagEdgesForUseWpfAndSdk)
     EXPECT_TRUE(wpf_marker) << "<UseWPF>true</UseWPF> must emit a sdk-flag edge";
 }
 
+TEST(FixturesTest, SampleDotnetFlagsFalse_EmitsNoSdkFlagEdgesWhenAllUseFlagsFalse)
+{
+    // Regression test for the property_is_true negative path: an
+    // explicit `<UseWPF>false</UseWPF>` (and siblings) must NOT emit
+    // a csproj-sdk-flag edge. A regression in property_is_true that
+    // treated "false" as truthy would otherwise misclassify every
+    // class library that explicitly opts out of WPF/WinForms/WinUI.
+    CodeIndex index;
+    scan_fixture_full_digest("sample-dotnet-flags-false", index);
+
+    const auto csproj_id = index.file_id_for_path("PlainLib.csproj");
+    ASSERT_NE(csproj_id, 0);
+
+    bool any_sdk_flag = false;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind == "csproj-sdk-flag" && d.source_file_id == csproj_id) {
+            any_sdk_flag = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(any_sdk_flag)
+        << "explicit <UseWPF>false</UseWPF> et al must NOT emit any sdk-flag edge";
+}
+
 TEST(FixturesTest, SampleDotnetWinuiSlnx_FiresDesktopUiHintViaSlnxRoot)
 {
     // Mirrors the canonical modern-WinUI-3 layout: an .slnx root manifest
