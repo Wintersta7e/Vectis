@@ -297,19 +297,105 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
     return read_hotspot_excerpt(abs_path, 30);
 }
 
+/// Classify a hotspot into a coarse trigger bucket so the slim top-N
+/// can sample across dimensions. Function-level hotspots are always
+/// `Complexity`; file-level hotspots pick whichever trigger had the
+/// highest value-to-default-threshold ratio, since the Hotspot struct
+/// itself doesn't carry the thresholds used at detection time.
+enum class HotspotBucket : std::uint8_t
+{
+    Complexity,
+    FanIn,
+    FanOut,
+    Size,
+    Unknown,
+};
+
+[[nodiscard]] HotspotBucket classify_hotspot(const Hotspot& h) noexcept
+{
+    if (h.symbol_id != 0) {
+        return HotspotBucket::Complexity;
+    }
+    constexpr HotspotThresholds k_defaults{};
+    int best = 0;
+    HotspotBucket bucket = HotspotBucket::Unknown;
+    auto consider = [&](int value, int threshold, HotspotBucket b) {
+        if (value <= 0 || threshold <= 0) {
+            return;
+        }
+        const int ratio_x100 = (value * 100) / threshold;
+        if (ratio_x100 > best) {
+            best = ratio_x100;
+            bucket = b;
+        }
+    };
+    consider(h.fan_in, k_defaults.file_fan_in, HotspotBucket::FanIn);
+    consider(h.fan_out, k_defaults.file_fan_out, HotspotBucket::FanOut);
+    consider(h.line_count, k_defaults.file_line_count, HotspotBucket::Size);
+    return bucket;
+}
+
+/// Return up to `cap` hotspots picked to balance across buckets. The
+/// global severity ordering is preserved within each bucket; the
+/// quotas only prevent any single bucket (typically high-fan-in
+/// interface files in big monorepos) from filling the entire slim
+/// list and drowning out other dimensions.
+[[nodiscard]] std::vector<Hotspot> diversify_top_n(const std::vector<Hotspot>& all, std::size_t cap)
+{
+    if (all.size() <= cap) {
+        return all;
+    }
+    const std::size_t quota = std::max<std::size_t>(1, cap / 4);
+    std::vector<bool> taken(all.size(), false);
+    std::vector<Hotspot> picked;
+    picked.reserve(cap);
+    auto take_from = [&](HotspotBucket b) {
+        std::size_t count = 0;
+        for (std::size_t i = 0; i < all.size() && count < quota && picked.size() < cap; ++i) {
+            if (taken[i] || classify_hotspot(all[i]) != b) {
+                continue;
+            }
+            picked.push_back(all[i]);
+            taken[i] = true;
+            ++count;
+        }
+    };
+    take_from(HotspotBucket::Complexity);
+    take_from(HotspotBucket::FanIn);
+    take_from(HotspotBucket::FanOut);
+    take_from(HotspotBucket::Size);
+    // Top up any remaining slots with whatever scored highest by severity.
+    for (std::size_t i = 0; i < all.size() && picked.size() < cap; ++i) {
+        if (!taken[i]) {
+            picked.push_back(all[i]);
+        }
+    }
+    // Re-sort the picked set so the slim consumer still sees severity-
+    // descending order; the bucketed picker shuffled them otherwise.
+    std::sort(picked.begin(), picked.end(), [](const Hotspot& a, const Hotspot& b) {
+        if (a.severity != b.severity) {
+            return a.severity > b.severity;
+        }
+        return a.reason < b.reason;
+    });
+    return picked;
+}
+
 /// Serialize hotspots to JSON. `include_excerpts` controls whether
 /// the relatively expensive file-body excerpts are attached (full
-/// format only). `max_entries == 0` means "no cap"; slim callers pass
-/// a small N (typically 10) to cap total size.
+/// format only). `max_entries == 0` means "no cap" and preserves the
+/// raw severity ordering; slim callers pass a small N (typically 10),
+/// which triggers bucketed diversification so one trigger type cannot
+/// dominate the top list.
 [[nodiscard]] nlohmann::json build_hotspots_json(const CodeIndex& index, const FileIdToPath& lookup,
                                                  const std::filesystem::path& project_root,
                                                  bool include_excerpts, std::size_t max_entries = 0)
 {
     nlohmann::json arr = nlohmann::json::array();
     const std::vector<Hotspot> all = detect_hotspots(index);
-    const std::size_t limit = (max_entries == 0) ? all.size() : std::min(all.size(), max_entries);
-    for (std::size_t i = 0; i < limit; ++i) {
-        const Hotspot& h = all[i];
+    const std::vector<Hotspot> selected =
+        max_entries == 0 ? all : diversify_top_n(all, max_entries);
+    for (const Hotspot& h : selected) {
         nlohmann::json node;
         node["file"] = path_for(lookup, h.file_id);
         node["reason"] = h.reason;

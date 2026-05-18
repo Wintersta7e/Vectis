@@ -565,4 +565,108 @@ TEST(DigestExporterTest, Json_OmitsImportRefWhenImportStringEmpty)
         << "empty import_string must not produce an empty import_ref field";
 }
 
+TEST(DigestExporterTest, SlimJson_DiversifiesHotspotBuckets)
+{
+    // Big-codebase regression: with many fan-in hubs, the slim top-10
+    // used to be entirely "high fan-in" entries because they all tie at
+    // severity 3 and lex-sort first within the file bucket. The slim
+    // picker now reserves a quota per dimension so complexity, fan-in,
+    // fan-out, and size each get representation when present.
+    CodeIndex index;
+
+    // 20 high-fan-in hubs (every other file depends on each one).
+    std::vector<std::int64_t> hub_ids;
+    hub_ids.reserve(20);
+    for (int i = 0; i < 20; ++i) {
+        FileEntry f;
+        f.path_relative = "src/hub_" + std::to_string(i) + ".h";
+        f.language = Language::Cpp;
+        f.line_count = 50;
+        hub_ids.push_back(index.add_file(std::move(f)));
+    }
+    // 35 dependent files referencing every hub → each hub gets fan-in 35.
+    std::vector<std::int64_t> dep_ids;
+    dep_ids.reserve(35);
+    for (int i = 0; i < 35; ++i) {
+        FileEntry f;
+        f.path_relative = "src/dep_" + std::to_string(i) + ".cpp";
+        f.language = Language::Cpp;
+        f.line_count = 100;
+        dep_ids.push_back(index.add_file(std::move(f)));
+    }
+    for (std::int64_t hub : hub_ids) {
+        for (std::int64_t dep : dep_ids) {
+            index.add_dependency(vectis::code::Dependency{.source_file_id = dep,
+                                                          .target_file_id = hub,
+                                                          .import_string = "",
+                                                          .kind = "cpp-include"});
+        }
+    }
+
+    // One high-fan-out file (depends on 16 things → > default 15).
+    FileEntry fan_out;
+    fan_out.path_relative = "src/wide.cpp";
+    fan_out.language = Language::Cpp;
+    fan_out.line_count = 100;
+    const std::int64_t fan_out_id = index.add_file(std::move(fan_out));
+    for (int i = 0; i < 16; ++i) {
+        index.add_dependency(vectis::code::Dependency{.source_file_id = fan_out_id,
+                                                      .target_file_id = hub_ids[i],
+                                                      .import_string = "",
+                                                      .kind = "cpp-include"});
+    }
+
+    // One large file (> default 500 lines).
+    FileEntry big;
+    big.path_relative = "src/big.cpp";
+    big.language = Language::Cpp;
+    big.line_count = 1500;
+    index.add_file(std::move(big));
+
+    // One high-complexity function.
+    FileEntry host;
+    host.path_relative = "src/host.cpp";
+    host.language = Language::Cpp;
+    host.line_count = 100;
+    const std::int64_t host_id = index.add_file(std::move(host));
+    const std::array<Symbol, 1> batch = {Symbol{.file_id = host_id,
+                                                .name = "gnarly",
+                                                .kind = SymbolKind::Method,
+                                                .line_start = 10,
+                                                .line_end = 90,
+                                                .complexity = 60}};
+    index.add_symbols(batch);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("hotspots"));
+    const auto& hs = parsed["hotspots"];
+    ASSERT_LE(hs.size(), 10U);
+
+    bool has_complexity = false;
+    bool has_fan_in = false;
+    bool has_fan_out = false;
+    bool has_size = false;
+    for (const auto& h : hs) {
+        if (h.contains("complexity") && h.contains("symbol_id")) {
+            has_complexity = true;
+        }
+        if (h.contains("fan_in")) {
+            has_fan_in = true;
+        }
+        if (h.contains("fan_out")) {
+            has_fan_out = true;
+        }
+        if (h.contains("line_count")) {
+            has_size = true;
+        }
+    }
+    EXPECT_TRUE(has_complexity) << "complexity dimension missing from slim top-N";
+    EXPECT_TRUE(has_fan_in) << "fan-in dimension missing from slim top-N";
+    EXPECT_TRUE(has_fan_out) << "fan-out dimension missing from slim top-N";
+    EXPECT_TRUE(has_size) << "size dimension missing from slim top-N";
+}
+
 } // namespace
