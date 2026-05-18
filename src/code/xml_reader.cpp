@@ -699,13 +699,12 @@ Element Document::root() const noexcept
 
 vectis::core::Result<Document> parse(std::string_view content)
 {
-    // Strip a leading UTF-8 BOM (EF BB BF). Visual Studio writes csproj,
-    // .props, and .slnx files with a BOM by default, and the parser's
-    // `<` lookahead in `parse()` would otherwise reject the file outright.
-    if (content.size() >= 3 && static_cast<unsigned char>(content[0]) == 0xEF &&
-        static_cast<unsigned char>(content[1]) == 0xBB &&
-        static_cast<unsigned char>(content[2]) == 0xBF) {
-        content.remove_prefix(3);
+    // Visual Studio writes csproj / .props / .slnx with a UTF-8 BOM by
+    // default; the parser's `<` lookahead would otherwise reject them
+    // outright.
+    constexpr std::string_view k_utf8_bom = "\xEF\xBB\xBF";
+    if (content.starts_with(k_utf8_bom)) {
+        content.remove_prefix(k_utf8_bom.size());
     }
     XmlParser p(content);
     auto built = p.parse();

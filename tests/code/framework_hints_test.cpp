@@ -242,6 +242,20 @@ TEST(FrameworkHintsTest, DotNetWinUI3FiresDesktopUI)
     EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
 }
 
+TEST(FrameworkHintsTest, DotNetToolkitWin32UISdkFiresDesktopUI)
+{
+    const std::vector<std::string> deps = {"Microsoft.Toolkit.Win32.UI.SDK:6.1.0"};
+    const auto hits = match(Ecosystem::DotNet, deps);
+    EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
+}
+
+TEST(FrameworkHintsTest, DotNetToolkitWpfUiControlsFiresDesktopUI)
+{
+    const std::vector<std::string> deps = {"Microsoft.Toolkit.Wpf.UI.Controls:6.1.3"};
+    const auto hits = match(Ecosystem::DotNet, deps);
+    EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
+}
+
 // ----- match_annotations ------------------------------------------------
 
 TEST(FrameworkHintsTest, AnnotationsBelowThresholdDoNotFire)

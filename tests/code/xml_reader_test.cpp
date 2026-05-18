@@ -54,6 +54,27 @@ TEST(XmlReaderTest, StripsBomAheadOfLeadingComment)
     EXPECT_EQ(doc.root().local_name(), "project");
 }
 
+TEST(XmlReaderTest, PartialOneByteBomFailsCleanly)
+{
+    // A truncated write that leaves a 1-byte 0xEF must NOT trigger
+    // the 3-byte BOM strip and must surface as a parse error rather
+    // than crashing or silently succeeding.
+    const auto result = vectis::code::xml::parse("\xEF");
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST(XmlReaderTest, PartialTwoByteBomFailsCleanly)
+{
+    const auto result = vectis::code::xml::parse("\xEF\xBB");
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST(XmlReaderTest, EmptyInputFailsCleanly)
+{
+    const auto result = vectis::code::xml::parse("");
+    EXPECT_FALSE(result.has_value());
+}
+
 TEST(XmlReaderTest, LocalNameStripsNamespacePrefix)
 {
     const Document doc = parse_or_die("<context:component-scan/>");

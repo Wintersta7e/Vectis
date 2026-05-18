@@ -118,6 +118,33 @@ TEST(ExplainTest, IncludesHotspotsForHighComplexity)
     EXPECT_NE(out.find("src/app.py:30"), std::string::npos);
 }
 
+TEST(ExplainTest, RendersFileLevelHotspotsWithoutSymbolLocator)
+{
+    // File-level hotspots (large file / high fan-in / high fan-out)
+    // render through a distinct branch in render_hotspots: no `:line`,
+    // no symbol name, just `path  [reason]`. Pin that format here so
+    // the function-level test doesn't have to share assertions with
+    // the file-level path.
+    CodeIndex idx;
+    FileEntry f;
+    f.path_relative = "src/huge.py";
+    f.language = Language::Python;
+    f.size = 100000;
+    f.line_count = 2000; // well above the 500-line threshold
+    idx.add_file(std::move(f));
+
+    ExplainOptions opts;
+    opts.project_root = "/fake/project";
+    opts.project_name = "demo";
+    const std::string out = build_explanation(idx, opts);
+
+    EXPECT_NE(out.find("Top hotspots"), std::string::npos);
+    EXPECT_NE(out.find("src/huge.py"), std::string::npos);
+    EXPECT_NE(out.find("large file (2000 lines)"), std::string::npos);
+    // File-level entries do not carry a `path:line` suffix.
+    EXPECT_EQ(out.find("src/huge.py:"), std::string::npos);
+}
+
 TEST(ExplainTest, NormalisesMultiLineDecoratorWhitespace)
 {
     // Real-world annotations from Java enterprise code arrive with
