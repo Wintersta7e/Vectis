@@ -31,6 +31,29 @@ TEST(XmlReaderTest, ParsesRootElementWithUnprefixedName)
     EXPECT_EQ(root.prefix(), "");
 }
 
+TEST(XmlReaderTest, StripsLeadingUtf8Bom)
+{
+    // Visual Studio saves csproj / .props / .slnx with a UTF-8 BOM by
+    // default. Without explicit BOM handling the `<` lookahead at the
+    // start of parse() rejects the file outright, and every consumer
+    // (csproj handler, packages.props CPM, .slnx walker) silently loses
+    // all edges from that file.
+    constexpr std::string_view with_bom = "\xEF\xBB\xBF<project/>";
+    const Document doc = parse_or_die(with_bom);
+    const Element root = doc.root();
+    ASSERT_TRUE(root.valid());
+    EXPECT_EQ(root.local_name(), "project");
+}
+
+TEST(XmlReaderTest, StripsBomAheadOfLeadingComment)
+{
+    // Real-world csprojs commonly carry both a BOM and a copyright
+    // comment ahead of the `<Project>` element.
+    constexpr std::string_view input = "\xEF\xBB\xBF<!-- Copyright (c) Example. --><project/>";
+    const Document doc = parse_or_die(input);
+    EXPECT_EQ(doc.root().local_name(), "project");
+}
+
 TEST(XmlReaderTest, LocalNameStripsNamespacePrefix)
 {
     const Document doc = parse_or_die("<context:component-scan/>");

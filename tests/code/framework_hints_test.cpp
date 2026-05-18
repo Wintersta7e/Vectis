@@ -233,6 +233,15 @@ TEST(FrameworkHintsTest, DotNetWindowsDesktopSdkFiresDesktopUI)
     EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
 }
 
+TEST(FrameworkHintsTest, DotNetWinUI3FiresDesktopUI)
+{
+    // Modern WinUI 3 apps opt into the
+    // framework via <UseWinUI>true</UseWinUI>, not a Sdk attribute.
+    const std::vector<std::string> deps = {"Microsoft.NET.Sdk.WinUI"};
+    const auto hits = match(Ecosystem::DotNet, deps);
+    EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
+}
+
 // ----- match_annotations ------------------------------------------------
 
 TEST(FrameworkHintsTest, AnnotationsBelowThresholdDoNotFire)

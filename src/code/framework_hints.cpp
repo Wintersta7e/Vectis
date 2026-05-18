@@ -237,6 +237,7 @@ const Table& dotnet_table()
         {"Microsoft.NET.Sdk.WindowsDesktop", FrameworkHint::DesktopUI},
         {"Microsoft.NET.Sdk.WindowsDesktop.WPF", FrameworkHint::DesktopUI},
         {"Microsoft.NET.Sdk.WindowsDesktop.WindowsForms", FrameworkHint::DesktopUI},
+        {"Microsoft.NET.Sdk.WinUI", FrameworkHint::DesktopUI},
     };
     return k_table;
 }

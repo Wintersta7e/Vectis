@@ -586,7 +586,7 @@ detect_root_manifest(const std::filesystem::path& project_root)
             break;
         }
         const auto ext = entry.path().extension().string();
-        if (ext == ".sln") {
+        if (ext == ".sln" || ext == ".slnx") {
             return ManifestInfo{Runtime::DotNetSolution, entry.path().filename().string(), {}};
         }
         if (ext == ".csproj") {

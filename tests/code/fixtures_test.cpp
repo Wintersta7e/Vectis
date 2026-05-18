@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include "code/architecture_detector.h"
 #include "code/code_index.h"
 #include "code/dependency.h"
 #include "code/exclude_dirs.h"
@@ -528,6 +529,38 @@ TEST(FixturesTest, SampleDotnetWpf_EmitsSdkFlagEdgesForUseWpfAndSdk)
     }
     EXPECT_TRUE(sdk_marker) << "Sdk=Microsoft.NET.Sdk.WindowsDesktop must emit a sdk-flag edge";
     EXPECT_TRUE(wpf_marker) << "<UseWPF>true</UseWPF> must emit a sdk-flag edge";
+}
+
+TEST(FixturesTest, SampleDotnetWinuiSlnx_FiresDesktopUiHintViaSlnxRoot)
+{
+    // Mirrors the canonical modern-WinUI-3 layout: an .slnx root manifest
+    // alongside csprojs that opt in via <UseWinUI>true</UseWinUI>. Pins
+    // three regressions at once: (1) the .slnx extension is recognised
+    // as a .NET solution by detect_root_manifest, (2) the WinUI flag is
+    // emitted as a `csproj-sdk-flag` edge, and (3) the framework hint
+    // matcher fires DesktopUI on that marker so detect_architecture
+    // attaches `hint:desktop-ui` to the signals.
+    CodeIndex index;
+    scan_fixture_full_digest("sample-dotnet-winui-slnx", index);
+
+    const auto csproj_id = index.file_id_for_path("src/App/App.csproj");
+    ASSERT_NE(csproj_id, 0);
+    bool winui_marker = false;
+    for (const auto& d : index.all_dependencies()) {
+        if (d.kind == "csproj-sdk-flag" && d.source_file_id == csproj_id &&
+            d.import_string == "Microsoft.NET.Sdk.WinUI") {
+            winui_marker = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(winui_marker) << "<UseWinUI>true</UseWinUI> must emit a sdk-flag edge";
+
+    const auto arch = vectis::code::detect_architecture(
+        index, std::filesystem::path{VECTIS_FIXTURE_DIR} / "code" / "sample-dotnet-winui-slnx", {});
+    const bool has_desktop_ui = std::ranges::any_of(
+        arch.signals, [](const std::string& s) { return s == "hint:desktop-ui"; });
+    EXPECT_TRUE(has_desktop_ui)
+        << "hint:desktop-ui must fire on .slnx-rooted projects that mark <UseWinUI>";
 }
 
 TEST(FixturesTest, SampleSpringXml_RegistersXmlFilesAndEmitsSpringEdges)

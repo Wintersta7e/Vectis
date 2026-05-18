@@ -289,6 +289,12 @@ void DotNetHandler::emit_csproj_edges(const CsprojEntry& cs, CodeIndex& index,
     if (property_is_true("UseWindowsForms")) {
         emit_marker("Microsoft.NET.Sdk.WindowsDesktop.WindowsForms");
     }
+    if (property_is_true("UseWinUI")) {
+        // WinUI 3 apps target the standard Microsoft.NET.Sdk and
+        // opt in via <UseWinUI>. The marker is the same shape as
+        // WPF/WinForms so the hint matcher treats it uniformly.
+        emit_marker("Microsoft.NET.Sdk.WinUI");
+    }
 }
 
 const PropertyMap* DotNetHandler::find_nearest_cpm(const std::filesystem::path& start_dir,
