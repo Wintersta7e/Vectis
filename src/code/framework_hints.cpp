@@ -218,6 +218,17 @@ const Table& dotnet_table()
         {"Microsoft.WindowsAppSDK", FrameworkHint::DesktopUI},
         {"Microsoft.Maui.Controls", FrameworkHint::DesktopUI},
         {"WindowsBase", FrameworkHint::DesktopUI},
+        // WinUI 2 ships the high-level Microsoft.UI.Xaml package
+        // separately from WindowsAppSDK; hybrid WPF + WinUI apps and
+        // older UWP/WinUI hybrids reference it directly.
+        {"Microsoft.UI.Xaml", FrameworkHint::DesktopUI},
+        {"Microsoft.Toolkit.Win32.UI.SDK", FrameworkHint::DesktopUI},
+        // WPF stays out of the package table proper because
+        // SDK-only WPF apps have no unique PackageReference, but
+        // these Microsoft-published WPF helper libs are
+        // unambiguous when they do appear.
+        {"Microsoft.Xaml.Behaviors.Wpf", FrameworkHint::DesktopUI},
+        {"Microsoft.Toolkit.Wpf.UI.Controls", FrameworkHint::DesktopUI},
     };
     return k_table;
 }

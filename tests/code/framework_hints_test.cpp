@@ -191,6 +191,23 @@ TEST(FrameworkHintsTest, DotNetMauiFiresDesktopUI)
     EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
 }
 
+TEST(FrameworkHintsTest, DotNetWinUI2FiresDesktopUI)
+{
+    // PowerToys-class apps ship WinUI 2 via the standalone
+    // Microsoft.UI.Xaml package rather than WindowsAppSDK, so the
+    // hint must fire on that key too.
+    const std::vector<std::string> deps = {"Microsoft.UI.Xaml:2.8.6"};
+    const auto hits = match(Ecosystem::DotNet, deps);
+    EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
+}
+
+TEST(FrameworkHintsTest, DotNetWpfBehaviorsFiresDesktopUI)
+{
+    const std::vector<std::string> deps = {"Microsoft.Xaml.Behaviors.Wpf:1.1.135"};
+    const auto hits = match(Ecosystem::DotNet, deps);
+    EXPECT_TRUE(has(hits, FrameworkHint::DesktopUI));
+}
+
 // ----- match_annotations ------------------------------------------------
 
 TEST(FrameworkHintsTest, AnnotationsBelowThresholdDoNotFire)
