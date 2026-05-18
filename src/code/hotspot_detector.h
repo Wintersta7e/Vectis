@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -9,6 +10,20 @@
 namespace vectis::code {
 
 class CodeIndex;
+
+/// Which threshold a hotspot fired on most strongly. For files that
+/// trip multiple triggers (e.g. large + high fan-in) the bucket
+/// records the one with the highest value-to-threshold ratio so the
+/// `reason` string still lists every trigger but the bucket is
+/// stable for top-N diversification.
+enum class HotspotTrigger : std::uint8_t
+{
+    Unknown,
+    Complexity, ///< function-level cyclomatic complexity
+    FanIn,      ///< file with many incoming dependencies
+    FanOut,     ///< file with many outgoing dependencies
+    Size,       ///< file with many lines
+};
 
 /// One "hotspot" — a file or symbol that exceeds one of the
 /// configured quality thresholds (high complexity, large file, or
@@ -30,6 +45,7 @@ struct Hotspot
     SymbolKind kind = SymbolKind::Unknown;
     std::string reason; ///< "high complexity (24)", "large file (823 lines)", ...
     int severity = 1;   ///< 1 = minor, 2 = moderate, 3 = major
+    HotspotTrigger trigger = HotspotTrigger::Unknown;
 
     int complexity = 0;
     int fan_in = 0;
@@ -56,5 +72,12 @@ struct HotspotThresholds
 /// emitted once per symbol.
 [[nodiscard]] std::vector<Hotspot> detect_hotspots(const CodeIndex& index,
                                                    HotspotThresholds thresholds = {});
+
+/// Pick up to `cap` hotspots balanced across triggers so a single
+/// dimension (typically high fan-in in big monorepos) can't fill the
+/// top-N and crowd out complexity / fan-out / size. Returns the input
+/// unchanged when it fits within `cap`. Output stays severity-desc
+/// for stable presentation.
+[[nodiscard]] std::vector<Hotspot> diversify_top_n(std::vector<Hotspot> all, std::size_t cap);
 
 } // namespace vectis::code
