@@ -398,6 +398,40 @@ TEST_F(ManifestDepsFixture, RequirementsTxtMissingFileReturnsEmpty)
     EXPECT_TRUE(deps.empty());
 }
 
+TEST_F(ManifestDepsFixture, PyprojectPoetryDjangoCanonicalises)
+{
+    // Real-world Poetry projects often write Django with its canonical
+    // capitalisation. The framework table is keyed lowercase, so the
+    // extractor must emit the PEP 503-normalised short name.
+    const auto path = write_file("pyproject.toml", R"(
+[tool.poetry.dependencies]
+Django = "^4.2"
+)");
+    const auto deps = extract_pyproject(path);
+    EXPECT_NE(std::ranges::find(deps, "django"), deps.end());
+    EXPECT_EQ(std::ranges::find(deps, "Django"), deps.end());
+}
+
+TEST_F(ManifestDepsFixture, PyprojectPep621FlaskCanonicalises)
+{
+    const auto path = write_file("pyproject.toml", R"(
+[project]
+dependencies = ["Flask>=2.0", "FastAPI~=0.110"]
+)");
+    const auto deps = extract_pyproject(path);
+    EXPECT_NE(std::ranges::find(deps, "flask"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "fastapi"), deps.end());
+}
+
+TEST_F(ManifestDepsFixture, SetupPyDjangoCanonicalises)
+{
+    const auto path =
+        write_file("setup.py", R"(setup(install_requires=['Django', 'Some.Dotted.Name']))");
+    const auto deps = extract_setup_py(path);
+    EXPECT_NE(std::ranges::find(deps, "django"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "some-dotted-name"), deps.end());
+}
+
 // ----- extract_cargo -----------------------------------------------------
 
 TEST_F(ManifestDepsFixture, CargoExtractsSimpleDependencies)

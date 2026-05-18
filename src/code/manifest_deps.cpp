@@ -32,9 +32,37 @@ void collect_object_keys(const nlohmann::json& parent, std::string_view child_na
 
 /// Extract the leading package-name token from a PEP 508 requirement
 /// string. PEP 508 starts with an identifier ([A-Za-z0-9._-]+) and
-/// then optional extras / version / marker. Returning the identifier
-/// alone gives the agent-facing dep name without forcing the matcher
-/// to also strip version operators.
+/// Normalise a python distribution name per PEP 503: lowercase, then
+/// collapse runs of `[_.-]` to a single `-`. The framework_hints py
+/// table is keyed by the canonical lowercase short name (e.g. `django`,
+/// `flask`); a Poetry `Django = "^4.0"` or a setup.py `"Flask>=2"`
+/// must canonicalise to match, not just the requirements.txt path.
+[[nodiscard]] std::string normalise_pep503(std::string_view raw)
+{
+    std::string out;
+    out.reserve(raw.size());
+    bool last_was_sep = false;
+    for (const char c : raw) {
+        if (c == '_' || c == '.' || c == '-') {
+            if (!last_was_sep && !out.empty()) {
+                out.push_back('-');
+            }
+            last_was_sep = true;
+        }
+        else {
+            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            last_was_sep = false;
+        }
+    }
+    while (!out.empty() && out.back() == '-') {
+        out.pop_back();
+    }
+    return out;
+}
+
+/// Pull the leading identifier out of a PEP 508 spec and return it
+/// PEP 503-normalised so the framework matcher sees the same canonical
+/// short name regardless of which manifest path produced it.
 std::string extract_pep508_name(std::string_view spec)
 {
     std::size_t start = spec.find_first_not_of(" \t\r\n");
@@ -49,7 +77,7 @@ std::string extract_pep508_name(std::string_view spec)
         }
         ++end;
     }
-    return std::string{spec.substr(start, end - start)};
+    return normalise_pep503(spec.substr(start, end - start));
 }
 
 /// Iterate a `toml::array` of strings and stuff each PEP 508 name
@@ -70,7 +98,9 @@ void collect_pep508_array(const toml::array& arr, std::set<std::string>& sink)
 /// Iterate a `toml::table` and insert each key into `sink`. Used for
 /// Poetry-style dep tables where keys ARE the package names. Skips
 /// the Poetry-specific `python` entry — that's an interpreter
-/// constraint, not a dependency.
+/// constraint, not a dependency. Output is the raw key; the caller
+/// applies any ecosystem-specific canonicalisation (e.g. PEP 503 for
+/// Python; Cargo crate names stay as written).
 void collect_table_keys(const toml::table& tbl, std::set<std::string>& sink,
                         bool exclude_poetry_python = false)
 {
@@ -120,10 +150,13 @@ std::vector<std::string> extract_pyproject(const std::filesystem::path& pyprojec
         return {};
     }
 
+    // PEP 621 paths route through extract_pep508_name and arrive
+    // already PEP 503-normalised. Poetry's table-key dep maps emit
+    // the raw key, so they're collected separately and normalised
+    // once on the way out.
     std::set<std::string> deps;
+    std::set<std::string> raw_table_keys;
 
-    // PEP 621: [project] dependencies (array of PEP 508 strings) +
-    //          [project] optional-dependencies (table of arrays).
     if (auto* project = table["project"].as_table()) {
         if (auto* dep_arr = (*project)["dependencies"].as_array()) {
             collect_pep508_array(*dep_arr, deps);
@@ -137,26 +170,30 @@ std::vector<std::string> extract_pyproject(const std::filesystem::path& pyprojec
         }
     }
 
-    // Poetry: [tool.poetry.dependencies] / dev-dependencies (legacy) /
-    //         group.<name>.dependencies (current).
     if (auto* poetry = table["tool"]["poetry"].as_table()) {
         if (auto* dep_tbl = (*poetry)["dependencies"].as_table()) {
-            collect_table_keys(*dep_tbl, deps, /*exclude_poetry_python=*/true);
+            collect_table_keys(*dep_tbl, raw_table_keys, /*exclude_poetry_python=*/true);
         }
         if (auto* dev_tbl = (*poetry)["dev-dependencies"].as_table()) {
-            collect_table_keys(*dev_tbl, deps);
+            collect_table_keys(*dev_tbl, raw_table_keys);
         }
         if (auto* groups = (*poetry)["group"].as_table()) {
             for (const auto& [group_key, group_value] : *groups) {
                 if (auto* group_tbl = group_value.as_table()) {
                     if (auto* gdeps = (*group_tbl)["dependencies"].as_table()) {
-                        collect_table_keys(*gdeps, deps);
+                        collect_table_keys(*gdeps, raw_table_keys);
                     }
                 }
             }
         }
     }
 
+    for (const auto& raw : raw_table_keys) {
+        std::string c = normalise_pep503(raw);
+        if (!c.empty()) {
+            deps.insert(std::move(c));
+        }
+    }
     return {deps.begin(), deps.end()};
 }
 
@@ -401,38 +438,6 @@ std::vector<std::string> extract_setup_py(const std::filesystem::path& setup_py)
     return {deps.begin(), deps.end()};
 }
 
-namespace {
-
-/// Normalise a python distribution name per PEP 503: lowercase, then
-/// collapse runs of `[_.-]` to a single `-`. The framework_hints py
-/// table is keyed by the canonical lowercase short name (e.g.
-/// `django`, `flask`) so a `Django==1.10` line in requirements.txt
-/// must canonicalise to `django` to match.
-[[nodiscard]] std::string normalise_pep503(std::string_view raw)
-{
-    std::string out;
-    out.reserve(raw.size());
-    bool last_was_sep = false;
-    for (const char c : raw) {
-        if (c == '_' || c == '.' || c == '-') {
-            if (!last_was_sep && !out.empty()) {
-                out.push_back('-');
-            }
-            last_was_sep = true;
-        }
-        else {
-            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-            last_was_sep = false;
-        }
-    }
-    while (!out.empty() && out.back() == '-') {
-        out.pop_back();
-    }
-    return out;
-}
-
-} // namespace
-
 std::vector<std::string> extract_requirements_txt(const std::filesystem::path& requirements_txt)
 {
     auto contents = vectis::platform::read_file(requirements_txt);
@@ -449,20 +454,10 @@ std::vector<std::string> extract_requirements_txt(const std::filesystem::path& r
                               (line_end == std::string::npos ? src.size() : line_end) - pos};
         pos = (line_end == std::string::npos) ? src.size() : line_end + 1;
 
-        // Strip a trailing `\r` (Windows line endings).
-        if (!line.empty() && line.back() == '\r') {
-            line.remove_suffix(1);
-        }
-        // Strip a `#` comment, then leading + trailing whitespace.
         if (const std::size_t hash = line.find('#'); hash != std::string_view::npos) {
             line = line.substr(0, hash);
         }
-        while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
-            line.remove_prefix(1);
-        }
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) {
-            line.remove_suffix(1);
-        }
+        line = trim_ascii(line);
         if (line.empty()) {
             continue;
         }
