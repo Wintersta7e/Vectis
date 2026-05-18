@@ -1,5 +1,6 @@
 #include "cli/cli_main.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -651,6 +653,24 @@ int run_digest(const DigestArgs& args)
     return it->get<std::string>();
 }
 
+/// Reject unknown top-level keys so callers learn typos and ignored
+/// flags (e.g. `cache=true` on a tool that does not expose caching)
+/// up front instead of silently getting a non-cached response.
+void reject_unknown_args(const nlohmann::json& args,
+                         std::initializer_list<std::string_view> allowed)
+{
+    if (!args.is_object()) {
+        return;
+    }
+    for (const auto& [key, _] : args.items()) {
+        const bool ok = std::any_of(allowed.begin(), allowed.end(),
+                                    [&](std::string_view a) { return key == a; });
+        if (!ok) {
+            throw McpHandlerError{-32602, "unknown argument `" + key + "`"};
+        }
+    }
+}
+
 /// Map a Result error to McpHandlerError. IoError maps to JSON-RPC's
 /// "Invalid params" since the caller-supplied path is the usual root
 /// cause; everything else is "Internal error".
@@ -671,8 +691,11 @@ int run_digest(const DigestArgs& args)
         .description =
             "Generate a structured digest of a source tree. Returns architecture label, "
             "scale, languages, hotspots, central files (PageRank), and dependency graph. "
-            "Default format is `slim` JSON (~5-50KB depending on project size); use `json` "
-            "for the full digest with symbol bodies.",
+            "Default format is `slim` JSON; size scales with the dependency graph and "
+            "can reach tens of MB on large repos. Use `json` for the full digest, which "
+            "adds per-file symbol metadata and body excerpts on the top hotspots. Pass "
+            "`cache=true` to enable SQLite-backed incremental rescans across calls, "
+            "with `cache_dir` for an out-of-tree DB location.",
         .input_schema_json = R"({
             "type": "object",
             "properties": {
@@ -684,13 +707,23 @@ int run_digest(const DigestArgs& args)
                     "type": "string",
                     "enum": ["slim", "json"],
                     "default": "slim",
-                    "description": "Output format. `slim` is the agent-optimised JSON; `json` is the full digest with symbol bodies."
+                    "description": "Output format. `slim` is the agent-optimised JSON (architecture, hotspots, dep graph, per-symbol metadata, no excerpts). `json` adds per-file symbol arrays and body excerpts on the top hotspots."
+                },
+                "cache": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable SQLite-backed incremental rescans. Repeat calls on the same `path` reuse the on-disk index and only re-parse changed files."
+                },
+                "cache_dir": {
+                    "type": "string",
+                    "description": "Override cache location. Defaults to `<path>/vectis-data/` when `cache=true`; passing a separate dir keeps the SQLite DB out of the scanned tree."
                 }
             },
             "required": ["path"]
         })",
         .handler = [](const std::string& arguments_json) -> std::string {
             const nlohmann::json args = parse_mcp_arguments(arguments_json);
+            reject_unknown_args(args, {"path", "format", "cache", "cache_dir"});
             DigestArgs cli_args;
             cli_args.project_root = require_string_arg(args, "path");
             cli_args.format = vectis::code::DigestFormat::SlimJson;
@@ -702,6 +735,19 @@ int run_digest(const DigestArgs& args)
                 if (!parse_format(fmt_it->get<std::string>(), cli_args.format)) {
                     throw McpHandlerError{-32602, "unknown format (expected slim|json)"};
                 }
+            }
+            if (const auto cache_it = args.find("cache"); cache_it != args.end()) {
+                if (!cache_it->is_boolean()) {
+                    throw McpHandlerError{-32602, "`cache` must be a boolean"};
+                }
+                cli_args.use_cache = cache_it->get<bool>();
+            }
+            if (const auto cd_it = args.find("cache_dir"); cd_it != args.end()) {
+                if (!cd_it->is_string()) {
+                    throw McpHandlerError{-32602, "`cache_dir` must be a string"};
+                }
+                cli_args.cache_dir = cd_it->get<std::string>();
+                cli_args.use_cache = true; // mirrors the CLI: --cache-dir implies --cache
             }
             auto body = compute_digest_body(cli_args);
             if (!body) {
@@ -719,22 +765,46 @@ int run_digest(const DigestArgs& args)
         .description = "Plain-text narrative summary of a source tree (~20 lines). Architecture "
                        "label, scale, languages, top hotspots, most central files (PageRank), "
                        "decorators, and dependency-graph stats. Designed for direct agent reading "
-                       "without JSON parsing.",
+                       "without JSON parsing. Pass `cache=true` to reuse a SQLite-backed index "
+                       "across calls, with `cache_dir` for an out-of-tree DB location.",
         .input_schema_json = R"({
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
                     "description": "Absolute or relative path to the project root to scan."
+                },
+                "cache": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable SQLite-backed incremental rescans. Repeat calls on the same `path` reuse the on-disk index and only re-parse changed files."
+                },
+                "cache_dir": {
+                    "type": "string",
+                    "description": "Override cache location. Defaults to `<path>/vectis-data/` when `cache=true`; passing a separate dir keeps the SQLite DB out of the scanned tree."
                 }
             },
             "required": ["path"]
         })",
         .handler = [](const std::string& arguments_json) -> std::string {
             const nlohmann::json args = parse_mcp_arguments(arguments_json);
+            reject_unknown_args(args, {"path", "cache", "cache_dir"});
             ExplainArgs cli_args;
             cli_args.project_root = require_string_arg(args, "path");
             cli_args.quiet = true;
+            if (const auto cache_it = args.find("cache"); cache_it != args.end()) {
+                if (!cache_it->is_boolean()) {
+                    throw McpHandlerError{-32602, "`cache` must be a boolean"};
+                }
+                cli_args.use_cache = cache_it->get<bool>();
+            }
+            if (const auto cd_it = args.find("cache_dir"); cd_it != args.end()) {
+                if (!cd_it->is_string()) {
+                    throw McpHandlerError{-32602, "`cache_dir` must be a string"};
+                }
+                cli_args.cache_dir = cd_it->get<std::string>();
+                cli_args.use_cache = true;
+            }
             auto body = compute_explain_body(cli_args);
             if (!body) {
                 throw_handler_error(body.error());

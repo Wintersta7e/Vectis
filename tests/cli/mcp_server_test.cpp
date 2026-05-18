@@ -123,6 +123,34 @@ TEST(McpServerTest, HandlerErrorIsReturnedWithItsCodeAndMessage)
     EXPECT_EQ(out[0]["error"]["code"], -32602);
 }
 
+TEST(McpServerTest, UnknownArgumentSurfacesAsInvalidParamsError)
+{
+    // A tool that whitelists `text` and refuses anything else; mirrors
+    // the cli_main `reject_unknown_args` contract used by digest/explain.
+    McpTool strict_tool{
+        .name = "strict",
+        .description = "Echo but refuses unknown args.",
+        .input_schema_json = R"({"type":"object","properties":{"text":{"type":"string"}}})",
+        .handler = [](const std::string& arguments_json) -> std::string {
+            const auto args = json::parse(arguments_json);
+            for (const auto& [key, _] : args.items()) {
+                if (key != "text") {
+                    throw McpHandlerError{-32602, "unknown argument `" + key + "`"};
+                }
+            }
+            return args.value("text", std::string{});
+        },
+    };
+    const auto out = run_and_collect(
+        R"({"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"strict","arguments":{"text":"hi","cache":true}}})"
+        "\n",
+        {strict_tool});
+    ASSERT_EQ(out.size(), 1U);
+    ASSERT_TRUE(out[0].contains("error"));
+    EXPECT_EQ(out[0]["error"]["code"], -32602);
+    EXPECT_NE(out[0]["error"]["message"].get<std::string>().find("cache"), std::string::npos);
+}
+
 TEST(McpServerTest, ParseErrorReturnsParseErrorResponse)
 {
     const auto out = run_and_collect("{not valid json\n", {echo_tool()});
