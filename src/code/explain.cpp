@@ -211,7 +211,7 @@ void render_dependencies(std::ostream& out, const CodeIndex& index)
     }
     out << "\nDependency graph: " << internal_edges << " internal edge"
         << (internal_edges == 1 ? "" : "s");
-    const auto cycles = detect_cycles(index);
+    const auto cycles = detect_cycles(deps);
     if (cycles.empty()) {
         out << ", no cycles";
     }

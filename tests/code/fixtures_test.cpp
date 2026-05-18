@@ -577,15 +577,8 @@ TEST(FixturesTest, SampleDotnetWinuiSlnx_FiresDesktopUiHintViaSlnxRoot)
 
     const auto csproj_id = index.file_id_for_path("src/App/App.csproj");
     ASSERT_NE(csproj_id, 0);
-    bool winui_marker = false;
-    for (const auto& d : index.all_dependencies()) {
-        if (d.kind == "csproj-sdk-flag" && d.source_file_id == csproj_id &&
-            d.import_string == "Microsoft.NET.Sdk.WinUI") {
-            winui_marker = true;
-            break;
-        }
-    }
-    EXPECT_TRUE(winui_marker) << "<UseWinUI>true</UseWinUI> must emit a sdk-flag edge";
+    EXPECT_TRUE(collect_sdk_flag_markers(index, csproj_id).contains("Microsoft.NET.Sdk.WinUI"))
+        << "<UseWinUI>true</UseWinUI> must emit a sdk-flag edge";
 
     const auto arch = vectis::code::detect_architecture(
         index, std::filesystem::path{VECTIS_FIXTURE_DIR} / "code" / "sample-dotnet-winui-slnx", {});
