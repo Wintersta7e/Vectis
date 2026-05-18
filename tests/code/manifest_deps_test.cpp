@@ -19,6 +19,7 @@ using ::vectis::code::deps::extract_gemfile;
 using ::vectis::code::deps::extract_go_mod;
 using ::vectis::code::deps::extract_npm;
 using ::vectis::code::deps::extract_pyproject;
+using ::vectis::code::deps::extract_requirements_txt;
 using ::vectis::code::deps::extract_setup_py;
 
 class ManifestDepsFixture : public ::testing::Test
@@ -352,6 +353,49 @@ TEST_F(ManifestDepsFixture, SetupPyPicksUpStandaloneRequiresKeyword)
     EXPECT_EQ(deps.size(), 2U);
     EXPECT_NE(std::ranges::find(deps, "click"), deps.end());
     EXPECT_NE(std::ranges::find(deps, "rich"), deps.end());
+}
+
+// ----- extract_requirements_txt ------------------------------------------
+
+TEST_F(ManifestDepsFixture, RequirementsTxtExtractsCanonicalNames)
+{
+    // Real-world Django requirements.txt mixes capitalisation, pin
+    // styles, extras, env markers, comments, and -r includes. The
+    // extractor must return the PEP 503 canonical short name for
+    // each spec so the matcher's lowercase table can find them.
+    const auto path =
+        write_file("requirements.txt", "# top-level deps\n"
+                                       "Django==1.10.5\n"
+                                       "django-cors-middleware==1.3.1  # inline\n"
+                                       "djangorestframework>=3.4,<4.0\n"
+                                       "requests~=2.31\n"
+                                       "flask[async]==2.3.0\n"
+                                       "package_with_underscores\n"
+                                       "Some.Dotted.Name==1.0\n"
+                                       "uvicorn ; python_version >= \"3.8\"\n"
+                                       "\n"
+                                       "-r dev-requirements.txt\n"
+                                       "-e .\n"
+                                       "git+https://github.com/example/pkg.git@main#egg=pkg\n"
+                                       "http://example.com/wheel.whl\n");
+    const auto deps = extract_requirements_txt(path);
+    EXPECT_NE(std::ranges::find(deps, "django"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "django-cors-middleware"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "djangorestframework"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "requests"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "flask"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "package-with-underscores"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "some-dotted-name"), deps.end());
+    EXPECT_NE(std::ranges::find(deps, "uvicorn"), deps.end());
+    // Comments / blank lines / -r / -e / VCS / URL lines are skipped.
+    EXPECT_EQ(std::ranges::find(deps, ""), deps.end());
+    EXPECT_EQ(std::ranges::find(deps, "pkg"), deps.end());
+}
+
+TEST_F(ManifestDepsFixture, RequirementsTxtMissingFileReturnsEmpty)
+{
+    const auto deps = extract_requirements_txt(m_tmp / "missing-requirements.txt");
+    EXPECT_TRUE(deps.empty());
 }
 
 // ----- extract_cargo -----------------------------------------------------

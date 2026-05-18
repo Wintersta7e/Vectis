@@ -544,7 +544,7 @@ detect_root_manifest(const std::filesystem::path& project_root)
         Runtime runtime;
         DepExtractor extract;
     };
-    static constexpr std::array<ManifestEntry, 14> k_manifests = {{
+    static constexpr std::array<ManifestEntry, 15> k_manifests = {{
         {"go.mod", Runtime::Go, &deps::extract_go_mod},
         {"composer.json", Runtime::Php, &deps::extract_composer},
         {"Gemfile", Runtime::Ruby, &deps::extract_gemfile},
@@ -556,6 +556,7 @@ detect_root_manifest(const std::filesystem::path& project_root)
         {"package.json", Runtime::NodeJs, &deps::extract_npm},
         {"CMakeLists.txt", Runtime::CCpp, nullptr},
         {"setup.py", Runtime::Python, &deps::extract_setup_py},
+        {"requirements.txt", Runtime::Python, &deps::extract_requirements_txt},
         {"meson.build", Runtime::CCpp, nullptr},
         {"configure.ac", Runtime::CCpp, nullptr},
         {"Makefile", Runtime::CCpp, nullptr},
@@ -1547,7 +1548,7 @@ ecosystem_for_manifest(std::string_view filename) noexcept
     if (filename == "package.json") {
         return hints::Ecosystem::Npm;
     }
-    if (filename == "pyproject.toml" || filename == "setup.py") {
+    if (filename == "pyproject.toml" || filename == "setup.py" || filename == "requirements.txt") {
         return hints::Ecosystem::Pyproject;
     }
     if (filename == "Cargo.toml") {

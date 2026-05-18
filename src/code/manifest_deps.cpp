@@ -401,4 +401,95 @@ std::vector<std::string> extract_setup_py(const std::filesystem::path& setup_py)
     return {deps.begin(), deps.end()};
 }
 
+namespace {
+
+/// Normalise a python distribution name per PEP 503: lowercase, then
+/// collapse runs of `[_.-]` to a single `-`. The framework_hints py
+/// table is keyed by the canonical lowercase short name (e.g.
+/// `django`, `flask`) so a `Django==1.10` line in requirements.txt
+/// must canonicalise to `django` to match.
+[[nodiscard]] std::string normalise_pep503(std::string_view raw)
+{
+    std::string out;
+    out.reserve(raw.size());
+    bool last_was_sep = false;
+    for (const char c : raw) {
+        if (c == '_' || c == '.' || c == '-') {
+            if (!last_was_sep && !out.empty()) {
+                out.push_back('-');
+            }
+            last_was_sep = true;
+        }
+        else {
+            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            last_was_sep = false;
+        }
+    }
+    while (!out.empty() && out.back() == '-') {
+        out.pop_back();
+    }
+    return out;
+}
+
+} // namespace
+
+std::vector<std::string> extract_requirements_txt(const std::filesystem::path& requirements_txt)
+{
+    auto contents = vectis::platform::read_file(requirements_txt);
+    if (!contents) {
+        return {};
+    }
+    const std::string& src = *contents;
+
+    std::set<std::string> deps;
+    std::size_t pos = 0;
+    while (pos < src.size()) {
+        const std::size_t line_end = src.find('\n', pos);
+        std::string_view line{src.data() + pos,
+                              (line_end == std::string::npos ? src.size() : line_end) - pos};
+        pos = (line_end == std::string::npos) ? src.size() : line_end + 1;
+
+        // Strip a trailing `\r` (Windows line endings).
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
+        // Strip a `#` comment, then leading + trailing whitespace.
+        if (const std::size_t hash = line.find('#'); hash != std::string_view::npos) {
+            line = line.substr(0, hash);
+        }
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) {
+            line.remove_prefix(1);
+        }
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) {
+            line.remove_suffix(1);
+        }
+        if (line.empty()) {
+            continue;
+        }
+        // Skip include / constraint / editable / VCS-only lines —
+        // they don't carry a parseable short name.
+        if (line.starts_with('-') || line.starts_with("git+") || line.starts_with("hg+") ||
+            line.starts_with("svn+") || line.starts_with("bzr+") || line.starts_with("http") ||
+            line.starts_with("file:")) {
+            continue;
+        }
+        // The package name ends at the first occurrence of any version
+        // / extras / env-marker / URL delimiter character.
+        std::size_t name_end = 0;
+        for (; name_end < line.size(); ++name_end) {
+            const char c = line[name_end];
+            if (c == '=' || c == '<' || c == '>' || c == '!' || c == '~' || c == '[' || c == ';' ||
+                c == ' ' || c == '\t' || c == '@') {
+                break;
+            }
+        }
+        const std::string_view name_raw = line.substr(0, name_end);
+        std::string canonical = normalise_pep503(name_raw);
+        if (!canonical.empty()) {
+            deps.insert(std::move(canonical));
+        }
+    }
+    return {deps.begin(), deps.end()};
+}
+
 } // namespace vectis::code::deps

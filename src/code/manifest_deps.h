@@ -48,6 +48,16 @@ extract_pyproject(const std::filesystem::path& pyproject_toml);
 /// of not embedding a Python interpreter.
 [[nodiscard]] std::vector<std::string> extract_setup_py(const std::filesystem::path& setup_py);
 
+/// Read `requirements.txt`. Each non-blank, non-comment line is
+/// expected to be a pip dep spec (`name`, `name==1.2.3`, `name[extra]`,
+/// `name @ https://...`). Returns the PEP 503-normalised name part
+/// (lowercase, runs of `[_.-]` collapsed to `-`) so the framework
+/// matcher can look them up against the lower-cased python table.
+/// `-r other.txt` / `-c constraints.txt` / VCS URLs / editable installs
+/// (`-e .`) are skipped.
+[[nodiscard]] std::vector<std::string>
+extract_requirements_txt(const std::filesystem::path& requirements_txt);
+
 /// Read `Cargo.toml` and return the deduped union of keys from
 /// `[dependencies]`, `[dev-dependencies]`, and `[build-dependencies]`.
 /// Workspace deps (`{ workspace = true }`), path deps, git deps, and
