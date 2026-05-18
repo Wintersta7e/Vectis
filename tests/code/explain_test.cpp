@@ -114,7 +114,7 @@ TEST(ExplainTest, IncludesHotspotsForHighComplexity)
     // should not appear in the hotspots block.
     EXPECT_NE(out.find("Top hotspots"), std::string::npos);
     EXPECT_NE(out.find("handle_request"), std::string::npos);
-    EXPECT_NE(out.find("complexity 18"), std::string::npos);
+    EXPECT_NE(out.find("complexity (18)"), std::string::npos);
     EXPECT_NE(out.find("src/app.py:30"), std::string::npos);
 }
 

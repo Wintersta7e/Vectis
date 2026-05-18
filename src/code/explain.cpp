@@ -15,6 +15,7 @@
 #include "code/architecture_detector.h"
 #include "code/code_index.h"
 #include "code/dependency_graph.h"
+#include "code/hotspot_detector.h"
 #include "code/language.h"
 #include "code/pagerank.h"
 #include "code/symbol.h"
@@ -161,40 +162,32 @@ template <typename K, typename V>
     return oss.str();
 }
 
-/// Top-5 symbols by cyclomatic complexity. We do this directly off the
-/// symbol list rather than `detect_hotspots()` because the explain
-/// summary wants the highest-complexity symbols regardless of whether
-/// they cleared the file-level / fan-in / fan-out thresholds.
-void render_hotspots(std::ostream& out, const std::vector<Symbol>& symbols,
+/// Render a pre-selected hotspot list. Function-level entries get a
+/// `path:line  name  [kind, reason]` line; file-level entries
+/// (`symbol_id == 0`) get `path  [reason]`.
+void render_hotspots(std::ostream& out, const std::vector<Hotspot>& hotspots,
                      const std::vector<FileEntry>& files)
 {
-    std::vector<const Symbol*> by_complexity;
-    by_complexity.reserve(symbols.size());
-    for (const auto& s : symbols) {
-        if (s.complexity > 1) { // 1 = straight-line; not interesting
-            by_complexity.push_back(&s);
-        }
-    }
-    if (by_complexity.empty()) {
+    if (hotspots.empty()) {
         return;
     }
-    std::sort(by_complexity.begin(), by_complexity.end(),
-              [](const Symbol* a, const Symbol* b) { return a->complexity > b->complexity; });
-
     std::unordered_map<std::int64_t, std::string> path_by_id;
     path_by_id.reserve(files.size());
     for (const auto& f : files) {
         path_by_id.emplace(f.id, f.path_relative.generic_string());
     }
-    out << "\nTop hotspots (by cyclomatic complexity):\n";
-    constexpr std::size_t k_max = 5;
-    const std::size_t cap = std::min(k_max, by_complexity.size());
-    for (std::size_t i = 0; i < cap; ++i) {
-        const Symbol* s = by_complexity[i];
-        const auto path_it = path_by_id.find(s->file_id);
+    out << "\nTop hotspots:\n";
+    for (const Hotspot& h : hotspots) {
+        const auto path_it = path_by_id.find(h.file_id);
         const std::string path = path_it == path_by_id.end() ? std::string{"?"} : path_it->second;
-        out << "  " << path << ":" << s->line_start << "  " << s->name << "  ["
-            << symbol_kind_name(s->kind) << ", complexity " << s->complexity << "]\n";
+        out << "  " << path;
+        if (h.symbol_id != 0) {
+            out << ":" << h.line << "  " << h.symbol_name << "  [" << symbol_kind_name(h.kind)
+                << ", " << h.reason << "]\n";
+        }
+        else {
+            out << "  [" << h.reason << "]\n";
+        }
     }
 }
 
@@ -272,7 +265,12 @@ std::string build_explanation(const CodeIndex& index, const ExplainOptions& opti
         out << "API surface: " << vis << ".\n";
     }
 
-    render_hotspots(out, symbols, files);
+    // Use the detector's bucketed top-N so a dominant trigger (e.g.
+    // high fan-in in big monorepos) can't crowd out complexity / size
+    // / fan-out hotspots in the explain output.
+    constexpr std::size_t k_hotspot_cap = 5;
+    const std::vector<Hotspot> hotspots = diversify_top_n(detect_hotspots(index), k_hotspot_cap);
+    render_hotspots(out, hotspots, files);
 
     // Most central files by PageRank — shows the structural backbone.
     // Distinct from hotspots (which are "complex / risky"); this is
