@@ -82,6 +82,22 @@ find_package(tomlplusplus REQUIRED)
 find_package(fmt          REQUIRED)
 find_package(spdlog       REQUIRED)
 
+# Header-only wrapper around tomlplusplus. Debian/Ubuntu's
+# tomlplusplusConfig.cmake binds the target to libtomlplusplus.so and
+# defines TOML_HEADER_ONLY=0, which would force every portable-bundle
+# target machine to install libtomlplusplusN. Re-export the headers
+# with TOML_HEADER_ONLY=1 so the implementation inlines into vectis and
+# the binary has no toml++ runtime dependency. vcpkg's port is already
+# INTERFACE-only, so this collapses to a no-op there.
+add_library(vectis_tomlplusplus INTERFACE)
+get_target_property(_vectis_tomlpp_includes
+    tomlplusplus::tomlplusplus INTERFACE_INCLUDE_DIRECTORIES)
+if(_vectis_tomlpp_includes)
+    target_include_directories(vectis_tomlplusplus SYSTEM INTERFACE
+        ${_vectis_tomlpp_includes})
+endif()
+target_compile_definitions(vectis_tomlplusplus INTERFACE TOML_HEADER_ONLY=1)
+
 # SQLite3: vcpkg ships `unofficial-sqlite3`, system provides `SQLite3`.
 # Try the system path first; fall back to vcpkg's unofficial name.
 find_package(SQLite3 QUIET)
@@ -400,7 +416,7 @@ target_link_libraries(vectis_core PUBLIC
     ts_grammar_sql
     ${VECTIS_SQLITE3_TARGET}
     nlohmann_json::nlohmann_json
-    tomlplusplus::tomlplusplus
+    vectis_tomlplusplus
     fmt::fmt
     spdlog::spdlog
     tl::expected
