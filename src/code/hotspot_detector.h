@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,7 @@
 namespace vectis::code {
 
 class CodeIndex;
+struct FileEntry;
 
 /// Which threshold a hotspot fired on most strongly. For files that
 /// trip multiple triggers (e.g. large + high fan-in) the bucket
@@ -71,6 +73,12 @@ struct HotspotThresholds
 /// ("large file and high fan-out"). Function-level hotspots are
 /// emitted once per symbol.
 [[nodiscard]] std::vector<Hotspot> detect_hotspots(const CodeIndex& index,
+                                                   HotspotThresholds thresholds = {});
+
+/// Avoids re-snapshotting the index when the caller already holds a
+/// file snapshot.
+[[nodiscard]] std::vector<Hotspot> detect_hotspots(const CodeIndex& index,
+                                                   std::span<const FileEntry> files,
                                                    HotspotThresholds thresholds = {});
 
 /// Pick up to `cap` hotspots balanced across triggers so a single

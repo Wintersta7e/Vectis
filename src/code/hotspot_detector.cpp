@@ -35,9 +35,14 @@ namespace {
 
 std::vector<Hotspot> detect_hotspots(const CodeIndex& index, HotspotThresholds thresholds)
 {
-    std::vector<Hotspot> hotspots;
-
     const std::vector<FileEntry> files = index.snapshot_files();
+    return detect_hotspots(index, std::span<const FileEntry>{files}, thresholds);
+}
+
+std::vector<Hotspot> detect_hotspots(const CodeIndex& index, std::span<const FileEntry> files,
+                                     HotspotThresholds thresholds)
+{
+    std::vector<Hotspot> hotspots;
 
     // --- Function-level hotspots ----------------------------------
     // Walk every file's symbols and flag any function / method whose

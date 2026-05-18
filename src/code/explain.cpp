@@ -267,9 +267,12 @@ std::string build_explanation(const CodeIndex& index, const ExplainOptions& opti
 
     // Use the detector's bucketed top-N so a dominant trigger (e.g.
     // high fan-in in big monorepos) can't crowd out complexity / size
-    // / fan-out hotspots in the explain output.
+    // / fan-out hotspots in the explain output. Reuse `files`; the
+    // detector would otherwise re-snapshot the index — wasteful on
+    // huge projects.
     constexpr std::size_t k_hotspot_cap = 5;
-    const std::vector<Hotspot> hotspots = diversify_top_n(detect_hotspots(index), k_hotspot_cap);
+    const std::vector<Hotspot> hotspots =
+        diversify_top_n(detect_hotspots(index, std::span<const FileEntry>{files}), k_hotspot_cap);
     render_hotspots(out, hotspots, files);
 
     // Most central files by PageRank — shows the structural backbone.

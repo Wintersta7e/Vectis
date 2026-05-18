@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -303,12 +304,14 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
 /// raw severity ordering; slim callers pass a small N (typically 10),
 /// which triggers bucketed diversification so one trigger type cannot
 /// dominate the top list.
-[[nodiscard]] nlohmann::json build_hotspots_json(const CodeIndex& index, const FileIdToPath& lookup,
+[[nodiscard]] nlohmann::json build_hotspots_json(const CodeIndex& index,
+                                                 std::span<const FileEntry> files,
+                                                 const FileIdToPath& lookup,
                                                  const std::filesystem::path& project_root,
                                                  bool include_excerpts, std::size_t max_entries = 0)
 {
     nlohmann::json arr = nlohmann::json::array();
-    std::vector<Hotspot> all = detect_hotspots(index);
+    std::vector<Hotspot> all = detect_hotspots(index, files);
     const std::vector<Hotspot> selected =
         max_entries == 0 ? std::move(all) : diversify_top_n(std::move(all), max_entries);
     for (const Hotspot& h : selected) {
@@ -444,7 +447,8 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
     // orientation signal — worth emitting in both slim and full.
     root["architecture"] = build_architecture_json(index, options);
     if (include_file_details) {
-        root["hotspots"] = build_hotspots_json(index, lookup, options.project_root,
+        root["hotspots"] = build_hotspots_json(index, std::span<const FileEntry>{files}, lookup,
+                                               options.project_root,
                                                /*include_excerpts=*/true,
                                                /*max_entries=*/0);
         root["central_files"] = build_central_files_json(index, lookup,
@@ -454,7 +458,8 @@ build_dependency_graph_json(const CodeIndex& index, const FileIdToPath& lookup, 
     else {
         constexpr std::size_t k_slim_hotspot_cap = 10;
         constexpr std::size_t k_slim_central_files_cap = 10;
-        root["hotspots"] = build_hotspots_json(index, lookup, options.project_root,
+        root["hotspots"] = build_hotspots_json(index, std::span<const FileEntry>{files}, lookup,
+                                               options.project_root,
                                                /*include_excerpts=*/false,
                                                /*max_entries=*/k_slim_hotspot_cap);
         root["central_files"] = build_central_files_json(index, lookup, k_slim_central_files_cap);
