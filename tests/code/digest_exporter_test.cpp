@@ -121,6 +121,7 @@ TEST(DigestExporterTest, Json_WellFormed)
     EXPECT_FALSE(parsed.contains("encoding"));
     EXPECT_FALSE(parsed.contains("languages")); // top-level only in slim; full uses project.languages
     EXPECT_FALSE(parsed.contains("kinds"));     // top-level only in slim
+    EXPECT_FALSE(parsed.contains("refs"));      // top-level only in slim
     EXPECT_EQ(parsed["vectis_version"], "0.1.0");
     // Digest must be deterministic — no timestamps, no environment-derived
     // fields. Same input + same binary → byte-identical JSON.
@@ -288,7 +289,7 @@ TEST(DigestExporterTest, SlimJson_HasEncodingBlock)
     const auto& enc = parsed["encoding"];
     EXPECT_EQ(enc["edge_format"], "tuple-v1");
     // files count matches synthetic index (2 files).
-    // Files / languages / kinds are wired; refs is zero until that table exists.
+    // Files / languages / kinds / refs all wired; no placeholder zeros remain.
     EXPECT_EQ(enc["files"], 2);
     EXPECT_TRUE(enc["languages"].is_number_integer());
     EXPECT_TRUE(enc["kinds"].is_number_integer());
@@ -386,6 +387,72 @@ TEST(DigestExporterTest, SlimJson_HasKindsTable)
     EXPECT_EQ(kinds[0], "import");
     EXPECT_EQ(kinds[1], "include");
     EXPECT_EQ(parsed["encoding"]["kinds"], kinds.size());
+}
+
+TEST(DigestExporterTest, SlimJson_HasRefsTable)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    // Three deps where two share the same import_string -> the refs[]
+    // table must contain exactly two unique entries.
+    Dependency a;
+    a.source_file_id = 1;
+    a.target_file_id = 2;
+    a.kind = "include";
+    a.import_string = "scanner.h";
+    Dependency b;
+    b.source_file_id = 1;
+    b.target_file_id = 0;
+    b.kind = "import";
+    b.import_string = "boost/asio.hpp";
+    Dependency c;
+    c.source_file_id = 2;
+    c.target_file_id = 0;
+    c.kind = "import";
+    c.import_string = "boost/asio.hpp"; // duplicate
+    const std::array<Dependency, 3> batch = {a, b, c};
+    index.add_dependencies(batch);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("refs"));
+    const auto refs = parsed["refs"].get<std::vector<std::string>>();
+    ASSERT_EQ(refs.size(), 2U) << "duplicate import_string must dedupe";
+    EXPECT_TRUE(std::is_sorted(refs.begin(), refs.end()));
+    EXPECT_EQ(refs[0], "boost/asio.hpp");
+    EXPECT_EQ(refs[1], "scanner.h");
+    EXPECT_EQ(parsed["encoding"]["refs"], refs.size());
+
+    // Every edge's slot[3] is either null or a valid ref_id index.
+    const auto& edges = parsed["dependency_graph"]["edges"];
+    for (const auto& e : edges) {
+        ASSERT_TRUE(e.is_array());
+        ASSERT_EQ(e.size(), 4U);
+        if (!e[3].is_null()) {
+            EXPECT_TRUE(e[3].is_number_integer());
+            const int rid = e[3].get<int>();
+            ASSERT_GE(rid, 0);
+            ASSERT_LT(static_cast<std::size_t>(rid), refs.size());
+        }
+    }
+
+    // Both deps that share "boost/asio.hpp" must resolve to the same
+    // ref_id — that's the whole point of dedup.
+    std::vector<int> import_ref_ids;
+    const auto kinds = parsed["kinds"].get<std::vector<std::string>>();
+    const auto import_idx = static_cast<int>(
+        std::find(kinds.begin(), kinds.end(), "import") - kinds.begin());
+    for (const auto& e : edges) {
+        if (e[2].get<int>() == import_idx) {
+            ASSERT_TRUE(e[3].is_number_integer());
+            import_ref_ids.push_back(e[3].get<int>());
+        }
+    }
+    ASSERT_EQ(import_ref_ids.size(), 2U);
+    EXPECT_EQ(import_ref_ids[0], import_ref_ids[1]);
 }
 
 TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
@@ -634,7 +701,7 @@ TEST(DigestExporterTest, BothFormats_StatsCarryCycleCount)
 
 TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
 {
-    // Slim emits external edges as `[source, null, kind_id, ref]` so
+    // Slim emits external edges as `[source, null, kind_id, ref_id]` so
     // agents see the unresolved-import landscape without parsing two
     // different edge shapes.
     CodeIndex index;
@@ -652,6 +719,7 @@ TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
     const std::string content = build_digest_string(index, options);
     auto parsed = nlohmann::json::parse(content);
 
+    const auto refs = parsed["refs"].get<std::vector<std::string>>();
     const auto& edges = parsed["dependency_graph"]["edges"];
     ASSERT_EQ(edges.size(), 1U) << "slim must emit external edges";
     const auto& edge = edges[0];
@@ -659,9 +727,11 @@ TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
     ASSERT_EQ(edge.size(), 4U);
     EXPECT_EQ(edge[0].get<std::int64_t>(), 1);
     EXPECT_TRUE(edge[1].is_null());
-    // edge[2] = kind_id; edge[3] is the raw import string inline.
-    ASSERT_TRUE(edge[3].is_string());
-    EXPECT_EQ(edge[3].get<std::string>(), "third_party/lib.h");
+    // edge[2] is kind_id; edge[3] is the ref_id index into refs[].
+    ASSERT_TRUE(edge[3].is_number_integer());
+    const std::size_t rid = static_cast<std::size_t>(edge[3].get<int>());
+    ASSERT_LT(rid, refs.size());
+    EXPECT_EQ(refs[rid], "third_party/lib.h");
 }
 
 TEST(DigestExporterTest, SlimJson_EdgesAreTuples)
@@ -692,47 +762,47 @@ TEST(DigestExporterTest, SlimJson_EdgesAreTuples)
     ASSERT_EQ(edges.size(), 2U);
 
     const auto kinds = parsed["kinds"].get<std::vector<std::string>>();
+    const auto refs = parsed["refs"].get<std::vector<std::string>>();
     const auto include_idx = static_cast<int>(
         std::find(kinds.begin(), kinds.end(), "include") - kinds.begin());
     const auto import_idx = static_cast<int>(
         std::find(kinds.begin(), kinds.end(), "import") - kinds.begin());
 
-    // Each edge is a 4-element JSON array.
     for (const auto& e : edges) {
         ASSERT_TRUE(e.is_array());
         ASSERT_EQ(e.size(), 4U);
     }
 
-    // Find each edge by predicate rather than pinning emission order.
     bool saw_internal = false;
     bool saw_external = false;
     for (const auto& e : edges) {
         const auto source_id = e[0].get<std::int64_t>();
-        if (source_id != 1) {
-            continue;
-        }
+        if (source_id != 1) continue;
         if (e[1].is_null()) {
-            // external edge: kind_id == import, ref is the raw import string
             EXPECT_EQ(e[2].get<int>(), import_idx);
-            ASSERT_TRUE(e[3].is_string());
-            EXPECT_EQ(e[3].get<std::string>(), "boost/asio.hpp");
+            ASSERT_TRUE(e[3].is_number_integer());
+            const std::size_t rid = static_cast<std::size_t>(e[3].get<int>());
+            ASSERT_LT(rid, refs.size());
+            EXPECT_EQ(refs[rid], "boost/asio.hpp");
             saw_external = true;
         }
         else {
             EXPECT_EQ(e[1].get<std::int64_t>(), 2);
             EXPECT_EQ(e[2].get<int>(), include_idx);
-            ASSERT_TRUE(e[3].is_string());
-            EXPECT_EQ(e[3].get<std::string>(), "scanner.h");
+            ASSERT_TRUE(e[3].is_number_integer());
+            const std::size_t rid = static_cast<std::size_t>(e[3].get<int>());
+            ASSERT_LT(rid, refs.size());
+            EXPECT_EQ(refs[rid], "scanner.h");
             saw_internal = true;
         }
     }
+    EXPECT_TRUE(saw_internal);
+    EXPECT_TRUE(saw_external);
+
     const auto& stats = parsed["dependency_graph"]["stats"];
     EXPECT_EQ(stats["total_edges"], 2);
     EXPECT_EQ(stats["internal_edges"], 1);
     EXPECT_EQ(stats["external_edges"], 1);
-
-    EXPECT_TRUE(saw_internal);
-    EXPECT_TRUE(saw_external);
 }
 
 TEST(DigestExporterTest, Json_OmitsImportRefWhenImportStringEmpty)

@@ -68,6 +68,22 @@ build_kinds_table(std::span<const Dependency> deps)
     return {seen.begin(), seen.end()};
 }
 
+/// Sorted unique list of every non-empty `import_string` across the
+/// dependency set — i.e. every external import token plus every
+/// manifest coordinate / FQCN / relative-import artifact carried on
+/// an internal edge.
+[[nodiscard]] std::vector<std::string>
+build_refs_table(std::span<const Dependency> deps)
+{
+    std::set<std::string> seen;
+    for (const Dependency& d : deps) {
+        if (!d.import_string.empty()) {
+            seen.emplace(d.import_string);
+        }
+    }
+    return {seen.begin(), seen.end()};
+}
+
 /// Build a string-to-dense-int-index lookup over a sorted table.
 /// The returned map is keyed by the same strings stored in `table`.
 [[nodiscard]] std::unordered_map<std::string, int>
@@ -183,16 +199,17 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 /// - `cycles`: array of arrays of paths, one per detected cycle.
 /// When `include_file_details` is false (slim format):
 /// - `edges`: positional 4-tuple `[source_file_id, target_file_id|null,
-///   kind_id, ref|null]` where kind_id indexes into the top-level kinds[]
-///   table and ref is the inline raw import string.
+///   kind_id, ref_id|null]` where kind_id indexes into kinds[] and ref_id
+///   indexes into refs[].
 /// - `cycles`: omitted to stay token-cheap.
 /// `stats` is emitted in both formats.
-/// `kind_lookup` must be a pre-built {kind_string → kinds[] index} map; it
-/// is used only by the slim branch.
+/// `kind_lookup` and `ref_lookup` must be pre-built {string → index} maps;
+/// they are used only by the slim branch.
 [[nodiscard]] nlohmann::json
 build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToPath& lookup,
                             bool include_file_details,
-                            const std::unordered_map<std::string, int>& kind_lookup)
+                            const std::unordered_map<std::string, int>& kind_lookup,
+                            const std::unordered_map<std::string, int>& ref_lookup)
 {
     nlohmann::json graph;
     nlohmann::json edges_array = nlohmann::json::array();
@@ -230,7 +247,7 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
         }
     }
     else {
-        // Slim format: positional tuple [source_id, target_id|null, kind_id, ref|null].
+        // Slim format: positional tuple [source_id, target_id|null, kind_id, ref_id|null].
         for (const Dependency& dep : deps) {
             const auto kind_it = kind_lookup.find(dep.kind);
             // dep.kind is filtered to non-empty in build_kinds_table; a -1 here
@@ -251,7 +268,9 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
                 edge.push_back(nullptr);
             }
             else {
-                edge.push_back(dep.import_string);
+                const auto rit = ref_lookup.find(dep.import_string);
+                edge.push_back(rit == ref_lookup.end() ? nlohmann::json(nullptr)
+                                                       : nlohmann::json(rit->second));
             }
             edges_array.push_back(std::move(edge));
         }
@@ -458,11 +477,12 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     schema["name"] = "vectis.slim";
     schema["version"] = k_slim_schema_version;
     schema["edge_tuple"] = nlohmann::json::array(
-        {"source_file_id", "target_file_id|null", "kind_id", "ref|null"});
+        {"source_file_id", "target_file_id|null", "kind_id", "ref_id|null"});
     schema["edge_semantics"] =
-        "target_file_id null => unresolved external (ref is the raw import "
-        "string); target_file_id non-null => internal edge (ref, when present, "
-        "is a manifest coordinate, FQCN, or relative-import artifact)";
+        "target_file_id null => unresolved external (ref_id indexes into "
+        "refs[] which holds the raw import string); target_file_id non-null "
+        "=> internal edge (ref_id, when present, indexes a manifest "
+        "coordinate, FQCN, or relative-import artifact)";
     schema["cycle_semantics"] =
         "cycle file_ids include the first file_id repeated at the end to close "
         "the loop";
@@ -499,6 +519,8 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     const std::vector<std::string> languages = distinct_language_names(files);
     const std::unordered_map<std::string, int> lang_lookup = build_id_lookup(languages);
     const std::vector<std::string> kinds = build_kinds_table(deps_span);
+    const std::vector<std::string> refs = build_refs_table(deps_span);
+    const std::unordered_map<std::string, int> ref_lookup = build_id_lookup(refs);
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
@@ -522,6 +544,7 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
         // Slim v2 promotes the tables to top-level nodes.
         root["languages"] = languages;
         root["kinds"] = kinds;
+        root["refs"] = refs;
     }
 
     // Walk every file once and reuse the per-file `symbols` array to
@@ -555,10 +578,10 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     root["files"] = std::move(files_array);
 
     // Dependency graph: full format uses object-shaped edges + cycles array;
-    // slim uses positional tuples with kind_id indices.
+    // slim uses positional tuples with kind_id and ref_id indices.
     const std::unordered_map<std::string, int> kind_lookup = build_id_lookup(kinds);
     root["dependency_graph"] =
-        build_dependency_graph_json(deps_span, lookup, include_file_details, kind_lookup);
+        build_dependency_graph_json(deps_span, lookup, include_file_details, kind_lookup, ref_lookup);
 
     // Architecture is cheap (~150 bytes) and the single highest-value
     // orientation signal — worth emitting in both slim and full.
@@ -585,7 +608,7 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
         encoding["files"] = files.size();
         encoding["languages"] = languages.size();
         encoding["kinds"] = kinds.size();
-        encoding["refs"] = 0;
+        encoding["refs"] = refs.size();
         root["encoding"] = std::move(encoding);
     }
 
