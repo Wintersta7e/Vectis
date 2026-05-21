@@ -8,15 +8,12 @@
 #include <map>
 #include <set>
 #include <span>
-#include <sstream>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include "code/architecture_detector.h"
