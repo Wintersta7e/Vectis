@@ -56,28 +56,17 @@ constexpr const char* k_slim_edge_format = "tuple-v1";
     return {names.begin(), names.end()};
 }
 
-/// Sorted unique list of dependency kind strings present in the index.
-[[nodiscard]] std::vector<std::string> build_kinds_table(std::span<const Dependency> deps)
+/// Sorted unique list of non-empty values produced by `field` across `deps`.
+/// Used to build the kinds[] and refs[] tables in the slim header.
+template <typename FieldFn>
+[[nodiscard]] std::vector<std::string> build_dep_table(std::span<const Dependency> deps,
+                                                       FieldFn field)
 {
     std::set<std::string> seen;
     for (const Dependency& d : deps) {
-        if (!d.kind.empty()) {
-            seen.emplace(d.kind);
-        }
-    }
-    return {seen.begin(), seen.end()};
-}
-
-/// Sorted unique list of every non-empty `import_string` across the
-/// dependency set — i.e. every external import token plus every
-/// manifest coordinate / FQCN / relative-import artifact carried on
-/// an internal edge.
-[[nodiscard]] std::vector<std::string> build_refs_table(std::span<const Dependency> deps)
-{
-    std::set<std::string> seen;
-    for (const Dependency& d : deps) {
-        if (!d.import_string.empty()) {
-            seen.emplace(d.import_string);
+        const std::string& val = field(d);
+        if (!val.empty()) {
+            seen.emplace(val);
         }
     }
     return {seen.begin(), seen.end()};
@@ -203,13 +192,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 /// - `cycles`: array of `{"file_ids": [int...]}` objects; first file_id
 ///   repeated at end to close the loop (matches _schema.cycle_semantics).
 /// `stats` is emitted in both formats.
-/// `kind_lookup` and `ref_lookup` must be pre-built {string → index} maps;
-/// they are used only by the slim branch.
-[[nodiscard]] nlohmann::json
-build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToPath& lookup,
-                            bool include_file_details,
-                            const std::unordered_map<std::string, int>& kind_lookup,
-                            const std::unordered_map<std::string, int>& ref_lookup)
+[[nodiscard]] nlohmann::json build_dependency_graph_json(std::span<const Dependency> deps_in,
+                                                         const FileIdToPath& lookup,
+                                                         bool include_file_details)
 {
     nlohmann::json graph;
     nlohmann::json edges_array = nlohmann::json::array();
@@ -229,7 +214,6 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     if (include_file_details) {
         // Full format: object-shaped edges.
         for (const Dependency& dep : deps) {
-            // matches the empty-kind filter in build_kinds_table
             if (!dep.kind.empty()) {
                 ++by_kind[dep.kind];
             }
@@ -253,14 +237,17 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     }
     else {
         // Slim format: positional tuple [source_id, target_id|null, kind_id, ref_id|null].
+        // Build index lookups here — they're only needed by the slim branch.
+        const std::unordered_map<std::string, int> kind_lookup = build_id_lookup(build_dep_table(
+            deps_in, [](const Dependency& d) -> const std::string& { return d.kind; }));
+        const std::unordered_map<std::string, int> ref_lookup = build_id_lookup(build_dep_table(
+            deps_in, [](const Dependency& d) -> const std::string& { return d.import_string; }));
         for (const Dependency& dep : deps) {
-            // matches the empty-kind filter in build_kinds_table
             if (!dep.kind.empty()) {
                 ++by_kind[dep.kind];
             }
             const auto kind_it = kind_lookup.find(dep.kind);
-            // dep.kind is filtered to non-empty in build_kinds_table; a -1 here
-            // only fires for a malformed cached dep with an empty kind string.
+            // A -1 kind_id only fires for a malformed cached dep with an empty kind string.
             const int kind_id = kind_it == kind_lookup.end() ? -1 : kind_it->second;
             nlohmann::json edge = nlohmann::json::array();
             edge.push_back(dep.source_file_id);
@@ -540,9 +527,10 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
 
     const std::vector<std::string> languages = distinct_language_names(files);
     const std::unordered_map<std::string, int> lang_lookup = build_id_lookup(languages);
-    const std::vector<std::string> kinds = build_kinds_table(deps_span);
-    const std::vector<std::string> refs = build_refs_table(deps_span);
-    const std::unordered_map<std::string, int> ref_lookup = build_id_lookup(refs);
+    const std::vector<std::string> kinds = build_dep_table(
+        deps_span, [](const Dependency& d) -> const std::string& { return d.kind; });
+    const std::vector<std::string> refs = build_dep_table(
+        deps_span, [](const Dependency& d) -> const std::string& { return d.import_string; });
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
@@ -601,9 +589,7 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
 
     // Dependency graph: full format uses object-shaped edges + cycles array;
     // slim uses positional tuples with kind_id and ref_id indices.
-    const std::unordered_map<std::string, int> kind_lookup = build_id_lookup(kinds);
-    root["dependency_graph"] = build_dependency_graph_json(deps_span, lookup, include_file_details,
-                                                           kind_lookup, ref_lookup);
+    root["dependency_graph"] = build_dependency_graph_json(deps_span, lookup, include_file_details);
 
     // Architecture is cheap (~150 bytes) and the single highest-value
     // orientation signal — worth emitting in both slim and full.
