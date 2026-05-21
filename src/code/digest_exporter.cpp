@@ -484,7 +484,7 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
         const double rounded = std::round(r.score * 1e6) / 1e6;
         out.push_back({
             {"file_id", r.file_id},
-            {"path", path_for(lookup, r.file_id)},
+            {"file", path_for(lookup, r.file_id)},
             {"score", rounded},
         });
     }

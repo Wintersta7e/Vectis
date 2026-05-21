@@ -1046,4 +1046,31 @@ TEST(DigestExporterTest, SlimJson_DiversifiesHotspotBuckets)
     EXPECT_TRUE(has_size) << "size dimension missing from slim top-N";
 }
 
+TEST(DigestExporterTest, SlimJson_CentralFilesUseFileKey)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    Dependency d;
+    d.source_file_id = 1;
+    d.target_file_id = 2;
+    d.kind = "include";
+    const std::array<Dependency, 1> batch = {d};
+    index.add_dependencies(batch);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("central_files"));
+    ASSERT_FALSE(parsed["central_files"].empty());
+    for (const auto& cf : parsed["central_files"]) {
+        EXPECT_TRUE(cf.contains("file_id"));
+        EXPECT_TRUE(cf.contains("file"))
+            << "central_files entries use `file`, not `path`";
+        EXPECT_FALSE(cf.contains("path"));
+        EXPECT_TRUE(cf.contains("score"));
+    }
+}
+
 } // namespace
