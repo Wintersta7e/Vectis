@@ -116,6 +116,8 @@ TEST(DigestExporterTest, Json_WellFormed)
     // Must be valid JSON.
     auto parsed = nlohmann::json::parse(content);
 
+    // Full JSON must never carry a _schema block (slim-only field).
+    EXPECT_FALSE(parsed.contains("_schema"));
     EXPECT_EQ(parsed["vectis_version"], "0.1.0");
     // Digest must be deterministic — no timestamps, no environment-derived
     // fields. Same input + same binary → byte-identical JSON.
@@ -245,6 +247,27 @@ TEST(DigestExporterTest, SlimJson_OmitsSizeLinesAndSymbols)
     EXPECT_FALSE(first.contains("size"));
     EXPECT_FALSE(first.contains("lines"));
     EXPECT_FALSE(first.contains("symbols"));
+}
+
+TEST(DigestExporterTest, SlimJson_HasSchemaHeader)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("_schema")) << "slim v2 must carry a _schema header";
+    const auto& schema = parsed["_schema"];
+    EXPECT_EQ(schema["name"], "vectis.slim");
+    EXPECT_EQ(schema["version"], 2);
+    ASSERT_TRUE(schema.contains("edge_tuple"));
+    ASSERT_TRUE(schema["edge_tuple"].is_array());
+    EXPECT_EQ(schema["edge_tuple"].size(), 4U);
+    EXPECT_TRUE(schema.contains("edge_semantics"));
+    EXPECT_TRUE(schema.contains("cycle_semantics"));
+    EXPECT_TRUE(schema.contains("file_id_semantics"));
 }
 
 TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)

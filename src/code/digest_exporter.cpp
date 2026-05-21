@@ -35,6 +35,8 @@ namespace vectis::code {
 namespace {
 
 constexpr const char* k_vectis_version = "0.1.0";
+/// Bump when edge_tuple arity/order or any other positional element changes.
+constexpr int k_slim_schema_version = 2;
 
 /// Sorted unique list of language display names for every file in
 /// the index. `Unknown` is excluded.
@@ -377,6 +379,30 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     return out;
 }
 
+/// Emits the slim-only `_schema` block at the top of every slim digest.
+/// `version` is a positional-contract pin: bump `k_slim_schema_version` when
+/// the edge tuple's arity/order or any other positional element changes.
+/// The `|null` suffix on edge_tuple entries is a prose hint for readers only —
+/// it is not a type tag and must not be extracted or normalised.
+[[nodiscard]] nlohmann::json build_slim_schema_header()
+{
+    nlohmann::json schema;
+    schema["name"] = "vectis.slim";
+    schema["version"] = k_slim_schema_version;
+    schema["edge_tuple"] = nlohmann::json::array(
+        {"source_file_id", "target_file_id|null", "kind_id", "ref_id|null"});
+    schema["edge_semantics"] =
+        "target_file_id null => unresolved external (ref_id is the raw import "
+        "string); target_file_id non-null => internal edge (ref_id, when present, "
+        "is a manifest coordinate, FQCN, or relative-import artifact)";
+    schema["cycle_semantics"] =
+        "cycle file_ids include the first file_id repeated at the end to close "
+        "the loop";
+    schema["file_id_semantics"] =
+        "file_id is a stable identifier, not an array offset into files[]";
+    return schema;
+}
+
 [[nodiscard]] nlohmann::json build_architecture_json(const CodeIndex& index,
                                                      const ExportOptions& options)
 {
@@ -404,6 +430,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
+    if (!include_file_details) {
+        root["_schema"] = build_slim_schema_header();
+    }
 
     nlohmann::json project;
     project["name"] = effective_project_name(options);
