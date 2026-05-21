@@ -37,6 +37,9 @@ namespace {
 constexpr const char* k_vectis_version = "0.1.0";
 /// Bump when edge_tuple arity/order or any other positional element changes.
 constexpr int k_slim_schema_version = 2;
+/// Positional-contract identifier for the edge encoding used in slim output.
+/// Bump alongside k_slim_schema_version if the tuple layout changes.
+constexpr const char* k_slim_edge_format = "tuple-v1";
 
 /// Sorted unique list of language display names for every file in
 /// the index. `Unknown` is excluded.
@@ -496,6 +499,14 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                                                /*max_entries=*/k_slim_hotspot_cap);
         root["central_files"] =
             build_central_files_json(files_span, deps_span, lookup, k_slim_central_files_cap);
+
+        nlohmann::json encoding;
+        encoding["edge_format"] = k_slim_edge_format;
+        encoding["files"] = files.size();
+        encoding["languages"] = 0;
+        encoding["kinds"] = 0;
+        encoding["refs"] = 0;
+        root["encoding"] = std::move(encoding);
     }
 
     return root;

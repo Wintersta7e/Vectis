@@ -116,8 +116,9 @@ TEST(DigestExporterTest, Json_WellFormed)
     // Must be valid JSON.
     auto parsed = nlohmann::json::parse(content);
 
-    // Full JSON must never carry a _schema block (slim-only field).
+    // Full JSON must never carry slim-only fields.
     EXPECT_FALSE(parsed.contains("_schema"));
+    EXPECT_FALSE(parsed.contains("encoding"));
     EXPECT_EQ(parsed["vectis_version"], "0.1.0");
     // Digest must be deterministic — no timestamps, no environment-derived
     // fields. Same input + same binary → byte-identical JSON.
@@ -268,6 +269,26 @@ TEST(DigestExporterTest, SlimJson_HasSchemaHeader)
     EXPECT_TRUE(schema.contains("edge_semantics"));
     EXPECT_TRUE(schema.contains("cycle_semantics"));
     EXPECT_TRUE(schema.contains("file_id_semantics"));
+}
+
+TEST(DigestExporterTest, SlimJson_HasEncodingBlock)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("encoding"));
+    const auto& enc = parsed["encoding"];
+    EXPECT_EQ(enc["edge_format"], "tuple-v1");
+    // files count matches synthetic index (2 files). Table counts read 0
+    // here until the language/kind/ref tables exist; presence only.
+    EXPECT_EQ(enc["files"], 2);
+    EXPECT_TRUE(enc["languages"].is_number_integer());
+    EXPECT_TRUE(enc["kinds"].is_number_integer());
+    EXPECT_TRUE(enc["refs"].is_number_integer());
 }
 
 TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
