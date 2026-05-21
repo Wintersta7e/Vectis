@@ -516,7 +516,10 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 [[nodiscard]] nlohmann::json build_json(const CodeIndex& index, const ExportOptions& options,
                                         bool include_file_details)
 {
-    const std::vector<FileEntry> files = index.snapshot_files();
+    std::vector<FileEntry> files = index.snapshot_files();
+    std::ranges::sort(files, [](const FileEntry& a, const FileEntry& b) {
+        return a.path_relative.generic_string() < b.path_relative.generic_string();
+    });
     const std::vector<Dependency> deps_snapshot = index.all_dependencies();
     const FileIdToPath lookup = build_file_id_to_path(files);
     const std::span<const FileEntry> files_span{files};
