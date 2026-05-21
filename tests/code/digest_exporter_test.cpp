@@ -1119,4 +1119,42 @@ TEST(DigestExporterTest, SlimJson_CentralFilesUseFileKey)
     }
 }
 
+TEST(DigestExporterTest, SlimJson_EmptyProjectHasAllTables)
+{
+    // No files, no symbols, no deps. All v2 table fields must still
+    // appear as empty arrays for parsing uniformity — agents should
+    // not need to branch on absence.
+    CodeIndex index;
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    EXPECT_EQ(parsed["_schema"]["version"], 2);
+    EXPECT_EQ(parsed["encoding"]["edge_format"], "tuple-v1");
+    EXPECT_EQ(parsed["encoding"]["files"], 0);
+    EXPECT_EQ(parsed["encoding"]["languages"], 0);
+    EXPECT_EQ(parsed["encoding"]["kinds"], 0);
+    EXPECT_EQ(parsed["encoding"]["refs"], 0);
+
+    ASSERT_TRUE(parsed.contains("languages"));
+    ASSERT_TRUE(parsed.contains("kinds"));
+    ASSERT_TRUE(parsed.contains("refs"));
+    ASSERT_TRUE(parsed.contains("files"));
+    EXPECT_TRUE(parsed["languages"].is_array());
+    EXPECT_TRUE(parsed["kinds"].is_array());
+    EXPECT_TRUE(parsed["refs"].is_array());
+    EXPECT_TRUE(parsed["files"].is_array());
+    EXPECT_TRUE(parsed["languages"].empty());
+    EXPECT_TRUE(parsed["kinds"].empty());
+    EXPECT_TRUE(parsed["refs"].empty());
+    EXPECT_TRUE(parsed["files"].empty());
+
+    // Edges + cycles are also empty arrays, not omitted.
+    ASSERT_TRUE(parsed["dependency_graph"].contains("edges"));
+    ASSERT_TRUE(parsed["dependency_graph"].contains("cycles"));
+    EXPECT_TRUE(parsed["dependency_graph"]["edges"].empty());
+    EXPECT_TRUE(parsed["dependency_graph"]["cycles"].empty());
+}
+
 } // namespace

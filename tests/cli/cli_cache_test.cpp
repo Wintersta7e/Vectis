@@ -124,6 +124,60 @@ TEST(CliCacheTest, WarmRunPicksUpNewFile)
     fs::remove_all(project);
 }
 
+TEST(CliCacheTest, SlimDigestRoundTripIsByteIdentical)
+{
+    // Two back-to-back slim digests against the same source tree must
+    // produce byte-identical output. Canonical sort on the dependency
+    // table + every string table (langs, kinds, refs, files) plus
+    // dependency_emission_less on edges keep cold and warm runs in
+    // lockstep — this regression-guards that contract.
+    const fs::path project = unique_tmp_dir("roundtrip");
+    stage_tiny_project(project);
+    {
+        std::ofstream f(project / "src" / "b.h");
+        f << "#pragma once\nint b();\n";
+    }
+    {
+        // Overwrite hello.cpp with a real include so there's an edge in
+        // the dependency graph.
+        std::ofstream f(project / "src" / "hello.cpp");
+        f << "#include \"b.h\"\nint hello() { return 0; }\n";
+    }
+
+    const fs::path out1 = project / "digest1.json";
+    const fs::path out2 = project / "digest2.json";
+    const fs::path cache = project / "cache";
+
+    // First run (cold cache).
+    {
+        ArgvHolder args({
+            "vectis",   "digest", project.string(), "--format", "slim",
+            "--cache",  "--cache-dir", cache.string(),
+            "--output", out1.string(),
+        });
+        ASSERT_EQ(vectis::cli::run(args.argc(), const_cast<char**>(args.argv())), 0);
+    }
+    // Second run (warm cache, same tree).
+    {
+        ArgvHolder args({
+            "vectis",   "digest", project.string(), "--format", "slim",
+            "--cache",  "--cache-dir", cache.string(),
+            "--output", out2.string(),
+        });
+        ASSERT_EQ(vectis::cli::run(args.argc(), const_cast<char**>(args.argv())), 0);
+    }
+
+    std::ifstream in1(out1, std::ios::binary);
+    std::ifstream in2(out2, std::ios::binary);
+    const std::string s1((std::istreambuf_iterator<char>(in1)),
+                         std::istreambuf_iterator<char>());
+    const std::string s2((std::istreambuf_iterator<char>(in2)),
+                         std::istreambuf_iterator<char>());
+    EXPECT_EQ(s1, s2) << "cold and warm runs must produce identical bytes";
+
+    fs::remove_all(project);
+}
+
 TEST(CliCacheTest, CacheDirOverrideKeepsProjectClean)
 {
     const fs::path project = unique_tmp_dir("override");
