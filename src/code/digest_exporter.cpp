@@ -57,8 +57,7 @@ constexpr const char* k_slim_edge_format = "tuple-v1";
 }
 
 /// Sorted unique list of dependency kind strings present in the index.
-[[nodiscard]] std::vector<std::string>
-build_kinds_table(std::span<const Dependency> deps)
+[[nodiscard]] std::vector<std::string> build_kinds_table(std::span<const Dependency> deps)
 {
     std::set<std::string> seen;
     for (const Dependency& d : deps) {
@@ -73,8 +72,7 @@ build_kinds_table(std::span<const Dependency> deps)
 /// dependency set — i.e. every external import token plus every
 /// manifest coordinate / FQCN / relative-import artifact carried on
 /// an internal edge.
-[[nodiscard]] std::vector<std::string>
-build_refs_table(std::span<const Dependency> deps)
+[[nodiscard]] std::vector<std::string> build_refs_table(std::span<const Dependency> deps)
 {
     std::set<std::string> seen;
     for (const Dependency& d : deps) {
@@ -501,13 +499,12 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     nlohmann::json schema;
     schema["name"] = "vectis.slim";
     schema["version"] = k_slim_schema_version;
-    schema["edge_tuple"] = nlohmann::json::array(
-        {"source_file_id", "target_file_id|null", "kind_id", "ref_id|null"});
-    schema["edge_semantics"] =
-        "target_file_id null => unresolved external (ref_id indexes into "
-        "refs[] which holds the raw import string); target_file_id non-null "
-        "=> internal edge (ref_id, when present, indexes a manifest "
-        "coordinate, FQCN, or relative-import artifact)";
+    schema["edge_tuple"] =
+        nlohmann::json::array({"source_file_id", "target_file_id|null", "kind_id", "ref_id|null"});
+    schema["edge_semantics"] = "target_file_id null => unresolved external (ref_id indexes into "
+                               "refs[] which holds the raw import string); target_file_id non-null "
+                               "=> internal edge (ref_id, when present, indexes a manifest "
+                               "coordinate, FQCN, or relative-import artifact)";
     schema["cycle_semantics"] =
         "cycle file_ids include the first file_id repeated at the end to close "
         "the loop";
@@ -605,8 +602,8 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     // Dependency graph: full format uses object-shaped edges + cycles array;
     // slim uses positional tuples with kind_id and ref_id indices.
     const std::unordered_map<std::string, int> kind_lookup = build_id_lookup(kinds);
-    root["dependency_graph"] =
-        build_dependency_graph_json(deps_span, lookup, include_file_details, kind_lookup, ref_lookup);
+    root["dependency_graph"] = build_dependency_graph_json(deps_span, lookup, include_file_details,
+                                                           kind_lookup, ref_lookup);
 
     // Architecture is cheap (~150 bytes) and the single highest-value
     // orientation signal — worth emitting in both slim and full.

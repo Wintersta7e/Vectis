@@ -28,8 +28,8 @@ public:
         m_argv.push_back(nullptr);
     }
 
-    int argc() const { return static_cast<int>(m_storage.size()); }
-    char* const* argv() const { return m_argv.data(); }
+    [[nodiscard]] int argc() const { return static_cast<int>(m_storage.size()); }
+    [[nodiscard]] char* const* argv() const { return m_argv.data(); }
 
 private:
     std::vector<std::string> m_storage;
@@ -151,28 +151,40 @@ TEST(CliCacheTest, SlimDigestRoundTripIsByteIdentical)
     // First run (cold cache).
     {
         ArgvHolder args({
-            "vectis",   "digest", project.string(), "--format", "slim",
-            "--cache",  "--cache-dir", cache.string(),
-            "--output", out1.string(),
+            "vectis",
+            "digest",
+            project.string(),
+            "--format",
+            "slim",
+            "--cache",
+            "--cache-dir",
+            cache.string(),
+            "--output",
+            out1.string(),
         });
         ASSERT_EQ(vectis::cli::run(args.argc(), const_cast<char**>(args.argv())), 0);
     }
     // Second run (warm cache, same tree).
     {
         ArgvHolder args({
-            "vectis",   "digest", project.string(), "--format", "slim",
-            "--cache",  "--cache-dir", cache.string(),
-            "--output", out2.string(),
+            "vectis",
+            "digest",
+            project.string(),
+            "--format",
+            "slim",
+            "--cache",
+            "--cache-dir",
+            cache.string(),
+            "--output",
+            out2.string(),
         });
         ASSERT_EQ(vectis::cli::run(args.argc(), const_cast<char**>(args.argv())), 0);
     }
 
     std::ifstream in1(out1, std::ios::binary);
     std::ifstream in2(out2, std::ios::binary);
-    const std::string s1((std::istreambuf_iterator<char>(in1)),
-                         std::istreambuf_iterator<char>());
-    const std::string s2((std::istreambuf_iterator<char>(in2)),
-                         std::istreambuf_iterator<char>());
+    const std::string s1((std::istreambuf_iterator<char>(in1)), std::istreambuf_iterator<char>());
+    const std::string s2((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
     EXPECT_EQ(s1, s2) << "cold and warm runs must produce identical bytes";
 
     fs::remove_all(project);
@@ -197,11 +209,13 @@ TEST(CliCacheTest, CacheDirOverrideKeepsProjectClean)
     });
     // Send stdout nowhere: freopen `/dev/null` to keep the test output
     // clean. Windows uses `NUL` instead.
+    // NOLINTBEGIN(cppcoreguidelines-owning-memory)
 #ifdef _WIN32
     std::FILE* devnull = std::freopen("NUL", "w", stdout);
 #else
     std::FILE* devnull = std::freopen("/dev/null", "w", stdout);
 #endif
+    // NOLINTEND(cppcoreguidelines-owning-memory)
     const int rc = vectis::cli::run(args.argc(), const_cast<char**>(args.argv()));
     (void)devnull;
     ASSERT_EQ(rc, 0);

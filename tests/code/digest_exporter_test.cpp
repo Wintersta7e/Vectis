@@ -120,9 +120,10 @@ TEST(DigestExporterTest, Json_WellFormed)
     // Full JSON must never carry slim-only fields.
     EXPECT_FALSE(parsed.contains("_schema"));
     EXPECT_FALSE(parsed.contains("encoding"));
-    EXPECT_FALSE(parsed.contains("languages")); // top-level only in slim; full uses project.languages
-    EXPECT_FALSE(parsed.contains("kinds"));     // top-level only in slim
-    EXPECT_FALSE(parsed.contains("refs"));      // top-level only in slim
+    EXPECT_FALSE(
+        parsed.contains("languages"));      // top-level only in slim; full uses project.languages
+    EXPECT_FALSE(parsed.contains("kinds")); // top-level only in slim
+    EXPECT_FALSE(parsed.contains("refs"));  // top-level only in slim
     EXPECT_EQ(parsed["vectis_version"], "0.1.0");
     // Digest must be deterministic — no timestamps, no environment-derived
     // fields. Same input + same binary → byte-identical JSON.
@@ -444,8 +445,8 @@ TEST(DigestExporterTest, SlimJson_HasRefsTable)
     // ref_id — that's the whole point of dedup.
     std::vector<int> import_ref_ids;
     const auto kinds = parsed["kinds"].get<std::vector<std::string>>();
-    const auto import_idx = static_cast<int>(
-        std::find(kinds.begin(), kinds.end(), "import") - kinds.begin());
+    const auto import_idx =
+        static_cast<int>(std::find(kinds.begin(), kinds.end(), "import") - kinds.begin());
     for (const auto& e : edges) {
         if (e[2].get<int>() == import_idx) {
             ASSERT_TRUE(e[3].is_number_integer());
@@ -910,7 +911,7 @@ TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
     EXPECT_TRUE(edge[1].is_null());
     // edge[2] is kind_id; edge[3] is the ref_id index into refs[].
     ASSERT_TRUE(edge[3].is_number_integer());
-    const std::size_t rid = static_cast<std::size_t>(edge[3].get<int>());
+    const auto rid = static_cast<std::size_t>(edge[3].get<int>());
     ASSERT_LT(rid, refs.size());
     EXPECT_EQ(refs[rid], "third_party/lib.h");
 }
@@ -944,10 +945,10 @@ TEST(DigestExporterTest, SlimJson_EdgesAreTuples)
 
     const auto kinds = parsed["kinds"].get<std::vector<std::string>>();
     const auto refs = parsed["refs"].get<std::vector<std::string>>();
-    const auto include_idx = static_cast<int>(
-        std::find(kinds.begin(), kinds.end(), "include") - kinds.begin());
-    const auto import_idx = static_cast<int>(
-        std::find(kinds.begin(), kinds.end(), "import") - kinds.begin());
+    const auto include_idx =
+        static_cast<int>(std::find(kinds.begin(), kinds.end(), "include") - kinds.begin());
+    const auto import_idx =
+        static_cast<int>(std::find(kinds.begin(), kinds.end(), "import") - kinds.begin());
 
     for (const auto& e : edges) {
         ASSERT_TRUE(e.is_array());
@@ -958,11 +959,13 @@ TEST(DigestExporterTest, SlimJson_EdgesAreTuples)
     bool saw_external = false;
     for (const auto& e : edges) {
         const auto source_id = e[0].get<std::int64_t>();
-        if (source_id != 1) continue;
+        if (source_id != 1) {
+            continue;
+        }
         if (e[1].is_null()) {
             EXPECT_EQ(e[2].get<int>(), import_idx);
             ASSERT_TRUE(e[3].is_number_integer());
-            const std::size_t rid = static_cast<std::size_t>(e[3].get<int>());
+            const auto rid = static_cast<std::size_t>(e[3].get<int>());
             ASSERT_LT(rid, refs.size());
             EXPECT_EQ(refs[rid], "boost/asio.hpp");
             saw_external = true;
@@ -971,7 +974,7 @@ TEST(DigestExporterTest, SlimJson_EdgesAreTuples)
             EXPECT_EQ(e[1].get<std::int64_t>(), 2);
             EXPECT_EQ(e[2].get<int>(), include_idx);
             ASSERT_TRUE(e[3].is_number_integer());
-            const std::size_t rid = static_cast<std::size_t>(e[3].get<int>());
+            const auto rid = static_cast<std::size_t>(e[3].get<int>());
             ASSERT_LT(rid, refs.size());
             EXPECT_EQ(refs[rid], "scanner.h");
             saw_internal = true;
@@ -1112,8 +1115,7 @@ TEST(DigestExporterTest, SlimJson_CentralFilesUseFileKey)
     ASSERT_FALSE(parsed["central_files"].empty());
     for (const auto& cf : parsed["central_files"]) {
         EXPECT_TRUE(cf.contains("file_id"));
-        EXPECT_TRUE(cf.contains("file"))
-            << "central_files entries use `file`, not `path`";
+        EXPECT_TRUE(cf.contains("file")) << "central_files entries use `file`, not `path`";
         EXPECT_FALSE(cf.contains("path"));
         EXPECT_TRUE(cf.contains("score"));
     }
