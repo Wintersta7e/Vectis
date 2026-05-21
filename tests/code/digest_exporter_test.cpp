@@ -119,6 +119,7 @@ TEST(DigestExporterTest, Json_WellFormed)
     // Full JSON must never carry slim-only fields.
     EXPECT_FALSE(parsed.contains("_schema"));
     EXPECT_FALSE(parsed.contains("encoding"));
+    EXPECT_FALSE(parsed.contains("languages")); // top-level only in slim; full uses project.languages
     EXPECT_EQ(parsed["vectis_version"], "0.1.0");
     // Digest must be deterministic — no timestamps, no environment-derived
     // fields. Same input + same binary → byte-identical JSON.
@@ -240,11 +241,13 @@ TEST(DigestExporterTest, SlimJson_OmitsSizeLinesAndSymbols)
     EXPECT_EQ(parsed["project"]["file_count"], 2);
     EXPECT_EQ(parsed["project"]["symbol_count"], 6);
 
-    // Per-file entries only have path + language.
+    // Per-file entries use the slim v2 shape.
     ASSERT_EQ(parsed["files"].size(), 2U);
     const auto& first = parsed["files"][0];
+    EXPECT_TRUE(first.contains("id"));
     EXPECT_TRUE(first.contains("path"));
-    EXPECT_TRUE(first.contains("language"));
+    EXPECT_TRUE(first.contains("lang"));
+    EXPECT_FALSE(first.contains("language"));
     EXPECT_FALSE(first.contains("size"));
     EXPECT_FALSE(first.contains("lines"));
     EXPECT_FALSE(first.contains("symbols"));
@@ -283,12 +286,68 @@ TEST(DigestExporterTest, SlimJson_HasEncodingBlock)
     ASSERT_TRUE(parsed.contains("encoding"));
     const auto& enc = parsed["encoding"];
     EXPECT_EQ(enc["edge_format"], "tuple-v1");
-    // files count matches synthetic index (2 files). Table counts read 0
-    // here until the language/kind/ref tables exist; presence only.
+    // files count matches synthetic index (2 files). Other table counts
+    // (kinds, refs) are zero until those tables exist; languages is wired.
     EXPECT_EQ(enc["files"], 2);
     EXPECT_TRUE(enc["languages"].is_number_integer());
     EXPECT_TRUE(enc["kinds"].is_number_integer());
     EXPECT_TRUE(enc["refs"].is_number_integer());
+}
+
+TEST(DigestExporterTest, SlimJson_FilesUseLangIndex)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    // Top-level languages table is present and sorted alphabetically.
+    ASSERT_TRUE(parsed.contains("languages"));
+    const auto langs = parsed["languages"].get<std::vector<std::string>>();
+    ASSERT_FALSE(langs.empty());
+    EXPECT_TRUE(std::is_sorted(langs.begin(), langs.end()));
+
+    // Each file entry has integer `lang` (not string `language`) and an id.
+    ASSERT_EQ(parsed["files"].size(), 2U);
+    for (const auto& f : parsed["files"]) {
+        EXPECT_TRUE(f.contains("id"));
+        EXPECT_TRUE(f.contains("path"));
+        EXPECT_TRUE(f.contains("lang"));
+        EXPECT_TRUE(f["lang"].is_number_integer());
+        EXPECT_FALSE(f.contains("language")) << "slim v2 dropped the string `language` key";
+        const int idx = f["lang"].get<int>();
+        ASSERT_GE(idx, 0);
+        ASSERT_LT(static_cast<std::size_t>(idx), langs.size());
+        EXPECT_EQ(langs[static_cast<std::size_t>(idx)], "C++");
+    }
+
+    // `encoding.languages` count must match the table length.
+    EXPECT_EQ(parsed["encoding"]["languages"], langs.size());
+}
+
+TEST(DigestExporterTest, SlimJson_UnknownLanguageGetsSentinelLang)
+{
+    // distinct_language_names excludes Language::Unknown by design.
+    // Slim emits -1 for any file that doesn't resolve into the table —
+    // an agent consumer must handle the sentinel without crashing.
+    CodeIndex index;
+    FileEntry f;
+    f.path_relative = "build/generated.bin";
+    f.language = Language::Unknown;
+    f.line_count = 0;
+    index.add_file(std::move(f));
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    // No known-language files -> table is empty.
+    ASSERT_TRUE(parsed.contains("languages"));
+    EXPECT_TRUE(parsed["languages"].empty());
+    ASSERT_EQ(parsed["files"].size(), 1U);
+    EXPECT_EQ(parsed["files"][0]["lang"], -1);
 }
 
 TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)

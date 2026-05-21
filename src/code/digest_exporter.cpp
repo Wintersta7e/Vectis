@@ -55,6 +55,19 @@ constexpr const char* k_slim_edge_format = "tuple-v1";
     return {names.begin(), names.end()};
 }
 
+/// Build a string-to-dense-int-index lookup over a sorted table.
+/// The returned map is keyed by the same strings stored in `table`.
+[[nodiscard]] std::unordered_map<std::string, int>
+build_id_lookup(const std::vector<std::string>& table)
+{
+    std::unordered_map<std::string, int> out;
+    out.reserve(table.size());
+    for (std::size_t i = 0; i < table.size(); ++i) {
+        out.emplace(table[i], static_cast<int>(i));
+    }
+    return out;
+}
+
 /// Derive the effective project name: explicit option takes priority,
 /// otherwise fall back to the project root's filename, and if that
 /// too is empty, use the literal "project".
@@ -70,54 +83,60 @@ constexpr const char* k_slim_edge_format = "tuple-v1";
     return "project";
 }
 
-/// Serialize one file entry to JSON. `include_details` controls
-/// whether per-file `size`, `lines`, and `symbols` are written — the
-/// slim format skips them.
+/// Serialize one file entry to JSON. `include_details` selects full vs slim v2
+/// shape; `lang_lookup` maps language name to its index in the languages[] table
+/// and is used only by the slim path.
 [[nodiscard]] nlohmann::json file_to_json(const FileEntry& file, const CodeIndex& index,
-                                          bool include_details)
+                                          bool include_details,
+                                          const std::unordered_map<std::string, int>& lang_lookup)
 {
-    nlohmann::json node = {
+    nlohmann::json node;
+    if (include_details) {
         // `generic_string()` forces forward slashes on Windows so the
         // digest stays cross-platform portable.
-        {"path", file.path_relative.generic_string()},
-        {"language", std::string{language_name(file.language)}},
-    };
+        node["path"] = file.path_relative.generic_string();
+        node["language"] = std::string{language_name(file.language)};
+        node["size"] = file.size;
+        node["lines"] = file.line_count;
 
-    if (!include_details) {
+        nlohmann::json symbols_array = nlohmann::json::array();
+        for (const Symbol& sym : index.symbols_in_file(file.id)) {
+            nlohmann::json symbol_node = {
+                {"name", sym.name},
+                {"kind", std::string{symbol_kind_name(sym.kind)}},
+                {"line", sym.line_start},
+            };
+            if (!sym.signature.empty()) {
+                symbol_node["signature"] = sym.signature;
+            }
+            if (!sym.members.empty()) {
+                // Members are a flat array of strings: enum values for
+                // `enum` symbols, public field names for `struct` symbols.
+                symbol_node["members"] = sym.members;
+            }
+            if (sym.complexity > 0) {
+                symbol_node["complexity"] = sym.complexity;
+            }
+            if (sym.visibility != Visibility::Unknown) {
+                symbol_node["visibility"] = visibility_name(sym.visibility);
+            }
+            if (!sym.decorators.empty()) {
+                symbol_node["decorators"] = sym.decorators;
+            }
+            symbols_array.push_back(std::move(symbol_node));
+        }
+        node["symbols"] = std::move(symbols_array);
         return node;
     }
 
-    node["size"] = file.size;
-    node["lines"] = file.line_count;
-
-    nlohmann::json symbols_array = nlohmann::json::array();
-    for (const Symbol& sym : index.symbols_in_file(file.id)) {
-        nlohmann::json symbol_node = {
-            {"name", sym.name},
-            {"kind", std::string{symbol_kind_name(sym.kind)}},
-            {"line", sym.line_start},
-        };
-        if (!sym.signature.empty()) {
-            symbol_node["signature"] = sym.signature;
-        }
-        if (!sym.members.empty()) {
-            // Members are a flat array of strings: enum values for
-            // `enum` symbols, public field names for `struct` symbols.
-            symbol_node["members"] = sym.members;
-        }
-        if (sym.complexity > 0) {
-            symbol_node["complexity"] = sym.complexity;
-        }
-        if (sym.visibility != Visibility::Unknown) {
-            symbol_node["visibility"] = visibility_name(sym.visibility);
-        }
-        if (!sym.decorators.empty()) {
-            symbol_node["decorators"] = sym.decorators;
-        }
-        symbols_array.push_back(std::move(symbol_node));
-    }
-    node["symbols"] = std::move(symbols_array);
-
+    // Slim v2: short object with int lang index.
+    node["id"] = file.id;
+    node["path"] = file.path_relative.generic_string();
+    const std::string lang_name{language_name(file.language)};
+    const auto it = lang_lookup.find(lang_name);
+    // Unknown language is excluded from `languages[]` by distinct_language_names;
+    // those files still need a lang slot — represent as -1.
+    node["lang"] = it == lang_lookup.end() ? -1 : it->second;
     return node;
 }
 
@@ -431,6 +450,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     const std::span<const FileEntry> files_span{files};
     const std::span<const Dependency> deps_span{deps_snapshot};
 
+    const std::vector<std::string> languages = distinct_language_names(files);
+    const std::unordered_map<std::string, int> lang_lookup = build_id_lookup(languages);
+
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
     if (!include_file_details) {
@@ -443,8 +465,16 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     project["file_count"] = files.size();
     project["symbol_count"] = index.symbol_count();
     project["dependency_count"] = index.dependency_count();
-    project["languages"] = distinct_language_names(files);
     root["project"] = std::move(project);
+
+    if (include_file_details) {
+        // Full format keeps `languages` inside `project` (legacy shape preserved).
+        root["project"]["languages"] = languages;
+    }
+    else {
+        // Slim v2 promotes the table to a top-level node.
+        root["languages"] = languages;
+    }
 
     // Walk every file once and reuse the per-file `symbols` array to
     // build the flat top-level `symbols[]`. Re-querying the index per
@@ -453,7 +483,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     nlohmann::json files_array = nlohmann::json::array();
     nlohmann::json symbols_flat = nlohmann::json::array();
     for (const FileEntry& file : files) {
-        nlohmann::json file_node = file_to_json(file, index, include_file_details);
+        nlohmann::json file_node = file_to_json(file, index, include_file_details, lang_lookup);
         if (include_file_details) {
             const std::string path = path_for(lookup, file.id);
             for (const auto& sym : file_node["symbols"]) {
@@ -503,7 +533,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         nlohmann::json encoding;
         encoding["edge_format"] = k_slim_edge_format;
         encoding["files"] = files.size();
-        encoding["languages"] = 0;
+        encoding["languages"] = languages.size();
         encoding["kinds"] = 0;
         encoding["refs"] = 0;
         root["encoding"] = std::move(encoding);
