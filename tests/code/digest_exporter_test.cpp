@@ -533,6 +533,35 @@ TEST(DigestExporterTest, SlimJson_StatsHaveByKind)
     EXPECT_EQ(stats["total_edges"], 3);
 }
 
+TEST(DigestExporterTest, SlimJson_HotspotsHaveFileIdAndPath)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    // Force at least one hotspot to fire by adding a high-complexity symbol.
+    const std::array<Symbol, 1> hot = {
+        Symbol{.file_id = 1,
+               .name = "huge_func",
+               .kind = SymbolKind::Function,
+               .line_start = 500,
+               .line_end = 800,
+               .complexity = 60},
+    };
+    index.add_symbols(hot);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("hotspots"));
+    ASSERT_FALSE(parsed["hotspots"].empty());
+    for (const auto& h : parsed["hotspots"]) {
+        EXPECT_TRUE(h.contains("file_id"));
+        EXPECT_TRUE(h["file_id"].is_number_integer());
+        EXPECT_TRUE(h.contains("file"));
+    }
+}
+
 TEST(DigestExporterTest, Json_StatsHaveByKind)
 {
     CodeIndex index;

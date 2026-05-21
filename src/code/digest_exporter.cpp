@@ -430,6 +430,7 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
         max_entries == 0 ? std::move(all) : diversify_top_n(std::move(all), max_entries);
     for (const Hotspot& h : selected) {
         nlohmann::json node;
+        node["file_id"] = h.file_id;
         node["file"] = path_for(lookup, h.file_id);
         node["reason"] = h.reason;
         node["severity"] = h.severity;
