@@ -634,60 +634,105 @@ TEST(DigestExporterTest, BothFormats_StatsCarryCycleCount)
 
 TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
 {
-    // Earlier slim filtered externals out entirely. That left agents
-    // with `stats.external_edges = N` but `edges[]` shorter than N —
-    // an inconsistent schema. Slim now emits external edges with the
-    // same shape full does (target=null, target_external=<raw>).
+    // Slim emits external edges as `[source, null, kind_id, ref]` so
+    // agents see the unresolved-import landscape without parsing two
+    // different edge shapes.
     CodeIndex index;
     populate_synthetic_index(index);
 
-    Dependency internal_dep;
-    internal_dep.source_file_id = 1;
-    internal_dep.target_file_id = 2;
-    internal_dep.import_string = "scanner.h";
-    internal_dep.kind = "include";
-    index.add_dependency(std::move(internal_dep));
-
-    Dependency external_dep;
-    external_dep.source_file_id = 1;
-    external_dep.target_file_id = 0; // unresolved → external
-    external_dep.import_string = "<vector>";
-    external_dep.kind = "include";
-    index.add_dependency(std::move(external_dep));
+    Dependency d;
+    d.source_file_id = 1;
+    d.target_file_id = 0;
+    d.kind = "import";
+    d.import_string = "third_party/lib.h";
+    const std::array<Dependency, 1> batch = {d};
+    index.add_dependencies(batch);
 
     const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
     const std::string content = build_digest_string(index, options);
     auto parsed = nlohmann::json::parse(content);
 
     const auto& edges = parsed["dependency_graph"]["edges"];
-    ASSERT_EQ(edges.size(), 2U) << "slim must emit both internal and external edges";
+    ASSERT_EQ(edges.size(), 1U) << "slim must emit external edges";
+    const auto& edge = edges[0];
+    ASSERT_TRUE(edge.is_array());
+    ASSERT_EQ(edge.size(), 4U);
+    EXPECT_EQ(edge[0].get<std::int64_t>(), 1);
+    EXPECT_TRUE(edge[1].is_null());
+    // edge[2] = kind_id; edge[3] is the raw import string inline.
+    ASSERT_TRUE(edge[3].is_string());
+    EXPECT_EQ(edge[3].get<std::string>(), "third_party/lib.h");
+}
 
-    // Find the external edge — target=null, target_external=raw string.
-    bool saw_external = false;
-    bool saw_internal = false;
+TEST(DigestExporterTest, SlimJson_EdgesAreTuples)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    Dependency internal;
+    internal.source_file_id = 1;
+    internal.target_file_id = 2;
+    internal.kind = "include";
+    internal.import_string = "scanner.h";
+
+    Dependency external;
+    external.source_file_id = 1;
+    external.target_file_id = 0;
+    external.kind = "import";
+    external.import_string = "boost/asio.hpp";
+
+    const std::array<Dependency, 2> batch = {internal, external};
+    index.add_dependencies(batch);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    const auto& edges = parsed["dependency_graph"]["edges"];
+    ASSERT_EQ(edges.size(), 2U);
+
+    const auto kinds = parsed["kinds"].get<std::vector<std::string>>();
+    const auto include_idx = static_cast<int>(
+        std::find(kinds.begin(), kinds.end(), "include") - kinds.begin());
+    const auto import_idx = static_cast<int>(
+        std::find(kinds.begin(), kinds.end(), "import") - kinds.begin());
+
+    // Each edge is a 4-element JSON array.
     for (const auto& e : edges) {
-        if (e["target"].is_null()) {
+        ASSERT_TRUE(e.is_array());
+        ASSERT_EQ(e.size(), 4U);
+    }
+
+    // Find each edge by predicate rather than pinning emission order.
+    bool saw_internal = false;
+    bool saw_external = false;
+    for (const auto& e : edges) {
+        const auto source_id = e[0].get<std::int64_t>();
+        if (source_id != 1) {
+            continue;
+        }
+        if (e[1].is_null()) {
+            // external edge: kind_id == import, ref is the raw import string
+            EXPECT_EQ(e[2].get<int>(), import_idx);
+            ASSERT_TRUE(e[3].is_string());
+            EXPECT_EQ(e[3].get<std::string>(), "boost/asio.hpp");
             saw_external = true;
-            EXPECT_EQ(e["target_external"], "<vector>");
-            EXPECT_EQ(e["kind"], "include");
-            EXPECT_FALSE(e.contains("import_ref"))
-                << "external edges already carry the raw import in target_external; "
-                << "import_ref would be redundant";
         }
         else {
+            EXPECT_EQ(e[1].get<std::int64_t>(), 2);
+            EXPECT_EQ(e[2].get<int>(), include_idx);
+            ASSERT_TRUE(e[3].is_string());
+            EXPECT_EQ(e[3].get<std::string>(), "scanner.h");
             saw_internal = true;
-            EXPECT_FALSE(e.contains("target_external"));
-            ASSERT_TRUE(e.contains("import_ref"))
-                << "internal edge with non-empty import_string must carry import_ref";
-            EXPECT_EQ(e["import_ref"], "scanner.h");
         }
     }
-    EXPECT_TRUE(saw_external);
-    EXPECT_TRUE(saw_internal);
+    const auto& stats = parsed["dependency_graph"]["stats"];
+    EXPECT_EQ(stats["total_edges"], 2);
+    EXPECT_EQ(stats["internal_edges"], 1);
+    EXPECT_EQ(stats["external_edges"], 1);
 
-    EXPECT_EQ(parsed["dependency_graph"]["stats"]["total_edges"], 2);
-    EXPECT_EQ(parsed["dependency_graph"]["stats"]["internal_edges"], 1);
-    EXPECT_EQ(parsed["dependency_graph"]["stats"]["external_edges"], 1);
+    EXPECT_TRUE(saw_internal);
+    EXPECT_TRUE(saw_external);
 }
 
 TEST(DigestExporterTest, Json_OmitsImportRefWhenImportStringEmpty)

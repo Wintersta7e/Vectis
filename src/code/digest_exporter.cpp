@@ -175,21 +175,24 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 }
 
 /// Build the dependency_graph JSON block.
-/// - `edges`: array of `{source, target, kind}` where source/target
-///   are relative paths. External (unresolved) edges set `target` to
-///   `null` and carry the raw import string in `target_external` so an
-///   agent can see what was imported without resolving it. Internal
-///   edges whose `import_string` is non-empty (Maven coordinates,
-///   Spring FQCNs, source-language relative imports) additionally
-///   carry an `import_ref` field — the raw token agents may want to
-///   reason about even when the edge resolved internally. Edges with
-///   empty `import_string` omit the field.
+/// When `include_file_details` is true (full format):
+/// - `edges`: object-shaped `{source, target, kind, …}` where source/target are
+///   relative paths. External edges set `target` to null and carry the raw import
+///   string in `target_external`. Internal edges with a non-empty `import_string`
+///   also carry `import_ref` — the raw token the resolver consumed.
 /// - `cycles`: array of arrays of paths, one per detected cycle.
-///   Full format only — slim drops cycles to stay token-cheap.
-/// - `stats`: totals for quick scanning.
-[[nodiscard]] nlohmann::json build_dependency_graph_json(std::span<const Dependency> deps_in,
-                                                         const FileIdToPath& lookup,
-                                                         bool include_cycles)
+/// When `include_file_details` is false (slim format):
+/// - `edges`: positional 4-tuple `[source_file_id, target_file_id|null,
+///   kind_id, ref|null]` where kind_id indexes into the top-level kinds[]
+///   table and ref is the inline raw import string.
+/// - `cycles`: omitted to stay token-cheap.
+/// `stats` is emitted in both formats.
+/// `kind_lookup` must be a pre-built {kind_string → kinds[] index} map; it
+/// is used only by the slim branch.
+[[nodiscard]] nlohmann::json
+build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToPath& lookup,
+                            bool include_file_details,
+                            const std::unordered_map<std::string, int>& kind_lookup)
 {
     nlohmann::json graph;
     nlohmann::json edges_array = nlohmann::json::array();
@@ -205,23 +208,53 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     std::vector<Dependency> deps(deps_in.begin(), deps_in.end());
     std::ranges::sort(deps, dependency_emission_less);
 
-    for (const Dependency& dep : deps) {
-        nlohmann::json edge;
-        edge["source"] = path_for(lookup, dep.source_file_id);
-        if (dep.target_file_id == 0) {
-            ++external_count;
-            edge["target"] = nullptr;
-            edge["target_external"] = dep.import_string;
-        }
-        else {
-            ++internal_count;
-            edge["target"] = path_for(lookup, dep.target_file_id);
-            if (!dep.import_string.empty()) {
-                edge["import_ref"] = dep.import_string;
+    if (include_file_details) {
+        // Full format: object-shaped edges.
+        for (const Dependency& dep : deps) {
+            nlohmann::json edge;
+            edge["source"] = path_for(lookup, dep.source_file_id);
+            if (dep.target_file_id == 0) {
+                ++external_count;
+                edge["target"] = nullptr;
+                edge["target_external"] = dep.import_string;
             }
+            else {
+                ++internal_count;
+                edge["target"] = path_for(lookup, dep.target_file_id);
+                if (!dep.import_string.empty()) {
+                    edge["import_ref"] = dep.import_string;
+                }
+            }
+            edge["kind"] = dep.kind;
+            edges_array.push_back(std::move(edge));
         }
-        edge["kind"] = dep.kind;
-        edges_array.push_back(std::move(edge));
+    }
+    else {
+        // Slim format: positional tuple [source_id, target_id|null, kind_id, ref|null].
+        for (const Dependency& dep : deps) {
+            const auto kind_it = kind_lookup.find(dep.kind);
+            // dep.kind is filtered to non-empty in build_kinds_table; a -1 here
+            // only fires for a malformed cached dep with an empty kind string.
+            const int kind_id = kind_it == kind_lookup.end() ? -1 : kind_it->second;
+            nlohmann::json edge = nlohmann::json::array();
+            edge.push_back(dep.source_file_id);
+            if (dep.target_file_id == 0) {
+                ++external_count;
+                edge.push_back(nullptr);
+            }
+            else {
+                ++internal_count;
+                edge.push_back(dep.target_file_id);
+            }
+            edge.push_back(kind_id);
+            if (dep.import_string.empty()) {
+                edge.push_back(nullptr);
+            }
+            else {
+                edge.push_back(dep.import_string);
+            }
+            edges_array.push_back(std::move(edge));
+        }
     }
     graph["edges"] = std::move(edges_array);
 
@@ -230,7 +263,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     // count (always — slim consumers need this to flag tangled
     // graphs without parsing the array).
     const std::vector<DependencyCycle> cycles = detect_cycles(deps_in);
-    if (include_cycles) {
+    if (include_file_details) {
         nlohmann::json cycles_array = nlohmann::json::array();
         for (const DependencyCycle& cycle : cycles) {
             nlohmann::json cycle_json = nlohmann::json::array();
@@ -425,10 +458,10 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     schema["name"] = "vectis.slim";
     schema["version"] = k_slim_schema_version;
     schema["edge_tuple"] = nlohmann::json::array(
-        {"source_file_id", "target_file_id|null", "kind_id", "ref_id|null"});
+        {"source_file_id", "target_file_id|null", "kind_id", "ref|null"});
     schema["edge_semantics"] =
-        "target_file_id null => unresolved external (ref_id is the raw import "
-        "string); target_file_id non-null => internal edge (ref_id, when present, "
+        "target_file_id null => unresolved external (ref is the raw import "
+        "string); target_file_id non-null => internal edge (ref, when present, "
         "is a manifest coordinate, FQCN, or relative-import artifact)";
     schema["cycle_semantics"] =
         "cycle file_ids include the first file_id repeated at the end to close "
@@ -521,9 +554,11 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     }
     root["files"] = std::move(files_array);
 
-    // Dependency graph: full format includes externals + cycles;
-    // slim includes only resolved edges (no cycles, no externals).
-    root["dependency_graph"] = build_dependency_graph_json(deps_span, lookup, include_file_details);
+    // Dependency graph: full format uses object-shaped edges + cycles array;
+    // slim uses positional tuples with kind_id indices.
+    const std::unordered_map<std::string, int> kind_lookup = build_id_lookup(kinds);
+    root["dependency_graph"] =
+        build_dependency_graph_json(deps_span, lookup, include_file_details, kind_lookup);
 
     // Architecture is cheap (~150 bytes) and the single highest-value
     // orientation signal — worth emitting in both slim and full.
