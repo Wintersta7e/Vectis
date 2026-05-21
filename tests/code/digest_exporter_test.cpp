@@ -106,6 +106,15 @@ ExportOptions make_options(DigestFormat format, const std::filesystem::path& roo
     return options;
 }
 
+/// Build a slim digest from `index` and parse it. Centralises the
+/// three-line make_options / build_digest_string / parse pattern used
+/// by most slim tests.
+nlohmann::json slim_parse(CodeIndex& index)
+{
+    return nlohmann::json::parse(
+        build_digest_string(index, make_options(DigestFormat::SlimJson, "/fake/project")));
+}
+
 TEST(DigestExporterTest, Json_WellFormed)
 {
     CodeIndex index;
@@ -236,10 +245,7 @@ TEST(DigestExporterTest, SlimJson_OmitsSizeLinesAndSymbols)
     CodeIndex index;
     populate_synthetic_index(index);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     // Top-level project block is still there.
     EXPECT_EQ(parsed["project"]["file_count"], 2);
@@ -262,9 +268,7 @@ TEST(DigestExporterTest, SlimJson_HasSchemaHeader)
     CodeIndex index;
     populate_synthetic_index(index);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("_schema")) << "slim v2 must carry a _schema header";
     const auto& schema = parsed["_schema"];
@@ -283,9 +287,7 @@ TEST(DigestExporterTest, SlimJson_HasEncodingBlock)
     CodeIndex index;
     populate_synthetic_index(index);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("encoding"));
     const auto& enc = parsed["encoding"];
@@ -303,9 +305,7 @@ TEST(DigestExporterTest, SlimJson_FilesUseLangIndex)
     CodeIndex index;
     populate_synthetic_index(index);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     // Top-level languages table is present and sorted alphabetically.
     ASSERT_TRUE(parsed.contains("languages"));
@@ -343,9 +343,7 @@ TEST(DigestExporterTest, SlimJson_UnknownLanguageGetsSentinelLang)
     f.line_count = 0;
     index.add_file(std::move(f));
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     // No known-language files -> table is empty.
     ASSERT_TRUE(parsed.contains("languages"));
@@ -378,9 +376,7 @@ TEST(DigestExporterTest, SlimJson_HasKindsTable)
     const std::array<Dependency, 3> batch = {a, b, empty_kind};
     index.add_dependencies(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("kinds"));
     const auto kinds = parsed["kinds"].get<std::vector<std::string>>();
@@ -416,9 +412,7 @@ TEST(DigestExporterTest, SlimJson_HasRefsTable)
     const std::array<Dependency, 3> batch = {a, b, c};
     index.add_dependencies(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("refs"));
     const auto refs = parsed["refs"].get<std::vector<std::string>>();
@@ -481,9 +475,7 @@ TEST(DigestExporterTest, SlimJson_CyclesAreObjects)
     const std::array<Dependency, 3> batch = {a, b, c};
     index.add_dependencies(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed["dependency_graph"].contains("cycles"));
     const auto& cycles = parsed["dependency_graph"]["cycles"];
@@ -523,9 +515,7 @@ TEST(DigestExporterTest, SlimJson_StatsHaveByKind)
     const std::array<Dependency, 3> batch = {inc1, inc2, imp};
     index.add_dependencies(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     const auto& stats = parsed["dependency_graph"]["stats"];
     ASSERT_TRUE(stats.contains("by_kind"));
@@ -550,9 +540,7 @@ TEST(DigestExporterTest, SlimJson_HotspotsHaveFileIdAndPath)
     };
     index.add_symbols(hot);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("hotspots"));
     ASSERT_FALSE(parsed["hotspots"].empty());
@@ -763,9 +751,7 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
     CodeIndex index;
     populate_synthetic_index(index);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("architecture"));
     EXPECT_TRUE(parsed["architecture"].contains("label"));
@@ -813,9 +799,7 @@ TEST(DigestExporterTest, Hotspots_EmitStructuredDrivers)
     const std::array<Symbol, 1> batch = {gnarly};
     index.add_symbols(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("hotspots"));
     ASSERT_FALSE(parsed["hotspots"].empty());
@@ -897,9 +881,7 @@ TEST(DigestExporterTest, SlimJson_CarriesExternalEdges)
     const std::array<Dependency, 1> batch = {d};
     index.add_dependencies(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     const auto refs = parsed["refs"].get<std::vector<std::string>>();
     const auto& edges = parsed["dependency_graph"]["edges"];
@@ -936,9 +918,7 @@ TEST(DigestExporterTest, SlimJson_EdgesAreTuples)
     const std::array<Dependency, 2> batch = {internal, external};
     index.add_dependencies(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     const auto& edges = parsed["dependency_graph"]["edges"];
     ASSERT_EQ(edges.size(), 2U);
@@ -1063,9 +1043,7 @@ TEST(DigestExporterTest, SlimJson_DiversifiesHotspotBuckets)
                                                 .complexity = 60}};
     index.add_symbols(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("hotspots"));
     const auto& hs = parsed["hotspots"];
@@ -1107,9 +1085,7 @@ TEST(DigestExporterTest, SlimJson_CentralFilesUseFileKey)
     const std::array<Dependency, 1> batch = {d};
     index.add_dependencies(batch);
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     ASSERT_TRUE(parsed.contains("central_files"));
     ASSERT_FALSE(parsed["central_files"].empty());
@@ -1128,9 +1104,7 @@ TEST(DigestExporterTest, SlimJson_EmptyProjectHasAllTables)
     // not need to branch on absence.
     CodeIndex index;
 
-    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
-    const std::string content = build_digest_string(index, options);
-    auto parsed = nlohmann::json::parse(content);
+    auto parsed = slim_parse(index);
 
     EXPECT_EQ(parsed["_schema"]["version"], 2);
     EXPECT_EQ(parsed["encoding"]["edge_format"], "tuple-v1");
