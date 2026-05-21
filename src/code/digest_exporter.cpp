@@ -264,9 +264,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                 edge.push_back(nullptr);
             }
             else {
-                const auto rit = ref_lookup.find(dep.import_string);
-                edge.push_back(rit == ref_lookup.end() ? nlohmann::json(nullptr)
-                                                       : nlohmann::json(rit->second));
+                // Non-empty import_string is always in ref_lookup: build_dep_table
+                // collected every non-empty import_string from the same deps_in span.
+                edge.push_back(ref_lookup.at(dep.import_string));
             }
             edges_array.push_back(std::move(edge));
         }
