@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -455,6 +456,51 @@ TEST(DigestExporterTest, SlimJson_HasRefsTable)
     EXPECT_EQ(import_ref_ids[0], import_ref_ids[1]);
 }
 
+TEST(DigestExporterTest, SlimJson_CyclesAreObjects)
+{
+    // Build a 3-cycle: 1 -> 2 -> 3 -> 1. A 3-node cycle exercises the
+    // closes-the-loop sentinel for non-trivial lengths (fids should
+    // be [1, 2, 3, 1] in cycle-traversal order).
+    CodeIndex index;
+    populate_synthetic_index(index);
+    const std::int64_t f3_id = add_cpp_file(index, "src/util/helper.cpp", 120);
+
+    Dependency a;
+    a.source_file_id = 1;
+    a.target_file_id = 2;
+    a.kind = "include";
+    Dependency b;
+    b.source_file_id = 2;
+    b.target_file_id = f3_id;
+    b.kind = "include";
+    Dependency c;
+    c.source_file_id = f3_id;
+    c.target_file_id = 1;
+    c.kind = "include";
+    const std::array<Dependency, 3> batch = {a, b, c};
+    index.add_dependencies(batch);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed["dependency_graph"].contains("cycles"));
+    const auto& cycles = parsed["dependency_graph"]["cycles"];
+    ASSERT_EQ(cycles.size(), 1U);
+    const auto& cy = cycles[0];
+    ASSERT_TRUE(cy.is_object()) << "cycles in slim v2 are objects, not arrays";
+    EXPECT_FALSE(cy.contains("paths"));
+    ASSERT_TRUE(cy.contains("file_ids"));
+    const auto fids = cy["file_ids"].get<std::vector<std::int64_t>>();
+    // Closes-the-loop: first repeated at end. With 3 distinct nodes,
+    // the vector is exactly 4 long.
+    ASSERT_EQ(fids.size(), 4U);
+    EXPECT_EQ(fids.front(), fids.back());
+    // Three distinct ids in positions [0..2]; the same set as the deps.
+    const std::set<std::int64_t> unique_ids{fids.begin(), fids.end() - 1};
+    EXPECT_EQ(unique_ids.size(), 3U);
+}
+
 TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
 {
     CodeIndex index;
@@ -597,13 +643,9 @@ TEST(DigestExporterTest, SlimJson_IncludesArchitectureAndCompactHotspots)
     // Symbols stay full-format-only to keep slim token-cheap.
     EXPECT_FALSE(parsed.contains("symbols"));
 
-    // The full `cycles` array stays full-format-only (rarely useful
-    // for first-pass orientation), but a `stats.cycles` count is
-    // emitted in both formats so slim consumers can flag tangled
-    // graphs without parsing the array. External edges also show up
-    // in slim — agents need the third-party dep landscape.
+    // Slim emits cycles as {"file_ids": [...]} objects (not full path arrays).
+    // stats.cycles is always present in both formats.
     ASSERT_TRUE(parsed.contains("dependency_graph"));
-    EXPECT_FALSE(parsed["dependency_graph"].contains("cycles"));
     ASSERT_TRUE(parsed["dependency_graph"]["stats"].contains("cycles"));
     EXPECT_TRUE(parsed["dependency_graph"]["stats"]["cycles"].is_number_unsigned());
 }

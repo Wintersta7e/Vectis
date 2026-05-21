@@ -201,7 +201,8 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 /// - `edges`: positional 4-tuple `[source_file_id, target_file_id|null,
 ///   kind_id, ref_id|null]` where kind_id indexes into kinds[] and ref_id
 ///   indexes into refs[].
-/// - `cycles`: omitted to stay token-cheap.
+/// - `cycles`: array of `{"file_ids": [int...]}` objects; first file_id
+///   repeated at end to close the loop (matches _schema.cycle_semantics).
 /// `stats` is emitted in both formats.
 /// `kind_lookup` and `ref_lookup` must be pre-built {string → index} maps;
 /// they are used only by the slim branch.
@@ -277,10 +278,9 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     }
     graph["edges"] = std::move(edges_array);
 
-    // Cycle detection feeds two consumers: the full `cycles` array
-    // (paths per cycle, full format only) and the `stats.cycles`
-    // count (always — slim consumers need this to flag tangled
-    // graphs without parsing the array).
+    // Cycle detection feeds three consumers: the full `cycles` array
+    // (paths per cycle), the slim `cycles` array (objects of file_ids),
+    // and the `stats.cycles` count carried by both formats.
     const std::vector<DependencyCycle> cycles = detect_cycles(deps_in);
     if (include_file_details) {
         nlohmann::json cycles_array = nlohmann::json::array();
@@ -290,6 +290,19 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
                 cycle_json.push_back(path_for(lookup, id));
             }
             cycles_array.push_back(std::move(cycle_json));
+        }
+        graph["cycles"] = std::move(cycles_array);
+    }
+    else {
+        nlohmann::json cycles_array = nlohmann::json::array();
+        for (const DependencyCycle& cycle : cycles) {
+            nlohmann::json cy;
+            std::vector<std::int64_t> ids = cycle.file_ids;
+            if (!ids.empty()) {
+                ids.push_back(ids.front()); // closes-the-loop per _schema.cycle_semantics
+            }
+            cy["file_ids"] = std::move(ids);
+            cycles_array.push_back(std::move(cy));
         }
         graph["cycles"] = std::move(cycles_array);
     }
