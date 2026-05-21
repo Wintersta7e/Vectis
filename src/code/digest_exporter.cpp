@@ -670,7 +670,10 @@ std::string build_digest_string(const CodeIndex& index, const ExportOptions& opt
     }
     case DigestFormat::SlimJson: {
         const nlohmann::json root = build_json(index, options, /*include_file_details=*/false);
-        return root.dump(2, ' ', /*ensure_ascii=*/false, k_handler);
+        // Compact output: no indent, no per-token whitespace. Slim is
+        // agent-only; pretty-printing wastes bytes proportional to
+        // edge count (each tuple would otherwise occupy ~6 lines).
+        return root.dump(-1, ' ', /*ensure_ascii=*/false, k_handler);
     }
     }
     return {};

@@ -599,15 +599,61 @@ TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
     CodeIndex index;
     populate_synthetic_index(index);
 
+    // Add edges so the tuple encoding can do real work. Five deps with
+    // duplicate import_strings exercise both the refs[] dedup table
+    // and the kinds[] indirection.
+    Dependency a;
+    a.source_file_id = 1;
+    a.target_file_id = 2;
+    a.kind = "include";
+    a.import_string = "scanner.h";
+    Dependency b;
+    b.source_file_id = 2;
+    b.target_file_id = 1;
+    b.kind = "include";
+    b.import_string = "app.h";
+    Dependency c;
+    c.source_file_id = 1;
+    c.target_file_id = 0;
+    c.kind = "import";
+    c.import_string = "boost/asio.hpp";
+    Dependency d;
+    d.source_file_id = 2;
+    d.target_file_id = 0;
+    d.kind = "import";
+    d.import_string = "boost/asio.hpp"; // duplicate ref
+    Dependency e;
+    e.source_file_id = 1;
+    e.target_file_id = 0;
+    e.kind = "import";
+    e.import_string = "fmt/format.h";
+    const std::array<Dependency, 5> batch = {a, b, c, d, e};
+    index.add_dependencies(batch);
+
     const std::string full =
         build_digest_string(index, make_options(DigestFormat::Json, "/fake/project"));
     const std::string slim =
         build_digest_string(index, make_options(DigestFormat::SlimJson, "/fake/project"));
 
-    // The tiny 4-symbol fixture doesn't give slim format much room to
-    // shine, but it should still be at least 30% smaller than full.
-    EXPECT_LT(slim.size(), static_cast<std::size_t>(static_cast<double>(full.size()) * 0.7))
+    // With 5 deps and compact tuple encoding, slim should drop well
+    // under 45% of full on the same input (measured ~41.6%).
+    EXPECT_LT(slim.size(), static_cast<std::size_t>(static_cast<double>(full.size()) * 0.45))
         << "slim=" << slim.size() << " full=" << full.size();
+}
+
+TEST(DigestExporterTest, SlimJson_IsCompact)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+
+    // Compact dump: no indentation, no newlines between JSON tokens.
+    // We use a coarse heuristic: parse content and ensure nlohmann's
+    // own re-dump at indent -1 round-trips byte-identical.
+    auto parsed = nlohmann::json::parse(content);
+    EXPECT_EQ(content, parsed.dump());
 }
 
 TEST(DigestExporterTest, Export_WritesFileAtDefaultLocation)
