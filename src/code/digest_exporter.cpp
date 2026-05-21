@@ -246,9 +246,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
             if (!dep.kind.empty()) {
                 ++by_kind[dep.kind];
             }
-            const auto kind_it = kind_lookup.find(dep.kind);
-            // A -1 kind_id only fires for a malformed cached dep with an empty kind string.
-            const int kind_id = kind_it == kind_lookup.end() ? -1 : kind_it->second;
+            // Non-empty kind is always in kind_lookup: build_dep_table collected
+            // every non-empty kind from the same deps_in span.
+            const int kind_id = dep.kind.empty() ? -1 : kind_lookup.at(dep.kind);
             nlohmann::json edge = nlohmann::json::array();
             edge.push_back(dep.source_file_id);
             if (dep.target_file_id == 0) {
@@ -527,10 +527,6 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
     const std::vector<std::string> languages = distinct_language_names(files);
     const std::unordered_map<std::string, int> lang_lookup = build_id_lookup(languages);
-    const std::vector<std::string> kinds = build_dep_table(
-        deps_span, [](const Dependency& d) -> const std::string& { return d.kind; });
-    const std::vector<std::string> refs = build_dep_table(
-        deps_span, [](const Dependency& d) -> const std::string& { return d.import_string; });
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
@@ -552,6 +548,12 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     }
     else {
         // Slim v2 promotes the tables to top-level nodes.
+        // kinds[] and refs[] are built here (slim-only) to skip the allocation
+        // on the full path.
+        const std::vector<std::string> kinds = build_dep_table(
+            deps_span, [](const Dependency& d) -> const std::string& { return d.kind; });
+        const std::vector<std::string> refs = build_dep_table(
+            deps_span, [](const Dependency& d) -> const std::string& { return d.import_string; });
         root["languages"] = languages;
         root["kinds"] = kinds;
         root["refs"] = refs;
@@ -615,8 +617,8 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         encoding["edge_format"] = k_slim_edge_format;
         encoding["files"] = files.size();
         encoding["languages"] = languages.size();
-        encoding["kinds"] = kinds.size();
-        encoding["refs"] = refs.size();
+        encoding["kinds"] = root["kinds"].size();
+        encoding["refs"] = root["refs"].size();
         root["encoding"] = std::move(encoding);
     }
 
