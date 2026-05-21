@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <span>
 #include <sstream>
@@ -217,6 +218,7 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
 
     std::size_t internal_count = 0;
     std::size_t external_count = 0;
+    std::map<std::string, std::size_t> by_kind;
 
     // Sort canonically so cold and warm runs produce byte-identical
     // output regardless of the order edges were inserted into the
@@ -229,6 +231,10 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     if (include_file_details) {
         // Full format: object-shaped edges.
         for (const Dependency& dep : deps) {
+            // matches the empty-kind filter in build_kinds_table
+            if (!dep.kind.empty()) {
+                ++by_kind[dep.kind];
+            }
             nlohmann::json edge;
             edge["source"] = path_for(lookup, dep.source_file_id);
             if (dep.target_file_id == 0) {
@@ -250,6 +256,10 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     else {
         // Slim format: positional tuple [source_id, target_id|null, kind_id, ref_id|null].
         for (const Dependency& dep : deps) {
+            // matches the empty-kind filter in build_kinds_table
+            if (!dep.kind.empty()) {
+                ++by_kind[dep.kind];
+            }
             const auto kind_it = kind_lookup.find(dep.kind);
             // dep.kind is filtered to non-empty in build_kinds_table; a -1 here
             // only fires for a malformed cached dep with an empty kind string.
@@ -312,6 +322,7 @@ build_dependency_graph_json(std::span<const Dependency> deps_in, const FileIdToP
     stats["internal_edges"] = internal_count;
     stats["external_edges"] = external_count;
     stats["cycles"] = cycles.size();
+    stats["by_kind"] = by_kind;
     graph["stats"] = std::move(stats);
 
     return graph;

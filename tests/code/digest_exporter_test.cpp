@@ -501,6 +501,70 @@ TEST(DigestExporterTest, SlimJson_CyclesAreObjects)
     EXPECT_EQ(unique_ids.size(), 3U);
 }
 
+TEST(DigestExporterTest, SlimJson_StatsHaveByKind)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    Dependency inc1;
+    inc1.source_file_id = 1;
+    inc1.target_file_id = 2;
+    inc1.kind = "include";
+    Dependency inc2;
+    inc2.source_file_id = 2;
+    inc2.target_file_id = 1;
+    inc2.kind = "include";
+    Dependency imp;
+    imp.source_file_id = 1;
+    imp.target_file_id = 0;
+    imp.kind = "import";
+    imp.import_string = "third.h";
+    const std::array<Dependency, 3> batch = {inc1, inc2, imp};
+    index.add_dependencies(batch);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    const auto& stats = parsed["dependency_graph"]["stats"];
+    ASSERT_TRUE(stats.contains("by_kind"));
+    EXPECT_EQ(stats["by_kind"]["include"], 2);
+    EXPECT_EQ(stats["by_kind"]["import"], 1);
+    EXPECT_EQ(stats["total_edges"], 3);
+}
+
+TEST(DigestExporterTest, Json_StatsHaveByKind)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    Dependency inc1;
+    inc1.source_file_id = 1;
+    inc1.target_file_id = 2;
+    inc1.kind = "include";
+    Dependency inc2;
+    inc2.source_file_id = 2;
+    inc2.target_file_id = 1;
+    inc2.kind = "include";
+    Dependency imp;
+    imp.source_file_id = 1;
+    imp.target_file_id = 0;
+    imp.kind = "import";
+    imp.import_string = "third.h";
+    const std::array<Dependency, 3> batch = {inc1, inc2, imp};
+    index.add_dependencies(batch);
+
+    const ExportOptions options = make_options(DigestFormat::Json, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    const auto& stats = parsed["dependency_graph"]["stats"];
+    ASSERT_TRUE(stats.contains("by_kind"));
+    EXPECT_EQ(stats["by_kind"]["include"], 2);
+    EXPECT_EQ(stats["by_kind"]["import"], 1);
+    EXPECT_EQ(stats["total_edges"], 3);
+}
+
 TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
 {
     CodeIndex index;
