@@ -55,6 +55,19 @@ constexpr const char* k_slim_edge_format = "tuple-v1";
     return {names.begin(), names.end()};
 }
 
+/// Sorted unique list of dependency kind strings present in the index.
+[[nodiscard]] std::vector<std::string>
+build_kinds_table(std::span<const Dependency> deps)
+{
+    std::set<std::string> seen;
+    for (const Dependency& d : deps) {
+        if (!d.kind.empty()) {
+            seen.emplace(d.kind);
+        }
+    }
+    return {seen.begin(), seen.end()};
+}
+
 /// Build a string-to-dense-int-index lookup over a sorted table.
 /// The returned map is keyed by the same strings stored in `table`.
 [[nodiscard]] std::unordered_map<std::string, int>
@@ -452,6 +465,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
     const std::vector<std::string> languages = distinct_language_names(files);
     const std::unordered_map<std::string, int> lang_lookup = build_id_lookup(languages);
+    const std::vector<std::string> kinds = build_kinds_table(deps_span);
 
     nlohmann::json root;
     root["vectis_version"] = k_vectis_version;
@@ -472,8 +486,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         root["project"]["languages"] = languages;
     }
     else {
-        // Slim v2 promotes the table to a top-level node.
+        // Slim v2 promotes the tables to top-level nodes.
         root["languages"] = languages;
+        root["kinds"] = kinds;
     }
 
     // Walk every file once and reuse the per-file `symbols` array to
@@ -534,7 +549,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
         encoding["edge_format"] = k_slim_edge_format;
         encoding["files"] = files.size();
         encoding["languages"] = languages.size();
-        encoding["kinds"] = 0;
+        encoding["kinds"] = kinds.size();
         encoding["refs"] = 0;
         root["encoding"] = std::move(encoding);
     }

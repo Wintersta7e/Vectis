@@ -120,6 +120,7 @@ TEST(DigestExporterTest, Json_WellFormed)
     EXPECT_FALSE(parsed.contains("_schema"));
     EXPECT_FALSE(parsed.contains("encoding"));
     EXPECT_FALSE(parsed.contains("languages")); // top-level only in slim; full uses project.languages
+    EXPECT_FALSE(parsed.contains("kinds"));     // top-level only in slim
     EXPECT_EQ(parsed["vectis_version"], "0.1.0");
     // Digest must be deterministic — no timestamps, no environment-derived
     // fields. Same input + same binary → byte-identical JSON.
@@ -286,8 +287,8 @@ TEST(DigestExporterTest, SlimJson_HasEncodingBlock)
     ASSERT_TRUE(parsed.contains("encoding"));
     const auto& enc = parsed["encoding"];
     EXPECT_EQ(enc["edge_format"], "tuple-v1");
-    // files count matches synthetic index (2 files). Other table counts
-    // (kinds, refs) are zero until those tables exist; languages is wired.
+    // files count matches synthetic index (2 files).
+    // Files / languages / kinds are wired; refs is zero until that table exists.
     EXPECT_EQ(enc["files"], 2);
     EXPECT_TRUE(enc["languages"].is_number_integer());
     EXPECT_TRUE(enc["kinds"].is_number_integer());
@@ -348,6 +349,43 @@ TEST(DigestExporterTest, SlimJson_UnknownLanguageGetsSentinelLang)
     EXPECT_TRUE(parsed["languages"].empty());
     ASSERT_EQ(parsed["files"].size(), 1U);
     EXPECT_EQ(parsed["files"][0]["lang"], -1);
+}
+
+TEST(DigestExporterTest, SlimJson_HasKindsTable)
+{
+    CodeIndex index;
+    populate_synthetic_index(index);
+
+    // Register two deps with distinct kinds so the table isn't empty.
+    Dependency a;
+    a.source_file_id = 1;
+    a.target_file_id = 2;
+    a.kind = "include";
+    Dependency b;
+    b.source_file_id = 2;
+    b.target_file_id = 0; // external
+    b.kind = "import";
+    b.import_string = "ext/lib.h";
+
+    Dependency empty_kind;
+    empty_kind.source_file_id = 1;
+    empty_kind.target_file_id = 0;
+    // empty kind on purpose — must NOT land in the kinds table.
+
+    const std::array<Dependency, 3> batch = {a, b, empty_kind};
+    index.add_dependencies(batch);
+
+    const ExportOptions options = make_options(DigestFormat::SlimJson, "/fake/project");
+    const std::string content = build_digest_string(index, options);
+    auto parsed = nlohmann::json::parse(content);
+
+    ASSERT_TRUE(parsed.contains("kinds"));
+    const auto kinds = parsed["kinds"].get<std::vector<std::string>>();
+    ASSERT_EQ(kinds.size(), 2U);
+    EXPECT_TRUE(std::is_sorted(kinds.begin(), kinds.end()));
+    EXPECT_EQ(kinds[0], "import");
+    EXPECT_EQ(kinds[1], "include");
+    EXPECT_EQ(parsed["encoding"]["kinds"], kinds.size());
 }
 
 TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
