@@ -1,0 +1,7 @@
+# gcov marks every potentially-throwing C++ call as a branch, so the
+# Cobertura report carries thousands of exception-path "partials" that
+# are not real untested logic. Count partials as hits so the reported
+# number reflects line coverage rather than gcov's branch artifacts.
+parsers:
+  cobertura:
+    partials_as_hits: true
