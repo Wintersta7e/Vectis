@@ -62,7 +62,7 @@ commits.
 monorepo manifests (Bazel / Nx / Rush), a published binary install
 path.
 
-## What you get
+## What it does
 
 - **12 languages** — Python, JavaScript, TypeScript, C, C++, Rust,
   Java, C#, Go, Ruby, PHP, SQL.
@@ -79,9 +79,8 @@ path.
 - **11 architecture labels** with 0–100 confidence — Monolith,
   Layered, MVC, MVVM, Clean Architecture, Monorepo, Frontend SPA,
   API Backend, .NET Solution, Library, Electron. The first ten are
-  **calibrated against a 33-project reference corpus at 100%
-  precision/recall per class**; Electron is unit-tested but not yet
-  corpus-calibrated.
+  calibrated against a 33-project reference set; Electron is
+  unit-tested but not yet on it.
 - **Per-symbol API surface** — every symbol carries a `visibility`
   field (`public` / `private` / `protected` / `internal`) derived
   from each language's native idiom (Go capitalisation, Python
