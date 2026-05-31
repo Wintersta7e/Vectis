@@ -160,8 +160,13 @@ jobs:
         run: gcovr --root . --filter src/ --xml-pretty -o coverage.xml
 
       - name: Upload to Codecov
+        # Upload ONLY the gcovr report. Without disable_search + plugins: noop
+        # the action re-runs gcov over the whole build tree and pulls system
+        # headers and tests into the report, which the src/ filter excludes.
         uses: codecov/codecov-action@v6
         with:
           files: coverage.xml
+          disable_search: true
+          plugins: noop
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
