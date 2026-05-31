@@ -1,18 +1,66 @@
+<div align="center">
+
 # Vectis
 
-Portable C++20 CLI that produces structured digests of source-tree
-architecture — symbols, dependencies, architecture label, complexity
-hotspots — for consumption by external LLM agents (Claude Code, CI
+**Portable structured digests of source-tree architecture.**
+
+A single-binary C++20 CLI that maps a codebase's shape — symbols,
+dependencies, architecture label, complexity hotspots — into a
+token-efficient digest for external LLM agents (Claude Code, CI
 pipelines, scripts).
 
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)](https://en.cppreference.com/w/cpp/20)
+[![CMake](https://img.shields.io/badge/CMake-3.25%2B-064F8C?logo=cmake&logoColor=white)](https://cmake.org)
+[![tree-sitter](https://img.shields.io/badge/tree--sitter-12_languages-2B7489)](https://tree-sitter.github.io/tree-sitter/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![Status](https://img.shields.io/badge/status-personal%20%C2%B7%20actively%20developed-brightgreen)](#status)
 [![CI](https://github.com/Wintersta7e/Vectis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Wintersta7e/Vectis/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)
-![CMake](https://img.shields.io/badge/CMake-3.25%2B-064F8C?logo=cmake)
-![tree-sitter](https://img.shields.io/badge/tree--sitter-12_languages-2B7489)
+[![codecov](https://codecov.io/gh/Wintersta7e/Vectis/graph/badge.svg)](https://codecov.io/gh/Wintersta7e/Vectis)
 
-> A tool I built for myself to suit my own workflow. If you find it
-> useful, you're welcome to use it.
+</div>
+
+---
+
+## Why
+
+I built Vectis for myself — a way to hand an LLM agent an accurate,
+token-cheap map of an unfamiliar repo instead of letting it burn
+context on blind `grep` sweeps. It reads a source tree and emits the
+structure that matters: what the symbols are, how the files depend on
+each other, what architecture the layout implies, and where the
+complexity concentrates.
+
+The conversational layer isn't Vectis's job — agents provide that.
+Vectis's job is to feed them accurate context, entirely locally, with
+**no network calls** during digest production and **no modification**
+of the code it reads.
+
+It's a personal tool, not a product — but it's open source under MIT,
+and if a fast structured repo-map looks useful to you, you're welcome
+to clone it and give it a try.
+
+## Status
+
+Actively developed personal tool. The scanner, parser, dependency
+resolver, and digest exporters are implemented and covered by a large
+unit + integration suite under strict warnings-as-errors
+(`-Wall -Wextra -Werror -Wpedantic`, MSVC `/W4 /WX /permissive-`).
+The CLI surface is stable; internal APIs can still shift between
+commits.
+
+**Implemented:**
+- `vectis digest <path>` — slim / full JSON / Markdown digests
+- `vectis explain <path>` — plain-text narrative summary
+- Tree-sitter parsing for 12 languages
+- Cross-language dependency graph with namespace-aware resolution
+- Architecture detection (11 labels, 0–100 confidence)
+- Cycle detection (Tarjan SCC) + complexity hotspot ranking
+- `.gitignore`-aware scanning, content-hash incremental rescans
+- SQLite (WAL + FTS5) cache, portable Windows static build
+
+**Not done yet:** shared `ScanOptions` across subcommands, more
+monorepo manifests (Bazel / Nx / Rush), a published binary install
+path.
 
 ## What you get
 
@@ -57,6 +105,20 @@ pipelines, scripts).
   re-parses changed files between runs.
 - **Single binary**, zero runtime deps when statically linked. No
   network calls during digest production.
+
+## Stack
+
+| Layer | Choice | Notes |
+|---|---|---|
+| Language | C++20 | concepts, ranges, `std::format`, structured bindings |
+| Build | [CMake][cmake] 3.25+ | dual-mode `find_package`: system apt by default, vcpkg for portable builds |
+| Parsing | [tree-sitter][ts] core + 12 grammars | pinned via `FetchContent`, statically bundled |
+| Storage | [SQLite][sqlite] (WAL + FTS5) | prepared statements, RAII transaction guard |
+| JSON | [nlohmann/json][json] | digest serialisation |
+| Config | [toml++][toml] | `vectis.toml` alongside the binary |
+| Logging | [spdlog][spdlog] | rotating file + stderr |
+| Errors | [tl::expected][expected] | `Result<T>` over exceptions in hot paths |
+| Tests | [GoogleTest][gtest] | unit + integration + fixture suites |
 
 ## Quick start
 
@@ -183,6 +245,24 @@ work on both subcommands. `vectis --help` lists everything.
 State persists in `<project>/vectis-data/vectis.db` (SQLite WAL +
 FTS5) when `--cache` is used.
 
+## Design principles
+
+1. **Read-only, always.** Vectis never modifies the code it scans —
+   no refactor, no autofix, no rewrite. It is a structured-data
+   producer, not an editor.
+2. **Local and offline.** Digest production makes no network calls.
+   Everything runs from user space — no admin, no installer, copy the
+   binary and go.
+3. **Agent-first output.** The primary consumer is an LLM agent, not
+   a human reader; the slim digest is shaped for token efficiency, and
+   `explain` exists for direct reading without JSON parsing.
+4. **Single binary, zero runtime deps.** Tree-sitter grammars and all
+   libraries are statically bundled at build time — no interpreters,
+   no shared libs, no runtime plugins.
+5. **Calibrated, not guessed.** Architecture detection is measured
+   against a reference corpus rather than tuned by eye, and fixture
+   subtrees are pruned so deep test data can't inject false signals.
+
 ## What it isn't
 
 No GUI. No LSP server. No embedded LLM or chat UI. No code
@@ -192,3 +272,18 @@ production.
 ## License
 
 MIT. Third-party attribution in `NOTICES.md`.
+
+---
+
+<sub>Vectis is a personal tool — built for my own workflow, with no
+telemetry and no network calls. Not chasing adoption, but if a fast
+structured repo-map is useful to you, you're welcome to try it.</sub>
+
+[cmake]:    https://cmake.org
+[ts]:       https://tree-sitter.github.io/tree-sitter/
+[sqlite]:   https://www.sqlite.org
+[json]:     https://github.com/nlohmann/json
+[toml]:     https://marzer.github.io/tomlplusplus/
+[spdlog]:   https://github.com/gabime/spdlog
+[expected]: https://github.com/TartanLlama/expected
+[gtest]:    https://github.com/google/googletest
