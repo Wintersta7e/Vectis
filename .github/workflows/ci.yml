@@ -168,5 +168,7 @@ jobs:
           files: coverage.xml
           disable_search: true
           plugins: noop
-          fail_ci_if_error: false
+          # Token is set, so uploads should reliably succeed; fail the job if
+          # one doesn't, rather than letting the badge silently go stale.
+          fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
