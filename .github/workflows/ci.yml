@@ -116,3 +116,52 @@ jobs:
             | xargs -0 -P "$(nproc)" -I {} clang-tidy -p build \
                 --quiet --warnings-as-errors='*' \
                 --extra-arg=-Wno-unknown-warning-option {}
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake ninja-build \
+            git pkg-config \
+            libsqlite3-dev \
+            libspdlog-dev \
+            libfmt-dev \
+            nlohmann-json3-dev \
+            libtomlplusplus-dev \
+            libgtest-dev \
+            gcovr
+
+      - name: Configure with coverage instrumentation
+        # --coverage instruments every translation unit; -fprofile-update=atomic
+        # keeps the gcov counters correct under the task_queue's worker threads.
+        run: >
+          cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="--coverage -fprofile-update=atomic"
+          -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        # Serial on purpose: parallel ctest processes would race on the shared
+        # .gcda counter files and corrupt the coverage data.
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Generate Cobertura report
+        # Vectis-owned src/ only — tree-sitter grammars and GoogleTest live
+        # under build/_deps and must not skew the numbers.
+        run: gcovr --root . --filter src/ --xml-pretty -o coverage.xml
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
