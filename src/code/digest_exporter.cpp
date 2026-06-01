@@ -53,6 +53,36 @@ constexpr const char* k_slim_edge_format = "tuple-v1";
     return {names.begin(), names.end()};
 }
 
+/// Distinct language display names ordered by descending file count, with an
+/// alphabetical tie-break for determinism. Used for the full digest's
+/// `project.languages` so a top-N read leads with the dominant language
+/// instead of whatever happens to sort first alphabetically. `Unknown` is
+/// excluded, matching `distinct_language_names`.
+[[nodiscard]] std::vector<std::string>
+language_names_by_frequency(const std::vector<FileEntry>& files)
+{
+    std::unordered_map<std::string, std::size_t> counts;
+    for (const FileEntry& file : files) {
+        if (file.language == Language::Unknown) {
+            continue;
+        }
+        ++counts[std::string{language_name(file.language)}];
+    }
+    std::vector<std::pair<std::string, std::size_t>> ranked(counts.begin(), counts.end());
+    std::ranges::sort(ranked, [](const auto& a, const auto& b) {
+        if (a.second != b.second) {
+            return a.second > b.second;
+        }
+        return a.first < b.first;
+    });
+    std::vector<std::string> names;
+    names.reserve(ranked.size());
+    for (auto& entry : ranked) {
+        names.push_back(std::move(entry.first));
+    }
+    return names;
+}
+
 /// Sorted unique list of non-empty values produced by `field` across `deps`.
 /// Used to build the kinds[] and refs[] tables in the slim header.
 template <typename FieldFn>
@@ -543,8 +573,12 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     root["project"] = std::move(project);
 
     if (include_file_details) {
-        // Full format keeps `languages` inside `project` (legacy shape preserved).
-        root["project"]["languages"] = languages;
+        // Full format keeps `languages` inside `project` (legacy shape), but
+        // count-sorted: a top-N read should lead with the dominant language,
+        // not whatever sorts first alphabetically. Slim's top-level table stays
+        // alphabetical below — it is an index target, so its order must be
+        // stable across runs.
+        root["project"]["languages"] = language_names_by_frequency(files);
     }
     else {
         // Slim v2 promotes the tables to top-level nodes.

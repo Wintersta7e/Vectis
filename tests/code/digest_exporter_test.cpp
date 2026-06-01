@@ -175,6 +175,32 @@ TEST(DigestExporterTest, Json_WellFormed)
     EXPECT_TRUE(saw_errorkind_members);
 }
 
+TEST(DigestExporterTest, Json_ProjectLanguagesSortedByFileCount)
+{
+    // Three Python files, one C++ file. Count order is Python, C++ — the
+    // reverse of the alphabetical order the slim table uses, so this fails
+    // if `project.languages` ever regresses to an alphabetical sort.
+    CodeIndex index;
+    auto add = [&index](const std::string& path, Language lang) {
+        FileEntry f;
+        f.path_relative = path;
+        f.language = lang;
+        index.add_file(std::move(f));
+    };
+    add("a.cpp", Language::Cpp);
+    add("b.py", Language::Python);
+    add("c.py", Language::Python);
+    add("d.py", Language::Python);
+
+    const auto parsed = nlohmann::json::parse(
+        build_digest_string(index, make_options(DigestFormat::Json, "/fake/project")));
+
+    const auto langs = parsed["project"]["languages"].get<std::vector<std::string>>();
+    ASSERT_EQ(langs.size(), 2U);
+    EXPECT_EQ(langs[0], "Python"); // 3 files — dominant, leads despite > "C++"
+    EXPECT_EQ(langs[1], "C++");    // 1 file
+}
+
 TEST(DigestExporterTest, Json_TopLevelSymbolsArrayMatchesCount)
 {
     // Regression guard for the "project.symbol_count claimed N but
