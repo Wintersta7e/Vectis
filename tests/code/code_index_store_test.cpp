@@ -9,6 +9,7 @@
 #include "code/code_index.h"
 #include "code/code_index_store.h"
 #include "code/dependency.h"
+#include "code/digest_exporter.h"
 #include "code/language.h"
 #include "code/symbol.h"
 #include "services/storage_engine/storage_engine.h"
@@ -350,6 +351,67 @@ TEST_F(CodeIndexStoreTest, ColdAndWarmDependencyCountsMatch)
     ASSERT_TRUE(load_index(m_storage, warm));
 
     EXPECT_EQ(warm.dependency_count(), cold_count);
+}
+
+TEST_F(CodeIndexStoreTest, ColdAndWarmDigestByteIdentical)
+{
+    // The digest of a freshly-built index (cold) and of the same index loaded
+    // from the SQLite cache (warm) must be byte-identical. Exercise the two
+    // fields whose round-trip / ordering historically diverged: a multi-node
+    // dependency cycle (SCC member order) and a multi-line decorator.
+    FileEntry fa;
+    fa.path_relative = "src/a.py";
+    fa.language = Language::Python;
+    fa.content_hash = "h1";
+    const std::int64_t a = m_index.add_file(std::move(fa));
+    FileEntry fb;
+    fb.path_relative = "src/b.py";
+    fb.language = Language::Python;
+    fb.content_hash = "h2";
+    const std::int64_t b = m_index.add_file(std::move(fb));
+    FileEntry fc;
+    fc.path_relative = "src/c.py";
+    fc.language = Language::Python;
+    fc.content_hash = "h3";
+    const std::int64_t c = m_index.add_file(std::move(fc));
+
+    Symbol s;
+    s.file_id = a;
+    s.name = "handler";
+    s.kind = SymbolKind::Function;
+    s.decorators = {"app.route(\n    \"/\",\n    methods=[\"GET\"],\n)"};
+    m_index.add_symbols(std::vector<Symbol>{s});
+
+    // Import cycle a -> b -> c -> a.
+    Dependency d1;
+    d1.source_file_id = a;
+    d1.target_file_id = b;
+    d1.kind = "import";
+    d1.import_string = "b";
+    Dependency d2;
+    d2.source_file_id = b;
+    d2.target_file_id = c;
+    d2.kind = "import";
+    d2.import_string = "c";
+    Dependency d3;
+    d3.source_file_id = c;
+    d3.target_file_id = a;
+    d3.kind = "import";
+    d3.import_string = "a";
+    m_index.add_dependencies(std::vector<Dependency>{d1, d2, d3});
+
+    CacheMetadata meta;
+    meta.project_root = "/test";
+    ASSERT_TRUE(save_index(m_storage, m_index, meta));
+
+    CodeIndex warm;
+    ASSERT_TRUE(load_index(m_storage, warm));
+
+    ExportOptions opts;
+    opts.format = DigestFormat::Json;
+    opts.project_root = "/test";
+    opts.project_name = "t";
+    EXPECT_EQ(build_digest_string(m_index, opts), build_digest_string(warm, opts));
 }
 
 TEST_F(CodeIndexStoreTest, LoadFromEmptyDB_ReturnsError)

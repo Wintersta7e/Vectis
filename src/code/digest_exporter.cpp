@@ -318,8 +318,10 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 
     // Cycle detection feeds three consumers: the full `cycles` array
     // (paths per cycle), the slim `cycles` array (objects of file_ids),
-    // and the `stats.cycles` count carried by both formats.
-    const std::vector<DependencyCycle> cycles = detect_cycles(deps_in);
+    // and the `stats.cycles` count carried by both formats. Feed it the
+    // canonically-sorted `deps` (not `deps_in`): SCC member order tracks
+    // input order, so unsorted edges make cold and warm caches disagree.
+    const std::vector<DependencyCycle> cycles = detect_cycles(deps);
     if (include_file_details) {
         nlohmann::json cycles_array = nlohmann::json::array();
         for (const DependencyCycle& cycle : cycles) {
