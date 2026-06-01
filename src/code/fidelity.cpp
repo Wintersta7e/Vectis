@@ -72,6 +72,31 @@ constexpr std::string_view k_strategy_php_use_nsindex_fanout = "php-use-nsindex-
 constexpr std::string_view k_strategy_php_use_external_global = "php-use-external-global";
 constexpr std::string_view k_strategy_php_use_external_namespaced = "php-use-external-namespaced";
 
+// Ruby strata: resolved (explicit-relative / multi-segment / single-segment)
+// vs external (stdlib name vs gem).
+constexpr std::string_view k_strategy_ruby_relative_explicit = "ruby-relative-explicit";
+constexpr std::string_view k_strategy_ruby_resolved_multi = "ruby-resolved-multi";
+constexpr std::string_view k_strategy_ruby_resolved_single = "ruby-resolved-single";
+constexpr std::string_view k_strategy_ruby_external_stdlib = "ruby-external-stdlib";
+constexpr std::string_view k_strategy_ruby_external_gem = "ruby-external-gem";
+
+// First-path-segment names of the Ruby standard library + default gems. A
+// require whose first segment is in this set is treated as a genuine stdlib
+// import rather than an unscanned in-tree file. Representative, not exhaustive.
+constexpr std::array<std::string_view, 72> k_ruby_stdlib = {
+    "abbrev",       "base64",      "benchmark",  "bigdecimal",   "cgi",      "coverage",
+    "csv",          "date",        "delegate",   "did_you_mean", "digest",   "drb",
+    "english",      "erb",         "etc",        "fcntl",        "fiddle",   "fileutils",
+    "find",         "forwardable", "gdbm",       "getoptlong",   "io",       "ipaddr",
+    "irb",          "json",        "logger",     "matrix",       "mkmf",     "monitor",
+    "mutex_m",      "net",         "nkf",        "objspace",     "observer", "open3",
+    "openssl",      "optparse",    "ostruct",    "pathname",     "pp",       "prettyprint",
+    "prime",        "pstore",      "psych",      "rake",         "rbconfig", "rdoc",
+    "readline",     "reline",      "resolv",     "rinda",        "ripper",   "rss",
+    "securerandom", "set",         "shellwords", "singleton",    "socket",   "stringio",
+    "strscan",      "syslog",      "tempfile",   "time",         "timeout",  "tmpdir",
+    "tsort",        "uri",         "weakref",    "yaml",         "zlib",     "fiber"};
+
 // Source-file extension sets for languages whose edge `kind` is shared with
 // other languages (so dispatch must gate on extension).
 constexpr std::array<std::string_view, 10> k_c_cpp_exts = {".c",   ".h",  ".cc",  ".cpp", ".cxx",
@@ -412,6 +437,51 @@ double php_edge_confidence(std::string_view strategy)
     return 0.0; // fail closed
 }
 
+std::string reconstruct_ruby_resolved_by(std::string_view import_string, bool is_external)
+{
+    if (!is_external) {
+        if (import_string.starts_with("./") || import_string.starts_with("../")) {
+            return std::string{k_strategy_ruby_relative_explicit};
+        }
+        // A multi-segment require (`sinatra/base`) is self-disambiguating;
+        // a bare single segment (`set`) is the stdlib-shadow risk.
+        return std::string{import_string.find('/') != std::string_view::npos
+                               ? k_strategy_ruby_resolved_multi
+                               : k_strategy_ruby_resolved_single};
+    }
+    // External: classify by the first path segment (after any `./`/`../`).
+    std::string_view first = import_string;
+    if (first.starts_with("./")) {
+        first.remove_prefix(2);
+    }
+    else if (first.starts_with("../")) {
+        first.remove_prefix(3);
+    }
+    first = first.substr(0, first.find('/'));
+    const bool stdlib = std::ranges::find(k_ruby_stdlib, first) != k_ruby_stdlib.end();
+    return std::string{stdlib ? k_strategy_ruby_external_stdlib : k_strategy_ruby_external_gem};
+}
+
+double ruby_edge_confidence(std::string_view strategy)
+{
+    if (strategy == k_strategy_ruby_relative_explicit) {
+        return k_ruby_relative_explicit_confidence;
+    }
+    if (strategy == k_strategy_ruby_resolved_multi) {
+        return k_ruby_resolved_multi_confidence;
+    }
+    if (strategy == k_strategy_ruby_resolved_single) {
+        return k_ruby_resolved_single_confidence;
+    }
+    if (strategy == k_strategy_ruby_external_stdlib) {
+        return k_ruby_external_stdlib_confidence;
+    }
+    if (strategy == k_strategy_ruby_external_gem) {
+        return k_ruby_external_gem_confidence;
+    }
+    return 0.0; // fail closed
+}
+
 std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
                                                       std::string_view kind,
                                                       std::string_view import_string,
@@ -457,6 +527,10 @@ std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_pa
         const std::string strategy =
             reconstruct_php_resolved_by(import_string, target_relpath, kind, is_external);
         return EdgeFidelity{strategy, php_edge_confidence(strategy)};
+    }
+    if (kind == "require" && ends_with(source_path, ".rb")) {
+        const std::string strategy = reconstruct_ruby_resolved_by(import_string, is_external);
+        return EdgeFidelity{strategy, ruby_edge_confidence(strategy)};
     }
     return std::nullopt;
 }
@@ -671,6 +745,31 @@ namespace {
     return php;
 }
 
+/// Per-language fidelity sub-block for Ruby require edges.
+[[nodiscard]] nlohmann::json build_ruby_fidelity_json()
+{
+    nlohmann::json ruby;
+    ruby["version"] = std::string{k_ruby_fidelity_version};
+    ruby["scope"] = "ruby-require-edges";
+    ruby["method"] = "per-stratum precision + false-external audit vs filesystem oracle, "
+                     "full-population recheck (offline)";
+    ruby["provisional"] = true;
+
+    nlohmann::json corpus;
+    corpus["projects"] = 3;
+    corpus["labeled_edges"] = 121;
+    ruby["corpus"] = std::move(corpus);
+
+    nlohmann::json expected;
+    expected[std::string{k_strategy_ruby_relative_explicit}] = k_ruby_relative_explicit_confidence;
+    expected[std::string{k_strategy_ruby_resolved_multi}] = k_ruby_resolved_multi_confidence;
+    expected[std::string{k_strategy_ruby_resolved_single}] = k_ruby_resolved_single_confidence;
+    expected[std::string{k_strategy_ruby_external_stdlib}] = k_ruby_external_stdlib_confidence;
+    expected[std::string{k_strategy_ruby_external_gem}] = k_ruby_external_gem_confidence;
+    ruby["expected_precision"] = std::move(expected);
+    return ruby;
+}
+
 } // namespace
 
 nlohmann::json build_fidelity_metadata_json()
@@ -695,6 +794,7 @@ nlohmann::json build_fidelity_metadata_json()
     languages["java"] = build_java_fidelity_json();
     languages["csharp"] = build_csharp_fidelity_json();
     languages["php"] = build_php_fidelity_json();
+    languages["ruby"] = build_ruby_fidelity_json();
     meta["languages"] = std::move(languages);
     return meta;
 }

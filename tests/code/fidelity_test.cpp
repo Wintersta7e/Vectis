@@ -54,6 +54,11 @@ using vectis::code::k_php_use_psr4_confidence;
 using vectis::code::k_py_external_dotted_confidence;
 using vectis::code::k_py_external_relative_confidence;
 using vectis::code::k_py_resolved_confidence;
+using vectis::code::k_ruby_external_gem_confidence;
+using vectis::code::k_ruby_external_stdlib_confidence;
+using vectis::code::k_ruby_relative_explicit_confidence;
+using vectis::code::k_ruby_resolved_multi_confidence;
+using vectis::code::k_ruby_resolved_single_confidence;
 using vectis::code::k_rust_mod_confidence;
 using vectis::code::k_rust_mod_unresolved_confidence;
 using vectis::code::k_rust_use_extern_confidence;
@@ -70,7 +75,9 @@ using vectis::code::reconstruct_java_resolved_by;
 using vectis::code::reconstruct_jsts_resolved_by;
 using vectis::code::reconstruct_php_resolved_by;
 using vectis::code::reconstruct_python_resolved_by;
+using vectis::code::reconstruct_ruby_resolved_by;
 using vectis::code::reconstruct_rust_resolved_by;
+using vectis::code::ruby_edge_confidence;
 using vectis::code::rust_edge_confidence;
 
 // --- Strategy reconstruction -------------------------------------------------
@@ -262,6 +269,22 @@ TEST(FidelityTest, Reconstruct_Php)
               "php-use-external-global");
 }
 
+TEST(FidelityTest, Reconstruct_Ruby)
+{
+    // Resolved: explicit-relative / multi-segment / single-segment.
+    EXPECT_EQ(reconstruct_ruby_resolved_by("../foo", /*is_external=*/false),
+              "ruby-relative-explicit");
+    EXPECT_EQ(reconstruct_ruby_resolved_by("sinatra/base", /*is_external=*/false),
+              "ruby-resolved-multi");
+    EXPECT_EQ(reconstruct_ruby_resolved_by("helper", /*is_external=*/false),
+              "ruby-resolved-single");
+    // External: a stdlib first segment vs a gem.
+    EXPECT_EQ(reconstruct_ruby_resolved_by("json", /*is_external=*/true), "ruby-external-stdlib");
+    EXPECT_EQ(reconstruct_ruby_resolved_by("set", /*is_external=*/true), "ruby-external-stdlib");
+    EXPECT_EQ(reconstruct_ruby_resolved_by("rack/protection", /*is_external=*/true),
+              "ruby-external-gem");
+}
+
 // --- Confidence lookup -------------------------------------------------------
 
 TEST(FidelityTest, Confidence_ResolvedStrategies)
@@ -378,6 +401,19 @@ TEST(FidelityTest, Confidence_PhpStrategies)
     EXPECT_DOUBLE_EQ(php_edge_confidence("not-a-strategy"), 0.0);
 }
 
+TEST(FidelityTest, Confidence_RubyStrategies)
+{
+    EXPECT_DOUBLE_EQ(ruby_edge_confidence("ruby-relative-explicit"),
+                     k_ruby_relative_explicit_confidence);
+    EXPECT_DOUBLE_EQ(ruby_edge_confidence("ruby-resolved-multi"), k_ruby_resolved_multi_confidence);
+    EXPECT_DOUBLE_EQ(ruby_edge_confidence("ruby-resolved-single"),
+                     k_ruby_resolved_single_confidence);
+    EXPECT_DOUBLE_EQ(ruby_edge_confidence("ruby-external-stdlib"),
+                     k_ruby_external_stdlib_confidence);
+    EXPECT_DOUBLE_EQ(ruby_edge_confidence("ruby-external-gem"), k_ruby_external_gem_confidence);
+    EXPECT_DOUBLE_EQ(ruby_edge_confidence("not-a-strategy"), 0.0);
+}
+
 // --- Dispatcher --------------------------------------------------------------
 
 TEST(FidelityTest, Dispatch_PythonAndGoImportEdges)
@@ -480,6 +516,12 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     EXPECT_EQ(php["provisional"], true);
     EXPECT_DOUBLE_EQ(php["expected_precision"]["php-use-nsindex-fanout"].get<double>(),
                      k_php_use_nsindex_fanout_confidence);
+
+    const auto& ruby = meta["languages"]["ruby"];
+    EXPECT_EQ(ruby["scope"], "ruby-require-edges");
+    EXPECT_EQ(ruby["provisional"], true);
+    EXPECT_DOUBLE_EQ(ruby["expected_precision"]["ruby-resolved-single"].get<double>(),
+                     k_ruby_resolved_single_confidence);
 }
 
 // --- Digest integration ------------------------------------------------------

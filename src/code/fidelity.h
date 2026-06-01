@@ -184,6 +184,24 @@ inline constexpr double k_php_use_nsindex_fanout_confidence = 0.30;      // over
 inline constexpr double k_php_use_external_global_confidence = 0.95;     // 0 false-external
 inline constexpr double k_php_use_external_namespaced_confidence = 0.95; // 0 false-external
 
+/// Version pin for the Ruby calibration table below.
+inline constexpr std::string_view k_ruby_fidelity_version = "ruby-import-2026-06-01";
+
+// --- Calibration table (Ruby require edges) ----------------------------------
+//
+// Measured 2026-06-01 against 3 projects (467 edges) with a filesystem
+// oracle + full-population recheck. `require` and `require_relative` both
+// emit kind `require`, and idiomatic args are bare (no `./`), so strata key
+// on resolution + path shape. The one systematic defect is stdlib-shadow:
+// a single-segment `require 'json'` can resolve to a coincidental in-tree
+// `json.rb` via the suffix-first fallback, so resolved-single is published
+// below resolved-multi.
+inline constexpr double k_ruby_relative_explicit_confidence = 0.90; // n=1; structural prior
+inline constexpr double k_ruby_resolved_multi_confidence = 0.95;    // 202/202 correct
+inline constexpr double k_ruby_resolved_single_confidence = 0.85;   // 93.3%; stdlib-shadow
+inline constexpr double k_ruby_external_stdlib_confidence = 0.95;   // 0/55 false-external
+inline constexpr double k_ruby_external_gem_confidence = 0.90;      // 0/75 false-external
+
 /// Reconstruct the resolution strategy string for one Python import
 /// edge, mirroring the Stage-1 harness:
 ///   - relative iff `import_string` begins with '.', else dotted;
@@ -288,6 +306,18 @@ inline constexpr double k_php_use_external_namespaced_confidence = 0.95; // 0 fa
 /// Calibrated precision for a `reconstruct_php_resolved_by` strategy.
 /// Unknown strategies return 0.0 (fail closed).
 [[nodiscard]] double php_edge_confidence(std::string_view strategy);
+
+/// Reconstruct the resolution strategy for one Ruby `require` edge.
+/// Resolved: `ruby-relative-explicit` (starts `./`/`../`), else
+/// `ruby-resolved-multi` (the require has a `/`), else `ruby-resolved-single`.
+/// External: `ruby-external-stdlib` if the first path segment is a known
+/// stdlib/default-gem name, else `ruby-external-gem`.
+[[nodiscard]] std::string reconstruct_ruby_resolved_by(std::string_view import_string,
+                                                       bool is_external);
+
+/// Calibrated precision for a `reconstruct_ruby_resolved_by` strategy.
+/// Unknown strategies return 0.0 (fail closed).
+[[nodiscard]] double ruby_edge_confidence(std::string_view strategy);
 
 /// One edge's reconstructed resolution strategy plus its calibrated
 /// precision. Returned by `reconstruct_edge_fidelity`.
