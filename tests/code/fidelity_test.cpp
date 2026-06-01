@@ -45,6 +45,12 @@ using vectis::code::k_jsts_alias_unresolved_confidence;
 using vectis::code::k_jsts_bare_external_confidence;
 using vectis::code::k_jsts_relative_resolved_confidence;
 using vectis::code::k_jsts_relative_unresolved_confidence;
+using vectis::code::k_php_require_external_confidence;
+using vectis::code::k_php_require_resolved_confidence;
+using vectis::code::k_php_use_external_global_confidence;
+using vectis::code::k_php_use_external_namespaced_confidence;
+using vectis::code::k_php_use_nsindex_fanout_confidence;
+using vectis::code::k_php_use_psr4_confidence;
 using vectis::code::k_py_external_dotted_confidence;
 using vectis::code::k_py_external_relative_confidence;
 using vectis::code::k_py_resolved_confidence;
@@ -54,6 +60,7 @@ using vectis::code::k_rust_use_extern_confidence;
 using vectis::code::k_rust_use_internal_confidence;
 using vectis::code::k_rust_use_std_confidence;
 using vectis::code::Language;
+using vectis::code::php_edge_confidence;
 using vectis::code::python_edge_confidence;
 using vectis::code::reconstruct_c_cpp_resolved_by;
 using vectis::code::reconstruct_csharp_resolved_by;
@@ -61,6 +68,7 @@ using vectis::code::reconstruct_edge_fidelity;
 using vectis::code::reconstruct_go_resolved_by;
 using vectis::code::reconstruct_java_resolved_by;
 using vectis::code::reconstruct_jsts_resolved_by;
+using vectis::code::reconstruct_php_resolved_by;
 using vectis::code::reconstruct_python_resolved_by;
 using vectis::code::reconstruct_rust_resolved_by;
 using vectis::code::rust_edge_confidence;
@@ -229,6 +237,31 @@ TEST(FidelityTest, Reconstruct_Csharp)
               "csharp-external-thirdparty");
 }
 
+TEST(FidelityTest, Reconstruct_Php)
+{
+    // require/include are path-based.
+    EXPECT_EQ(reconstruct_php_resolved_by("/helpers.php", "src/helpers.php", "require",
+                                          /*is_external=*/false),
+              "php-require-resolved");
+    EXPECT_EQ(reconstruct_php_resolved_by("vendor/autoload.php", "", "require",
+                                          /*is_external=*/true),
+              "php-require-external");
+    // `use`, resolved: exact PSR-4 path match vs the lossy namespace-index fanout.
+    EXPECT_EQ(reconstruct_php_resolved_by("Slim\\Factory\\Foo", "src/Slim/Factory/Foo.php", "use",
+                                          /*is_external=*/false),
+              "php-use-psr4-exact");
+    EXPECT_EQ(reconstruct_php_resolved_by("Illuminate\\Support\\Collection",
+                                          "src/Collections/Collection.php", "use",
+                                          /*is_external=*/false),
+              "php-use-nsindex-fanout");
+    // `use`, external: namespaced (`\`) vs a root/global symbol.
+    EXPECT_EQ(reconstruct_php_resolved_by("Psr\\Log\\LoggerInterface", "", "use",
+                                          /*is_external=*/true),
+              "php-use-external-namespaced");
+    EXPECT_EQ(reconstruct_php_resolved_by("Closure", "", "use", /*is_external=*/true),
+              "php-use-external-global");
+}
+
 // --- Confidence lookup -------------------------------------------------------
 
 TEST(FidelityTest, Confidence_ResolvedStrategies)
@@ -329,6 +362,22 @@ TEST(FidelityTest, Confidence_CsharpStrategies)
     EXPECT_DOUBLE_EQ(csharp_edge_confidence("not-a-strategy"), 0.0);
 }
 
+TEST(FidelityTest, Confidence_PhpStrategies)
+{
+    EXPECT_DOUBLE_EQ(php_edge_confidence("php-require-resolved"),
+                     k_php_require_resolved_confidence);
+    EXPECT_DOUBLE_EQ(php_edge_confidence("php-require-external"),
+                     k_php_require_external_confidence);
+    EXPECT_DOUBLE_EQ(php_edge_confidence("php-use-psr4-exact"), k_php_use_psr4_confidence);
+    EXPECT_DOUBLE_EQ(php_edge_confidence("php-use-nsindex-fanout"),
+                     k_php_use_nsindex_fanout_confidence);
+    EXPECT_DOUBLE_EQ(php_edge_confidence("php-use-external-global"),
+                     k_php_use_external_global_confidence);
+    EXPECT_DOUBLE_EQ(php_edge_confidence("php-use-external-namespaced"),
+                     k_php_use_external_namespaced_confidence);
+    EXPECT_DOUBLE_EQ(php_edge_confidence("not-a-strategy"), 0.0);
+}
+
 // --- Dispatcher --------------------------------------------------------------
 
 TEST(FidelityTest, Dispatch_PythonAndGoImportEdges)
@@ -425,6 +474,12 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     EXPECT_EQ(cs["provisional"], true);
     EXPECT_DOUBLE_EQ(cs["expected_precision"]["csharp-external-thirdparty"].get<double>(),
                      k_cs_external_thirdparty_confidence);
+
+    const auto& php = meta["languages"]["php"];
+    EXPECT_EQ(php["scope"], "php-import-edges");
+    EXPECT_EQ(php["provisional"], true);
+    EXPECT_DOUBLE_EQ(php["expected_precision"]["php-use-nsindex-fanout"].get<double>(),
+                     k_php_use_nsindex_fanout_confidence);
 }
 
 // --- Digest integration ------------------------------------------------------

@@ -63,6 +63,15 @@ constexpr std::string_view k_strategy_cs_internal = "csharp-internal";
 constexpr std::string_view k_strategy_cs_external_system = "csharp-external-system";
 constexpr std::string_view k_strategy_cs_external_thirdparty = "csharp-external-thirdparty";
 
+// PHP strata: require/include (path) vs use (namespace). Resolved `use`
+// splits into an exact PSR-4 match vs a lossy namespace-index fanout.
+constexpr std::string_view k_strategy_php_require_resolved = "php-require-resolved";
+constexpr std::string_view k_strategy_php_require_external = "php-require-external";
+constexpr std::string_view k_strategy_php_use_psr4 = "php-use-psr4-exact";
+constexpr std::string_view k_strategy_php_use_nsindex_fanout = "php-use-nsindex-fanout";
+constexpr std::string_view k_strategy_php_use_external_global = "php-use-external-global";
+constexpr std::string_view k_strategy_php_use_external_namespaced = "php-use-external-namespaced";
+
 // Source-file extension sets for languages whose edge `kind` is shared with
 // other languages (so dispatch must gate on extension).
 constexpr std::array<std::string_view, 10> k_c_cpp_exts = {".c",   ".h",  ".cc",  ".cpp", ".cxx",
@@ -353,6 +362,56 @@ double csharp_edge_confidence(std::string_view strategy)
     return 0.0; // fail closed
 }
 
+std::string reconstruct_php_resolved_by(std::string_view import_string,
+                                        std::string_view target_relpath, std::string_view kind,
+                                        bool is_external)
+{
+    if (kind != "use") {
+        // require / include: path-based.
+        return std::string{is_external ? k_strategy_php_require_external
+                                       : k_strategy_php_require_resolved};
+    }
+    if (is_external) {
+        const bool namespaced = import_string.find('\\') != std::string_view::npos;
+        return std::string{namespaced ? k_strategy_php_use_external_namespaced
+                                      : k_strategy_php_use_external_global};
+    }
+    // Resolved `use`: exact PSR-4 path match iff the target ends with the
+    // namespace mapped to a path (`A\B\C` -> `A/B/C.php`), else the lossy
+    // namespace-index fanout.
+    std::string want;
+    want.reserve(import_string.size() + 4);
+    for (const char ch : import_string) {
+        want.push_back(ch == '\\' ? '/' : ch);
+    }
+    want += ".php";
+    return std::string{ends_with(target_relpath, want) ? k_strategy_php_use_psr4
+                                                       : k_strategy_php_use_nsindex_fanout};
+}
+
+double php_edge_confidence(std::string_view strategy)
+{
+    if (strategy == k_strategy_php_require_resolved) {
+        return k_php_require_resolved_confidence;
+    }
+    if (strategy == k_strategy_php_require_external) {
+        return k_php_require_external_confidence;
+    }
+    if (strategy == k_strategy_php_use_psr4) {
+        return k_php_use_psr4_confidence;
+    }
+    if (strategy == k_strategy_php_use_nsindex_fanout) {
+        return k_php_use_nsindex_fanout_confidence;
+    }
+    if (strategy == k_strategy_php_use_external_global) {
+        return k_php_use_external_global_confidence;
+    }
+    if (strategy == k_strategy_php_use_external_namespaced) {
+        return k_php_use_external_namespaced_confidence;
+    }
+    return 0.0; // fail closed
+}
+
 std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
                                                       std::string_view kind,
                                                       std::string_view import_string,
@@ -392,6 +451,12 @@ std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_pa
     if (kind == "use" && ends_with(source_path, ".cs")) {
         const std::string strategy = reconstruct_csharp_resolved_by(import_string, is_external);
         return EdgeFidelity{strategy, csharp_edge_confidence(strategy)};
+    }
+    if ((kind == "require" || kind == "include" || kind == "use") &&
+        ends_with(source_path, ".php")) {
+        const std::string strategy =
+            reconstruct_php_resolved_by(import_string, target_relpath, kind, is_external);
+        return EdgeFidelity{strategy, php_edge_confidence(strategy)};
     }
     return std::nullopt;
 }
@@ -579,6 +644,33 @@ namespace {
     return cs;
 }
 
+/// Per-language fidelity sub-block for PHP require/include/use edges.
+[[nodiscard]] nlohmann::json build_php_fidelity_json()
+{
+    nlohmann::json php;
+    php["version"] = std::string{k_php_fidelity_version};
+    php["scope"] = "php-import-edges";
+    php["method"] = "per-strategy precision vs independent FQCN/path oracle (offline)";
+    php["provisional"] = true;
+
+    nlohmann::json corpus;
+    corpus["projects"] = 3;
+    corpus["labeled_edges"] = 157;
+    php["corpus"] = std::move(corpus);
+
+    nlohmann::json expected;
+    expected[std::string{k_strategy_php_require_resolved}] = k_php_require_resolved_confidence;
+    expected[std::string{k_strategy_php_require_external}] = k_php_require_external_confidence;
+    expected[std::string{k_strategy_php_use_psr4}] = k_php_use_psr4_confidence;
+    expected[std::string{k_strategy_php_use_nsindex_fanout}] = k_php_use_nsindex_fanout_confidence;
+    expected[std::string{k_strategy_php_use_external_global}] =
+        k_php_use_external_global_confidence;
+    expected[std::string{k_strategy_php_use_external_namespaced}] =
+        k_php_use_external_namespaced_confidence;
+    php["expected_precision"] = std::move(expected);
+    return php;
+}
+
 } // namespace
 
 nlohmann::json build_fidelity_metadata_json()
@@ -602,6 +694,7 @@ nlohmann::json build_fidelity_metadata_json()
     languages["typescript"] = jsts;
     languages["java"] = build_java_fidelity_json();
     languages["csharp"] = build_csharp_fidelity_json();
+    languages["php"] = build_php_fidelity_json();
     meta["languages"] = std::move(languages);
     return meta;
 }

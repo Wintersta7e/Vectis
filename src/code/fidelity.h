@@ -164,6 +164,26 @@ inline constexpr double k_cs_internal_confidence = 0.97;            // 173868/17
 inline constexpr double k_cs_external_system_confidence = 0.95;     // 2.1% false-external
 inline constexpr double k_cs_external_thirdparty_confidence = 0.85; // 13.7% false-external
 
+/// Version pin for the PHP calibration table below.
+inline constexpr std::string_view k_php_fidelity_version = "php-import-2026-06-01";
+
+// --- Calibration table (PHP require/include/use edges) -----------------------
+//
+// Measured 2026-06-01 against 3 projects (~48k edges) with an independent
+// FQCN/path oracle. require/include are path-based; `use` is namespace-based
+// and resolves either by an exact PSR-4 path match (psr4-exact) or via a
+// namespace-index fallback that over-approximates (fanout). The fanout
+// stratum has a per-edge precision of only ~0.03–0.09 — published at 0.30 as
+// a strong de-weight signal (the right file is usually in the fanned-out set,
+// but most siblings are wrong). External `use`s split on whether the symbol
+// is namespaced (`\`) or a root/global name.
+inline constexpr double k_php_require_resolved_confidence = 0.95;        // 33/33 correct
+inline constexpr double k_php_require_external_confidence = 0.90;        // recall-side
+inline constexpr double k_php_use_psr4_confidence = 0.97;                // 8051/8051 correct
+inline constexpr double k_php_use_nsindex_fanout_confidence = 0.30;      // over-approximation
+inline constexpr double k_php_use_external_global_confidence = 0.95;     // 0 false-external
+inline constexpr double k_php_use_external_namespaced_confidence = 0.95; // 0 false-external
+
 /// Reconstruct the resolution strategy string for one Python import
 /// edge, mirroring the Stage-1 harness:
 ///   - relative iff `import_string` begins with '.', else dotted;
@@ -253,6 +273,21 @@ inline constexpr double k_cs_external_thirdparty_confidence = 0.85; // 13.7% fal
 /// Calibrated precision for a `reconstruct_csharp_resolved_by` strategy.
 /// Unknown strategies return 0.0 (fail closed).
 [[nodiscard]] double csharp_edge_confidence(std::string_view strategy);
+
+/// Reconstruct the resolution strategy for one PHP edge. `kind` is
+/// `require`/`include` (path-based) or `use` (namespace). require/include:
+/// `php-require-resolved` / `php-require-external`. use, resolved:
+/// `php-use-psr4-exact` if `target_relpath` ends with the PSR-4 path of the
+/// namespace, else `php-use-nsindex-fanout`. use, external:
+/// `php-use-external-namespaced` if the symbol contains `\`, else
+/// `php-use-external-global`.
+[[nodiscard]] std::string reconstruct_php_resolved_by(std::string_view import_string,
+                                                      std::string_view target_relpath,
+                                                      std::string_view kind, bool is_external);
+
+/// Calibrated precision for a `reconstruct_php_resolved_by` strategy.
+/// Unknown strategies return 0.0 (fail closed).
+[[nodiscard]] double php_edge_confidence(std::string_view strategy);
 
 /// One edge's reconstructed resolution strategy plus its calibrated
 /// precision. Returned by `reconstruct_edge_fidelity`.
