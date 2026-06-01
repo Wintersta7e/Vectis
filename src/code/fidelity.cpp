@@ -24,6 +24,14 @@ constexpr std::string_view k_strategy_go_internal = "go-internal";
 constexpr std::string_view k_strategy_go_external_stdlib = "go-external-stdlib";
 constexpr std::string_view k_strategy_go_external_thirdparty = "go-external-thirdparty";
 
+// Rust strata: `mod` (path-resolved) vs `use` (never resolved today; split
+// by the first `::` segment into std, internal crate paths, and externs).
+constexpr std::string_view k_strategy_rust_mod = "rust-mod";
+constexpr std::string_view k_strategy_rust_mod_unresolved = "rust-mod-unresolved";
+constexpr std::string_view k_strategy_rust_use_std = "rust-use-std";
+constexpr std::string_view k_strategy_rust_use_internal = "rust-use-internal";
+constexpr std::string_view k_strategy_rust_use_extern = "rust-use-extern";
+
 /// True if `path` names a Python package init file (`__init__.py`),
 /// which distinguishes a package-resolved import from a module one.
 [[nodiscard]] bool ends_with_init_py(std::string_view path)
@@ -106,6 +114,43 @@ double go_edge_confidence(std::string_view strategy)
     return 0.0;
 }
 
+std::string reconstruct_rust_resolved_by(std::string_view kind, std::string_view import_string,
+                                         bool is_external)
+{
+    if (kind == "mod") {
+        return std::string{is_external ? k_strategy_rust_mod_unresolved : k_strategy_rust_mod};
+    }
+    // kind == "use": classify by the first `::`-separated path segment.
+    const std::string_view first = import_string.substr(0, import_string.find("::"));
+    if (first == "std" || first == "core" || first == "alloc") {
+        return std::string{k_strategy_rust_use_std};
+    }
+    if (first == "crate" || first == "self" || first == "super" || first == "Self") {
+        return std::string{k_strategy_rust_use_internal};
+    }
+    return std::string{k_strategy_rust_use_extern};
+}
+
+double rust_edge_confidence(std::string_view strategy)
+{
+    if (strategy == k_strategy_rust_mod) {
+        return k_rust_mod_confidence;
+    }
+    if (strategy == k_strategy_rust_mod_unresolved) {
+        return k_rust_mod_unresolved_confidence;
+    }
+    if (strategy == k_strategy_rust_use_std) {
+        return k_rust_use_std_confidence;
+    }
+    if (strategy == k_strategy_rust_use_internal) {
+        return k_rust_use_internal_confidence;
+    }
+    if (strategy == k_strategy_rust_use_extern) {
+        return k_rust_use_extern_confidence;
+    }
+    return 0.0; // fail closed
+}
+
 std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
                                                       std::string_view kind,
                                                       std::string_view import_string,
@@ -125,6 +170,10 @@ std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_pa
     if (kind == "import" && ends_with(source_path, ".go")) {
         const std::string strategy = reconstruct_go_resolved_by(import_string, is_external);
         return EdgeFidelity{strategy, go_edge_confidence(strategy)};
+    }
+    if ((kind == "use" || kind == "mod") && ends_with(source_path, ".rs")) {
+        const std::string strategy = reconstruct_rust_resolved_by(kind, import_string, is_external);
+        return EdgeFidelity{strategy, rust_edge_confidence(strategy)};
     }
     return std::nullopt;
 }
@@ -187,6 +236,31 @@ namespace {
     return go;
 }
 
+/// Per-language fidelity sub-block for Rust use/mod edges.
+[[nodiscard]] nlohmann::json build_rust_fidelity_json()
+{
+    nlohmann::json rust;
+    rust["version"] = std::string{k_rust_fidelity_version};
+    rust["scope"] = "rust-use-mod-edges";
+    rust["method"] = "per-stratum precision / false-external rate vs Cargo-manifest + "
+                     "in-tree module oracle (offline)";
+    rust["provisional"] = true;
+
+    nlohmann::json corpus;
+    corpus["projects"] = 3;
+    corpus["labeled_edges"] = 3715;
+    rust["corpus"] = std::move(corpus);
+
+    nlohmann::json expected;
+    expected[std::string{k_strategy_rust_mod}] = k_rust_mod_confidence;
+    expected[std::string{k_strategy_rust_mod_unresolved}] = k_rust_mod_unresolved_confidence;
+    expected[std::string{k_strategy_rust_use_std}] = k_rust_use_std_confidence;
+    expected[std::string{k_strategy_rust_use_internal}] = k_rust_use_internal_confidence;
+    expected[std::string{k_strategy_rust_use_extern}] = k_rust_use_extern_confidence;
+    rust["expected_precision"] = std::move(expected);
+    return rust;
+}
+
 } // namespace
 
 nlohmann::json build_fidelity_metadata_json()
@@ -201,6 +275,7 @@ nlohmann::json build_fidelity_metadata_json()
     nlohmann::json languages;
     languages["python"] = build_python_fidelity_json();
     languages["go"] = build_go_fidelity_json();
+    languages["rust"] = build_rust_fidelity_json();
     meta["languages"] = std::move(languages);
     return meta;
 }

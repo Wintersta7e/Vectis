@@ -28,11 +28,18 @@ using vectis::code::k_go_internal_confidence;
 using vectis::code::k_py_external_dotted_confidence;
 using vectis::code::k_py_external_relative_confidence;
 using vectis::code::k_py_resolved_confidence;
+using vectis::code::k_rust_mod_confidence;
+using vectis::code::k_rust_mod_unresolved_confidence;
+using vectis::code::k_rust_use_extern_confidence;
+using vectis::code::k_rust_use_internal_confidence;
+using vectis::code::k_rust_use_std_confidence;
 using vectis::code::Language;
 using vectis::code::python_edge_confidence;
 using vectis::code::reconstruct_edge_fidelity;
 using vectis::code::reconstruct_go_resolved_by;
 using vectis::code::reconstruct_python_resolved_by;
+using vectis::code::reconstruct_rust_resolved_by;
+using vectis::code::rust_edge_confidence;
 
 // --- Strategy reconstruction -------------------------------------------------
 
@@ -111,6 +118,28 @@ TEST(FidelityTest, Reconstruct_GoExternalThirdparty)
               "go-external-thirdparty");
 }
 
+TEST(FidelityTest, Reconstruct_RustMod)
+{
+    // `mod x;` resolved vs left external (inline / cfg-gated / dir-module).
+    EXPECT_EQ(reconstruct_rust_resolved_by("mod", "doc", /*is_external=*/false), "rust-mod");
+    EXPECT_EQ(reconstruct_rust_resolved_by("mod", "doc", /*is_external=*/true),
+              "rust-mod-unresolved");
+}
+
+TEST(FidelityTest, Reconstruct_RustUse)
+{
+    // `use` is always external today; classify by the first `::` segment.
+    EXPECT_EQ(reconstruct_rust_resolved_by("use", "std::io", /*is_external=*/true), "rust-use-std");
+    EXPECT_EQ(reconstruct_rust_resolved_by("use", "core::mem", /*is_external=*/true),
+              "rust-use-std");
+    EXPECT_EQ(reconstruct_rust_resolved_by("use", "crate::foo::Bar", /*is_external=*/true),
+              "rust-use-internal");
+    EXPECT_EQ(reconstruct_rust_resolved_by("use", "super::x", /*is_external=*/true),
+              "rust-use-internal");
+    EXPECT_EQ(reconstruct_rust_resolved_by("use", "serde::Serialize", /*is_external=*/true),
+              "rust-use-extern");
+}
+
 // --- Confidence lookup -------------------------------------------------------
 
 TEST(FidelityTest, Confidence_ResolvedStrategies)
@@ -150,6 +179,16 @@ TEST(FidelityTest, Confidence_GoUnknownFailsClosed)
     EXPECT_DOUBLE_EQ(go_edge_confidence("relative-module"), 0.0);
     EXPECT_DOUBLE_EQ(go_edge_confidence("not-a-strategy"), 0.0);
     EXPECT_DOUBLE_EQ(go_edge_confidence(""), 0.0);
+}
+
+TEST(FidelityTest, Confidence_RustStrategies)
+{
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-mod"), k_rust_mod_confidence);
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-mod-unresolved"), k_rust_mod_unresolved_confidence);
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-std"), k_rust_use_std_confidence);
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-internal"), k_rust_use_internal_confidence);
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-extern"), k_rust_use_extern_confidence);
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("not-a-strategy"), 0.0);
 }
 
 // --- Dispatcher --------------------------------------------------------------
@@ -216,6 +255,12 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     EXPECT_DOUBLE_EQ(go_exp["go-external-stdlib"].get<double>(), k_go_external_stdlib_confidence);
     EXPECT_DOUBLE_EQ(go_exp["go-external-thirdparty"].get<double>(),
                      k_go_external_thirdparty_confidence);
+
+    const auto& rust = meta["languages"]["rust"];
+    EXPECT_EQ(rust["scope"], "rust-use-mod-edges");
+    EXPECT_EQ(rust["provisional"], true);
+    EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal"].get<double>(),
+                     k_rust_use_internal_confidence);
 }
 
 // --- Digest integration ------------------------------------------------------
@@ -394,6 +439,58 @@ TEST(FidelityTest, FullJson_GoEdgesCarryStrategyAndConfidence)
     EXPECT_TRUE(saw_internal);
     EXPECT_TRUE(saw_stdlib);
     EXPECT_TRUE(saw_thirdparty);
+}
+
+TEST(FidelityTest, FullJson_RustEdgesCarryStrategyAndConfidence)
+{
+    CodeIndex index;
+
+    FileEntry lib;
+    lib.path_relative = "src/lib.rs";
+    lib.language = Language::Rust;
+    const std::int64_t lib_id = index.add_file(std::move(lib));
+
+    FileEntry foo;
+    foo.path_relative = "src/foo.rs";
+    foo.language = Language::Rust;
+    const std::int64_t foo_id = index.add_file(std::move(foo));
+
+    // `mod foo;` resolved to a sibling file -> rust-mod.
+    Dependency mod_dep;
+    mod_dep.source_file_id = lib_id;
+    mod_dep.target_file_id = foo_id;
+    mod_dep.import_string = "foo";
+    mod_dep.kind = "mod";
+
+    // `use serde::Serialize;` (use is always external today) -> rust-use-extern.
+    Dependency use_dep;
+    use_dep.source_file_id = lib_id;
+    use_dep.target_file_id = 0;
+    use_dep.import_string = "serde::Serialize";
+    use_dep.kind = "use";
+
+    const std::array<Dependency, 2> batch = {mod_dep, use_dep};
+    index.add_dependencies(batch);
+
+    const auto parsed =
+        nlohmann::json::parse(build_digest_string(index, make_options(DigestFormat::Json)));
+
+    bool saw_mod = false;
+    bool saw_use = false;
+    for (const auto& e : parsed["dependency_graph"]["edges"]) {
+        if (e["kind"] == "mod") {
+            saw_mod = true;
+            EXPECT_EQ(e["resolved_by"], "rust-mod");
+            EXPECT_DOUBLE_EQ(e["confidence"].get<double>(), k_rust_mod_confidence);
+        }
+        else if (e["kind"] == "use") {
+            saw_use = true;
+            EXPECT_EQ(e["resolved_by"], "rust-use-extern");
+            EXPECT_DOUBLE_EQ(e["confidence"].get<double>(), k_rust_use_extern_confidence);
+        }
+    }
+    EXPECT_TRUE(saw_mod);
+    EXPECT_TRUE(saw_use);
 }
 
 TEST(FidelityTest, BothFormats_CarryFidelityMetadata)
