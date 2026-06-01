@@ -147,6 +147,23 @@ inline constexpr double k_java_external_jdk_confidence = 0.97;        // 0/1215 
 inline constexpr double k_java_external_thirdparty_confidence = 0.96; // 0/1129 false-external
 inline constexpr double k_java_external_innertype_confidence = 0.75;  // 25% false-external
 
+/// Version pin for the C# calibration table below.
+inline constexpr std::string_view k_csharp_fidelity_version = "csharp-using-2026-06-01";
+
+// --- Calibration table (C# using edges) --------------------------------------
+//
+// Measured 2026-06-01 against 6 projects (~191k edges) with a source-parsed
+// namespace oracle. A `using` resolves by exact-namespace match against the
+// in-project namespace index (internal) or is external; externals split on
+// whether the first dotted segment is a framework root (System/Microsoft/…).
+// Internal was 100% precise; the third-party stratum carries a 13.7%
+// false-external rate (type-level usings — `using Some.Ns.TypeName;` — that
+// the namespace-keyed index can't resolve), so it is published lowest. Only
+// plain usings are captured (`using static` / aliased `using X =` are not).
+inline constexpr double k_cs_internal_confidence = 0.97;            // 173868/173868 correct
+inline constexpr double k_cs_external_system_confidence = 0.95;     // 2.1% false-external
+inline constexpr double k_cs_external_thirdparty_confidence = 0.85; // 13.7% false-external
+
 /// Reconstruct the resolution strategy string for one Python import
 /// edge, mirroring the Stage-1 harness:
 ///   - relative iff `import_string` begins with '.', else dotted;
@@ -225,6 +242,17 @@ inline constexpr double k_java_external_innertype_confidence = 0.75;  // 25% fal
 /// Calibrated precision for a `reconstruct_java_resolved_by` strategy.
 /// Unknown strategies return 0.0 (fail closed).
 [[nodiscard]] double java_edge_confidence(std::string_view strategy);
+
+/// Reconstruct the resolution strategy for one C# `using` edge:
+/// `csharp-internal` (resolved); else `csharp-external-system` if the first
+/// dotted segment is a framework root (System/Microsoft/Windows/Mono/Internal),
+/// else `csharp-external-thirdparty`.
+[[nodiscard]] std::string reconstruct_csharp_resolved_by(std::string_view import_string,
+                                                         bool is_external);
+
+/// Calibrated precision for a `reconstruct_csharp_resolved_by` strategy.
+/// Unknown strategies return 0.0 (fail closed).
+[[nodiscard]] double csharp_edge_confidence(std::string_view strategy);
 
 /// One edge's reconstructed resolution strategy plus its calibrated
 /// precision. Returned by `reconstruct_edge_fidelity`.

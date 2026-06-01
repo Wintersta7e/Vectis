@@ -57,12 +57,22 @@ constexpr std::string_view k_strategy_java_external_jdk = "java-external-jdk";
 constexpr std::string_view k_strategy_java_external_thirdparty = "java-external-thirdparty";
 constexpr std::string_view k_strategy_java_external_innertype = "java-external-innertype";
 
+// C# strata: internal (exact namespace-index match) vs external split by a
+// framework-root first segment.
+constexpr std::string_view k_strategy_cs_internal = "csharp-internal";
+constexpr std::string_view k_strategy_cs_external_system = "csharp-external-system";
+constexpr std::string_view k_strategy_cs_external_thirdparty = "csharp-external-thirdparty";
+
 // Source-file extension sets for languages whose edge `kind` is shared with
 // other languages (so dispatch must gate on extension).
 constexpr std::array<std::string_view, 10> k_c_cpp_exts = {".c",   ".h",  ".cc",  ".cpp", ".cxx",
                                                            ".hpp", ".hh", ".hxx", ".inl", ".ipp"};
 constexpr std::array<std::string_view, 6> k_jsts_exts = {".ts",  ".tsx", ".js",
                                                          ".jsx", ".mjs", ".cjs"};
+// .NET framework namespace roots: a first segment in this set marks a
+// standard-library/framework using rather than a third-party one.
+constexpr std::array<std::string_view, 5> k_csharp_framework_roots = {
+    "System", "Microsoft", "Windows", "Mono", "Internal"};
 
 /// True if `path` names a Python package init file (`__init__.py`),
 /// which distinguishes a package-resolved import from a module one.
@@ -317,6 +327,32 @@ double java_edge_confidence(std::string_view strategy)
     return 0.0; // fail closed
 }
 
+std::string reconstruct_csharp_resolved_by(std::string_view import_string, bool is_external)
+{
+    if (!is_external) {
+        return std::string{k_strategy_cs_internal};
+    }
+    const std::string_view first = import_string.substr(0, import_string.find('.'));
+    const bool framework =
+        std::ranges::find(k_csharp_framework_roots, first) != k_csharp_framework_roots.end();
+    return std::string{framework ? k_strategy_cs_external_system
+                                 : k_strategy_cs_external_thirdparty};
+}
+
+double csharp_edge_confidence(std::string_view strategy)
+{
+    if (strategy == k_strategy_cs_internal) {
+        return k_cs_internal_confidence;
+    }
+    if (strategy == k_strategy_cs_external_system) {
+        return k_cs_external_system_confidence;
+    }
+    if (strategy == k_strategy_cs_external_thirdparty) {
+        return k_cs_external_thirdparty_confidence;
+    }
+    return 0.0; // fail closed
+}
+
 std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
                                                       std::string_view kind,
                                                       std::string_view import_string,
@@ -352,6 +388,10 @@ std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_pa
     if (kind == "import" && ends_with(source_path, ".java")) {
         const std::string strategy = reconstruct_java_resolved_by(import_string, is_external);
         return EdgeFidelity{strategy, java_edge_confidence(strategy)};
+    }
+    if (kind == "use" && ends_with(source_path, ".cs")) {
+        const std::string strategy = reconstruct_csharp_resolved_by(import_string, is_external);
+        return EdgeFidelity{strategy, csharp_edge_confidence(strategy)};
     }
     return std::nullopt;
 }
@@ -516,6 +556,29 @@ namespace {
     return java;
 }
 
+/// Per-language fidelity sub-block for C# using edges.
+[[nodiscard]] nlohmann::json build_csharp_fidelity_json()
+{
+    nlohmann::json cs;
+    cs["version"] = std::string{k_csharp_fidelity_version};
+    cs["scope"] = "csharp-using-edges";
+    cs["method"] = "per-strategy precision / false-external rate vs source-derived "
+                   "namespace oracle (offline); using static / aliased using not captured";
+    cs["provisional"] = true;
+
+    nlohmann::json corpus;
+    corpus["projects"] = 6;
+    corpus["labeled_edges"] = 191526;
+    cs["corpus"] = std::move(corpus);
+
+    nlohmann::json expected;
+    expected[std::string{k_strategy_cs_internal}] = k_cs_internal_confidence;
+    expected[std::string{k_strategy_cs_external_system}] = k_cs_external_system_confidence;
+    expected[std::string{k_strategy_cs_external_thirdparty}] = k_cs_external_thirdparty_confidence;
+    cs["expected_precision"] = std::move(expected);
+    return cs;
+}
+
 } // namespace
 
 nlohmann::json build_fidelity_metadata_json()
@@ -538,6 +601,7 @@ nlohmann::json build_fidelity_metadata_json()
     languages["javascript"] = jsts;
     languages["typescript"] = jsts;
     languages["java"] = build_java_fidelity_json();
+    languages["csharp"] = build_csharp_fidelity_json();
     meta["languages"] = std::move(languages);
     return meta;
 }

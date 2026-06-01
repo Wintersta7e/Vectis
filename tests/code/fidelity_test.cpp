@@ -17,6 +17,7 @@ using vectis::code::build_digest_string;
 using vectis::code::build_fidelity_metadata_json;
 using vectis::code::c_cpp_edge_confidence;
 using vectis::code::CodeIndex;
+using vectis::code::csharp_edge_confidence;
 using vectis::code::Dependency;
 using vectis::code::DigestFormat;
 using vectis::code::EdgeFidelity;
@@ -29,6 +30,9 @@ using vectis::code::k_cinclude_external_bare_confidence;
 using vectis::code::k_cinclude_external_path_confidence;
 using vectis::code::k_cinclude_resolved_bare_confidence;
 using vectis::code::k_cinclude_resolved_path_confidence;
+using vectis::code::k_cs_external_system_confidence;
+using vectis::code::k_cs_external_thirdparty_confidence;
+using vectis::code::k_cs_internal_confidence;
 using vectis::code::k_go_external_stdlib_confidence;
 using vectis::code::k_go_external_thirdparty_confidence;
 using vectis::code::k_go_internal_confidence;
@@ -52,6 +56,7 @@ using vectis::code::k_rust_use_std_confidence;
 using vectis::code::Language;
 using vectis::code::python_edge_confidence;
 using vectis::code::reconstruct_c_cpp_resolved_by;
+using vectis::code::reconstruct_csharp_resolved_by;
 using vectis::code::reconstruct_edge_fidelity;
 using vectis::code::reconstruct_go_resolved_by;
 using vectis::code::reconstruct_java_resolved_by;
@@ -212,6 +217,18 @@ TEST(FidelityTest, Reconstruct_Java)
               "java-external-innertype");
 }
 
+TEST(FidelityTest, Reconstruct_Csharp)
+{
+    EXPECT_EQ(reconstruct_csharp_resolved_by("MyApp.Services", /*is_external=*/false),
+              "csharp-internal");
+    EXPECT_EQ(reconstruct_csharp_resolved_by("System.Text", /*is_external=*/true),
+              "csharp-external-system");
+    EXPECT_EQ(reconstruct_csharp_resolved_by("Microsoft.Extensions.Logging", /*is_external=*/true),
+              "csharp-external-system");
+    EXPECT_EQ(reconstruct_csharp_resolved_by("Newtonsoft.Json", /*is_external=*/true),
+              "csharp-external-thirdparty");
+}
+
 // --- Confidence lookup -------------------------------------------------------
 
 TEST(FidelityTest, Confidence_ResolvedStrategies)
@@ -300,6 +317,16 @@ TEST(FidelityTest, Confidence_JavaStrategies)
     EXPECT_DOUBLE_EQ(java_edge_confidence("java-external-innertype"),
                      k_java_external_innertype_confidence);
     EXPECT_DOUBLE_EQ(java_edge_confidence("not-a-strategy"), 0.0);
+}
+
+TEST(FidelityTest, Confidence_CsharpStrategies)
+{
+    EXPECT_DOUBLE_EQ(csharp_edge_confidence("csharp-internal"), k_cs_internal_confidence);
+    EXPECT_DOUBLE_EQ(csharp_edge_confidence("csharp-external-system"),
+                     k_cs_external_system_confidence);
+    EXPECT_DOUBLE_EQ(csharp_edge_confidence("csharp-external-thirdparty"),
+                     k_cs_external_thirdparty_confidence);
+    EXPECT_DOUBLE_EQ(csharp_edge_confidence("not-a-strategy"), 0.0);
 }
 
 // --- Dispatcher --------------------------------------------------------------
@@ -392,6 +419,12 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     EXPECT_EQ(java["provisional"], true);
     EXPECT_DOUBLE_EQ(java["expected_precision"]["java-external-innertype"].get<double>(),
                      k_java_external_innertype_confidence);
+
+    const auto& cs = meta["languages"]["csharp"];
+    EXPECT_EQ(cs["scope"], "csharp-using-edges");
+    EXPECT_EQ(cs["provisional"], true);
+    EXPECT_DOUBLE_EQ(cs["expected_precision"]["csharp-external-thirdparty"].get<double>(),
+                     k_cs_external_thirdparty_confidence);
 }
 
 // --- Digest integration ------------------------------------------------------
