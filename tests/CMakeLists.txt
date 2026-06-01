@@ -18,6 +18,7 @@ add_executable(vectis_tests
     code/dependency_graph_test.cpp
     code/dependency_resolver_test.cpp
     code/digest_exporter_test.cpp
+    code/fidelity_test.cpp
     code/dotnet_project_test.cpp
     code/explain_test.cpp
     code/fixtures_test.cpp

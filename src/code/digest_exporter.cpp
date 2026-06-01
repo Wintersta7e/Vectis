@@ -9,6 +9,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <unordered_map>
 #include <utility>
@@ -20,6 +21,7 @@
 #include "code/code_index.h"
 #include "code/dependency.h"
 #include "code/dependency_graph.h"
+#include "code/fidelity.h"
 #include "code/hotspot_detector.h"
 #include "code/language.h"
 #include "code/pagerank.h"
@@ -205,12 +207,22 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     return it == lookup.end() ? std::string{} : it->second;
 }
 
+/// True if `path` names a Python source file. Used to gate the
+/// fidelity enrichment (resolved_by / confidence) to Python edges only.
+[[nodiscard]] bool ends_with_py(std::string_view path)
+{
+    constexpr std::string_view k_ext = ".py";
+    return path.size() >= k_ext.size() && path.substr(path.size() - k_ext.size()) == k_ext;
+}
+
 /// Build the dependency_graph JSON block.
 /// When `include_file_details` is true (full format):
 /// - `edges`: object-shaped `{source, target, kind, …}` where source/target are
 ///   relative paths. External edges set `target` to null and carry the raw import
 ///   string in `target_external`. Internal edges with a non-empty `import_string`
-///   also carry `import_ref` — the raw token the resolver consumed.
+///   also carry `import_ref` — the raw token the resolver consumed. Python
+///   import edges additionally carry `resolved_by` (reconstructed strategy) and
+///   `confidence` (calibrated precision) — see code/fidelity.h.
 /// - `cycles`: array of arrays of paths, one per detected cycle.
 /// When `include_file_details` is false (slim format):
 /// - `edges`: positional 4-tuple `[source_file_id, target_file_id|null,
@@ -244,21 +256,35 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
             if (!dep.kind.empty()) {
                 ++by_kind[dep.kind];
             }
+            const std::string source_path = path_for(lookup, dep.source_file_id);
+            const bool is_external = dep.target_file_id == 0;
+            std::string target_path;
             nlohmann::json edge;
-            edge["source"] = path_for(lookup, dep.source_file_id);
-            if (dep.target_file_id == 0) {
+            edge["source"] = source_path;
+            if (is_external) {
                 ++external_count;
                 edge["target"] = nullptr;
                 edge["target_external"] = dep.import_string;
             }
             else {
                 ++internal_count;
-                edge["target"] = path_for(lookup, dep.target_file_id);
+                target_path = path_for(lookup, dep.target_file_id);
+                edge["target"] = target_path;
                 if (!dep.import_string.empty()) {
                     edge["import_ref"] = dep.import_string;
                 }
             }
             edge["kind"] = dep.kind;
+            // Python import edges carry a reconstructed resolution
+            // strategy + calibrated confidence (see code/fidelity.h).
+            // Computed purely from existing edge data; other languages
+            // and edge kinds are left untouched.
+            if (dep.kind == "import" && ends_with_py(source_path)) {
+                const std::string strategy =
+                    reconstruct_python_resolved_by(dep.import_string, target_path, is_external);
+                edge["resolved_by"] = strategy;
+                edge["confidence"] = python_edge_confidence(strategy);
+            }
             edges_array.push_back(std::move(edge));
         }
     }
@@ -630,6 +656,13 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     // Architecture is cheap (~150 bytes) and the single highest-value
     // orientation signal — worth emitting in both slim and full.
     root["architecture"] = build_architecture_json(index, options);
+
+    // Per-strategy fidelity calibration for Python import edges. The
+    // block is tiny, so both slim and full carry it; the per-edge
+    // confidence/resolved_by fields, by contrast, are full-only (slim
+    // edge tuples stay frozen at their schema version).
+    root["fidelity_metadata"] = build_fidelity_metadata_json();
+
     if (include_file_details) {
         root["hotspots"] = build_hotspots_json(index, files_span, lookup, options.project_root,
                                                /*include_excerpts=*/true,

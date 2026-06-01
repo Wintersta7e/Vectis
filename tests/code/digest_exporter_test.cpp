@@ -650,9 +650,13 @@ TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
     const std::string slim =
         build_digest_string(index, make_options(DigestFormat::SlimJson, "/fake/project"));
 
-    // With 5 deps and compact tuple encoding, slim should drop well
-    // under 45% of full on the same input (measured ~41.6%).
-    EXPECT_LT(slim.size(), static_cast<std::size_t>(static_cast<double>(full.size()) * 0.45))
+    // With 5 deps and compact tuple encoding, slim stays well under
+    // full on the same input (measured ~47.7%). Both formats now carry
+    // the fixed-size `fidelity_metadata` block, which is a constant
+    // additive cost on each side and so nudges the ratio up; the slim
+    // win still holds with margin since the block doesn't scale with
+    // edge count.
+    EXPECT_LT(slim.size(), static_cast<std::size_t>(static_cast<double>(full.size()) * 0.55))
         << "slim=" << slim.size() << " full=" << full.size();
 }
 
