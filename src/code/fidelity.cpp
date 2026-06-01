@@ -49,6 +49,14 @@ constexpr std::string_view k_strategy_jsts_relative_unresolved = "jsts-relative-
 constexpr std::string_view k_strategy_jsts_alias_unresolved = "jsts-alias-unresolved";
 constexpr std::string_view k_strategy_jsts_bare_external = "jsts-bare-external";
 
+// Java strata: resolved class vs bare-package (wildcard); external split into
+// JDK, plain third-party, and inner-type/static imports.
+constexpr std::string_view k_strategy_java_dotted_resolved = "java-dotted-resolved";
+constexpr std::string_view k_strategy_java_wildcard_resolved = "java-wildcard-resolved";
+constexpr std::string_view k_strategy_java_external_jdk = "java-external-jdk";
+constexpr std::string_view k_strategy_java_external_thirdparty = "java-external-thirdparty";
+constexpr std::string_view k_strategy_java_external_innertype = "java-external-innertype";
+
 // Source-file extension sets for languages whose edge `kind` is shared with
 // other languages (so dispatch must gate on extension).
 constexpr std::array<std::string_view, 10> k_c_cpp_exts = {".c",   ".h",  ".cc",  ".cpp", ".cxx",
@@ -76,6 +84,26 @@ constexpr std::array<std::string_view, 6> k_jsts_exts = {".ts",  ".tsx", ".js",
 [[nodiscard]] bool ends_with_any(std::string_view path, std::span<const std::string_view> exts)
 {
     return std::ranges::any_of(exts, [path](std::string_view e) { return ends_with(path, e); });
+}
+
+/// True if `s` starts with an ASCII uppercase letter. Java convention:
+/// type names are PascalCase, package segments lowercase.
+[[nodiscard]] bool starts_upper(std::string_view s)
+{
+    return !s.empty() && s.front() >= 'A' && s.front() <= 'Z';
+}
+
+/// The dotted segment immediately before the last (e.g. `Outer` in
+/// `pkg.Outer.Inner`); empty if the string has fewer than two segments.
+[[nodiscard]] std::string_view second_last_dotted_segment(std::string_view s)
+{
+    const auto last_dot = s.rfind('.');
+    if (last_dot == std::string_view::npos || last_dot == 0) {
+        return {};
+    }
+    const auto prev_dot = s.rfind('.', last_dot - 1);
+    const std::size_t start = (prev_dot == std::string_view::npos) ? 0 : prev_dot + 1;
+    return s.substr(start, last_dot - start);
 }
 
 } // namespace
@@ -245,6 +273,50 @@ double jsts_edge_confidence(std::string_view strategy)
     return 0.0; // fail closed
 }
 
+std::string reconstruct_java_resolved_by(std::string_view import_string, bool is_external)
+{
+    if (!is_external) {
+        // Last segment lowercase => a bare package (wildcard, resolved via the
+        // namespace index); Uppercase => a specific class. The trailing `.*`
+        // of a wildcard is dropped at parse, so this is the only signal.
+        const auto last_dot = import_string.rfind('.');
+        const std::string_view last =
+            last_dot == std::string_view::npos ? import_string : import_string.substr(last_dot + 1);
+        return std::string{starts_upper(last) ? k_strategy_java_dotted_resolved
+                                              : k_strategy_java_wildcard_resolved};
+    }
+    const std::string_view first = import_string.substr(0, import_string.find('.'));
+    if (first == "java" || first == "javax") {
+        return std::string{k_strategy_java_external_jdk};
+    }
+    // Non-JDK: an inner-type or static import (`Outer.Inner`) has an Uppercase
+    // second-to-last segment — the one genuinely low-precision external class.
+    if (starts_upper(second_last_dotted_segment(import_string))) {
+        return std::string{k_strategy_java_external_innertype};
+    }
+    return std::string{k_strategy_java_external_thirdparty};
+}
+
+double java_edge_confidence(std::string_view strategy)
+{
+    if (strategy == k_strategy_java_dotted_resolved) {
+        return k_java_dotted_resolved_confidence;
+    }
+    if (strategy == k_strategy_java_wildcard_resolved) {
+        return k_java_wildcard_resolved_confidence;
+    }
+    if (strategy == k_strategy_java_external_jdk) {
+        return k_java_external_jdk_confidence;
+    }
+    if (strategy == k_strategy_java_external_thirdparty) {
+        return k_java_external_thirdparty_confidence;
+    }
+    if (strategy == k_strategy_java_external_innertype) {
+        return k_java_external_innertype_confidence;
+    }
+    return 0.0; // fail closed
+}
+
 std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
                                                       std::string_view kind,
                                                       std::string_view import_string,
@@ -276,6 +348,10 @@ std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_pa
     if ((kind == "import" || kind == "require") && ends_with_any(source_path, k_jsts_exts)) {
         const std::string strategy = reconstruct_jsts_resolved_by(import_string, is_external);
         return EdgeFidelity{strategy, jsts_edge_confidence(strategy)};
+    }
+    if (kind == "import" && ends_with(source_path, ".java")) {
+        const std::string strategy = reconstruct_java_resolved_by(import_string, is_external);
+        return EdgeFidelity{strategy, java_edge_confidence(strategy)};
     }
     return std::nullopt;
 }
@@ -413,6 +489,33 @@ namespace {
     return jsts;
 }
 
+/// Per-language fidelity sub-block for Java import edges.
+[[nodiscard]] nlohmann::json build_java_fidelity_json()
+{
+    nlohmann::json java;
+    java["version"] = std::string{k_java_fidelity_version};
+    java["scope"] = "java-import-edges";
+    java["method"] = "per-strategy precision vs source-parsed FQCN/package oracle + "
+                     "Maven/Gradle dep check (offline)";
+    java["provisional"] = true;
+
+    nlohmann::json corpus;
+    corpus["projects"] = 3;
+    corpus["labeled_edges"] = 3949;
+    java["corpus"] = std::move(corpus);
+
+    nlohmann::json expected;
+    expected[std::string{k_strategy_java_dotted_resolved}] = k_java_dotted_resolved_confidence;
+    expected[std::string{k_strategy_java_wildcard_resolved}] = k_java_wildcard_resolved_confidence;
+    expected[std::string{k_strategy_java_external_jdk}] = k_java_external_jdk_confidence;
+    expected[std::string{k_strategy_java_external_thirdparty}] =
+        k_java_external_thirdparty_confidence;
+    expected[std::string{k_strategy_java_external_innertype}] =
+        k_java_external_innertype_confidence;
+    java["expected_precision"] = std::move(expected);
+    return java;
+}
+
 } // namespace
 
 nlohmann::json build_fidelity_metadata_json()
@@ -434,6 +537,7 @@ nlohmann::json build_fidelity_metadata_json()
     const nlohmann::json jsts = build_jsts_fidelity_json();
     languages["javascript"] = jsts;
     languages["typescript"] = jsts;
+    languages["java"] = build_java_fidelity_json();
     meta["languages"] = std::move(languages);
     return meta;
 }

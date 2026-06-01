@@ -23,6 +23,7 @@ using vectis::code::EdgeFidelity;
 using vectis::code::ExportOptions;
 using vectis::code::FileEntry;
 using vectis::code::go_edge_confidence;
+using vectis::code::java_edge_confidence;
 using vectis::code::jsts_edge_confidence;
 using vectis::code::k_cinclude_external_bare_confidence;
 using vectis::code::k_cinclude_external_path_confidence;
@@ -31,6 +32,11 @@ using vectis::code::k_cinclude_resolved_path_confidence;
 using vectis::code::k_go_external_stdlib_confidence;
 using vectis::code::k_go_external_thirdparty_confidence;
 using vectis::code::k_go_internal_confidence;
+using vectis::code::k_java_dotted_resolved_confidence;
+using vectis::code::k_java_external_innertype_confidence;
+using vectis::code::k_java_external_jdk_confidence;
+using vectis::code::k_java_external_thirdparty_confidence;
+using vectis::code::k_java_wildcard_resolved_confidence;
 using vectis::code::k_jsts_alias_unresolved_confidence;
 using vectis::code::k_jsts_bare_external_confidence;
 using vectis::code::k_jsts_relative_resolved_confidence;
@@ -48,6 +54,7 @@ using vectis::code::python_edge_confidence;
 using vectis::code::reconstruct_c_cpp_resolved_by;
 using vectis::code::reconstruct_edge_fidelity;
 using vectis::code::reconstruct_go_resolved_by;
+using vectis::code::reconstruct_java_resolved_by;
 using vectis::code::reconstruct_jsts_resolved_by;
 using vectis::code::reconstruct_python_resolved_by;
 using vectis::code::reconstruct_rust_resolved_by;
@@ -183,6 +190,28 @@ TEST(FidelityTest, Reconstruct_Jsts)
     EXPECT_EQ(reconstruct_jsts_resolved_by("react", /*is_external=*/true), "jsts-bare-external");
 }
 
+TEST(FidelityTest, Reconstruct_Java)
+{
+    // Resolved: last segment Uppercase = specific class; lowercase = bare
+    // package (the wildcard case, since `.*` is dropped at parse).
+    EXPECT_EQ(reconstruct_java_resolved_by("com.app.Owner", /*is_external=*/false),
+              "java-dotted-resolved");
+    EXPECT_EQ(reconstruct_java_resolved_by("com.app.model", /*is_external=*/false),
+              "java-wildcard-resolved");
+    // External: JDK takes precedence (even for JDK inner types, which are
+    // reliably external); non-JDK Outer.Inner = innertype; else third-party.
+    EXPECT_EQ(reconstruct_java_resolved_by("java.util.List", /*is_external=*/true),
+              "java-external-jdk");
+    EXPECT_EQ(reconstruct_java_resolved_by("java.util.Map.Entry", /*is_external=*/true),
+              "java-external-jdk");
+    EXPECT_EQ(reconstruct_java_resolved_by("org.springframework.web.bind.annotation.RestController",
+                                           /*is_external=*/true),
+              "java-external-thirdparty");
+    EXPECT_EQ(reconstruct_java_resolved_by("com.google.gson.stream.JsonScope.EMPTY_ARRAY",
+                                           /*is_external=*/true),
+              "java-external-innertype");
+}
+
 // --- Confidence lookup -------------------------------------------------------
 
 TEST(FidelityTest, Confidence_ResolvedStrategies)
@@ -257,6 +286,20 @@ TEST(FidelityTest, Confidence_JstsStrategies)
                      k_jsts_alias_unresolved_confidence);
     EXPECT_DOUBLE_EQ(jsts_edge_confidence("jsts-bare-external"), k_jsts_bare_external_confidence);
     EXPECT_DOUBLE_EQ(jsts_edge_confidence("not-a-strategy"), 0.0);
+}
+
+TEST(FidelityTest, Confidence_JavaStrategies)
+{
+    EXPECT_DOUBLE_EQ(java_edge_confidence("java-dotted-resolved"),
+                     k_java_dotted_resolved_confidence);
+    EXPECT_DOUBLE_EQ(java_edge_confidence("java-wildcard-resolved"),
+                     k_java_wildcard_resolved_confidence);
+    EXPECT_DOUBLE_EQ(java_edge_confidence("java-external-jdk"), k_java_external_jdk_confidence);
+    EXPECT_DOUBLE_EQ(java_edge_confidence("java-external-thirdparty"),
+                     k_java_external_thirdparty_confidence);
+    EXPECT_DOUBLE_EQ(java_edge_confidence("java-external-innertype"),
+                     k_java_external_innertype_confidence);
+    EXPECT_DOUBLE_EQ(java_edge_confidence("not-a-strategy"), 0.0);
 }
 
 // --- Dispatcher --------------------------------------------------------------
@@ -343,6 +386,12 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     EXPECT_EQ(jsts["provisional"], true);
     EXPECT_DOUBLE_EQ(jsts["expected_precision"]["jsts-alias-unresolved"].get<double>(),
                      k_jsts_alias_unresolved_confidence);
+
+    const auto& java = meta["languages"]["java"];
+    EXPECT_EQ(java["scope"], "java-import-edges");
+    EXPECT_EQ(java["provisional"], true);
+    EXPECT_DOUBLE_EQ(java["expected_precision"]["java-external-innertype"].get<double>(),
+                     k_java_external_innertype_confidence);
 }
 
 // --- Digest integration ------------------------------------------------------

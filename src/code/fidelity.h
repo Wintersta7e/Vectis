@@ -127,6 +127,26 @@ inline constexpr double k_jsts_relative_unresolved_confidence = 0.90; // 0/40 fa
 inline constexpr double k_jsts_alias_unresolved_confidence = 0.05; // 40/40 actually resolve in-tree
 inline constexpr double k_jsts_bare_external_confidence = 0.90; // ~5% false-external (word-aliases)
 
+/// Version pin for the Java calibration table below.
+inline constexpr std::string_view k_java_fidelity_version = "java-import-2026-06-01";
+
+// --- Calibration table (Java import edges) -----------------------------------
+//
+// Measured 2026-06-01 against 3 projects (~3.9k edges) with a source-parsed
+// FQCN/package oracle + Maven/Gradle dep check. Resolved imports are a
+// specific class (last dotted segment is Uppercase) or a bare package
+// resolved via the namespace index (last segment lowercase — the wildcard
+// case, since the trailing `.*` is dropped at parse). Externals split into
+// JDK (`java.`/`javax.`), plain third-party, and inner-type/static imports
+// (`Outer.Inner`, second-to-last segment Uppercase) — the last is the one
+// genuinely low-precision case (25% are in-project types the FQCN→file
+// lookup misses).
+inline constexpr double k_java_dotted_resolved_confidence = 0.95;     // 1176/1176 correct
+inline constexpr double k_java_wildcard_resolved_confidence = 0.90;   // 33/33; thin, 1 project
+inline constexpr double k_java_external_jdk_confidence = 0.97;        // 0/1215 false-external
+inline constexpr double k_java_external_thirdparty_confidence = 0.96; // 0/1129 false-external
+inline constexpr double k_java_external_innertype_confidence = 0.75;  // 25% false-external
+
 /// Reconstruct the resolution strategy string for one Python import
 /// edge, mirroring the Stage-1 harness:
 ///   - relative iff `import_string` begins with '.', else dotted;
@@ -192,6 +212,19 @@ inline constexpr double k_jsts_bare_external_confidence = 0.90; // ~5% false-ext
 /// Calibrated precision for a `reconstruct_jsts_resolved_by` strategy.
 /// Unknown strategies return 0.0 (fail closed).
 [[nodiscard]] double jsts_edge_confidence(std::string_view strategy);
+
+/// Reconstruct the resolution strategy for one Java `import` edge. Resolved:
+/// `java-wildcard-resolved` if the last dotted segment is lowercase (a bare
+/// package), else `java-dotted-resolved` (a specific class). External:
+/// `java-external-jdk` (`java.`/`javax.`); else `java-external-innertype`
+/// (an `Outer.Inner`/static import — second-to-last segment Uppercase),
+/// else `java-external-thirdparty`.
+[[nodiscard]] std::string reconstruct_java_resolved_by(std::string_view import_string,
+                                                       bool is_external);
+
+/// Calibrated precision for a `reconstruct_java_resolved_by` strategy.
+/// Unknown strategies return 0.0 (fail closed).
+[[nodiscard]] double java_edge_confidence(std::string_view strategy);
 
 /// One edge's reconstructed resolution strategy plus its calibrated
 /// precision. Returned by `reconstruct_edge_fidelity`.

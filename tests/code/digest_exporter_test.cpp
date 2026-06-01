@@ -5,6 +5,7 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
@@ -645,17 +646,38 @@ TEST(DigestExporterTest, SlimJson_IsSmallerThanFullJson)
     const std::array<Dependency, 5> batch = {a, b, c, d, e};
     index.add_dependencies(batch);
 
+    // Add many resolved internal edges so the per-edge encoding (verbose
+    // objects in full vs positional tuples in slim) — slim's actual win —
+    // dominates the comparison. The `fidelity_metadata` block is a fixed
+    // additive cost on both sides and grows with each calibrated language;
+    // a toy fixture would let that constant swamp the per-edge savings, so
+    // the test measures the property that genuinely scales.
+    std::vector<std::int64_t> ids;
+    for (int i = 0; i < 60; ++i) {
+        FileEntry f;
+        f.path_relative = "src/mod" + std::to_string(i) + ".py";
+        f.language = Language::Python;
+        ids.push_back(index.add_file(std::move(f)));
+    }
+    std::vector<Dependency> many;
+    for (std::size_t i = 1; i < ids.size(); ++i) {
+        Dependency dep;
+        dep.source_file_id = ids[i];
+        dep.target_file_id = ids[i - 1];
+        dep.kind = "import";
+        dep.import_string = "mod" + std::to_string(i - 1);
+        many.push_back(dep);
+    }
+    index.add_dependencies(many);
+
     const std::string full =
         build_digest_string(index, make_options(DigestFormat::Json, "/fake/project"));
     const std::string slim =
         build_digest_string(index, make_options(DigestFormat::SlimJson, "/fake/project"));
 
-    // With 5 deps and compact tuple encoding, slim stays well under
-    // full on the same input (measured ~47.7%). Both formats now carry
-    // the fixed-size `fidelity_metadata` block, which is a constant
-    // additive cost on each side and so nudges the ratio up; the slim
-    // win still holds with margin since the block doesn't scale with
-    // edge count.
+    // Slim's positional tuples are far more compact than full's object edges;
+    // with a representative edge count the win is large and stable regardless
+    // of how many languages the fixed metadata block carries.
     EXPECT_LT(slim.size(), static_cast<std::size_t>(static_cast<double>(full.size()) * 0.55))
         << "slim=" << slim.size() << " full=" << full.size();
 }
