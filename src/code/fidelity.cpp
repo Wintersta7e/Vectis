@@ -18,6 +18,12 @@ constexpr std::string_view k_strategy_dotted_package = "dotted-package";
 constexpr std::string_view k_strategy_external_relative = "external-relative";
 constexpr std::string_view k_strategy_external_dotted = "external-dotted";
 
+// Go strata: internal (resolved via go.mod prefix) vs external split into
+// standard-library and third-party by the first import path segment.
+constexpr std::string_view k_strategy_go_internal = "go-internal";
+constexpr std::string_view k_strategy_go_external_stdlib = "go-external-stdlib";
+constexpr std::string_view k_strategy_go_external_thirdparty = "go-external-thirdparty";
+
 /// True if `path` names a Python package init file (`__init__.py`),
 /// which distinguishes a package-resolved import from a module one.
 [[nodiscard]] bool ends_with_init_py(std::string_view path)
@@ -64,18 +70,49 @@ double python_edge_confidence(std::string_view strategy)
     return 0.0;
 }
 
-nlohmann::json build_fidelity_metadata_json()
+std::string reconstruct_go_resolved_by(std::string_view import_string, bool is_external)
 {
-    nlohmann::json meta;
-    meta["version"] = std::string{k_python_fidelity_version};
-    meta["method"] = "per-strategy empirical precision vs manual ground truth (offline)";
-    meta["scope"] = "python-import-edges";
-    meta["provisional"] = true;
+    if (!is_external) {
+        return std::string{k_strategy_go_internal};
+    }
+    // External: standard-library iff the first path segment carries no '.';
+    // third-party otherwise (a domain-prefixed module path, github.com/...).
+    const std::string_view first = import_string.substr(0, import_string.find('/'));
+    const bool thirdparty = first.find('.') != std::string_view::npos;
+    return std::string{thirdparty ? k_strategy_go_external_thirdparty
+                                  : k_strategy_go_external_stdlib};
+}
+
+double go_edge_confidence(std::string_view strategy)
+{
+    if (strategy == k_strategy_go_internal) {
+        return k_go_internal_confidence;
+    }
+    if (strategy == k_strategy_go_external_stdlib) {
+        return k_go_external_stdlib_confidence;
+    }
+    if (strategy == k_strategy_go_external_thirdparty) {
+        return k_go_external_thirdparty_confidence;
+    }
+    // Unknown strategy: fail closed rather than inherit a neighbour's number,
+    // mirroring python_edge_confidence.
+    return 0.0;
+}
+
+namespace {
+
+/// Per-language fidelity sub-block for Python import edges.
+[[nodiscard]] nlohmann::json build_python_fidelity_json()
+{
+    nlohmann::json py;
+    py["version"] = std::string{k_python_fidelity_version};
+    py["scope"] = "python-import-edges";
+    py["method"] = "per-strategy empirical precision vs manual ground truth (offline)";
 
     nlohmann::json corpus;
     corpus["projects"] = 2;
     corpus["labeled_edges"] = 112;
-    meta["corpus"] = std::move(corpus);
+    py["corpus"] = std::move(corpus);
 
     nlohmann::json expected;
     expected[std::string{k_strategy_relative_module}] = k_py_resolved_confidence;
@@ -84,10 +121,47 @@ nlohmann::json build_fidelity_metadata_json()
     expected[std::string{k_strategy_dotted_package}] = k_py_resolved_confidence;
     expected[std::string{k_strategy_external_relative}] = k_py_external_relative_confidence;
     expected[std::string{k_strategy_external_dotted}] = k_py_external_dotted_confidence;
-    meta["expected_precision"] = std::move(expected);
+    py["expected_precision"] = std::move(expected);
+    return py;
+}
 
+/// Per-language fidelity sub-block for Go import edges.
+[[nodiscard]] nlohmann::json build_go_fidelity_json()
+{
+    nlohmann::json go;
+    go["version"] = std::string{k_go_fidelity_version};
+    go["scope"] = "go-import-edges";
+    go["method"] = "per-strategy precision vs go.mod spec oracle + anomaly review (offline)";
+
+    nlohmann::json corpus;
+    corpus["projects"] = 3;
+    corpus["labeled_edges"] = 90;
+    go["corpus"] = std::move(corpus);
+
+    nlohmann::json expected;
+    expected[std::string{k_strategy_go_internal}] = k_go_internal_confidence;
+    expected[std::string{k_strategy_go_external_stdlib}] = k_go_external_stdlib_confidence;
+    expected[std::string{k_strategy_go_external_thirdparty}] = k_go_external_thirdparty_confidence;
+    go["expected_precision"] = std::move(expected);
+    return go;
+}
+
+} // namespace
+
+nlohmann::json build_fidelity_metadata_json()
+{
+    // Shared across languages: the small-corpus disclaimer applies to every
+    // stratum. Per-language version / scope / method / corpus live under
+    // `languages` so each can be recalibrated independently.
+    nlohmann::json meta;
+    meta["provisional"] = true;
     meta["caveat"] = "distribution-level expected reliability for repos resembling the "
                      "calibration corpus; NOT a per-repo guarantee";
+
+    nlohmann::json languages;
+    languages["python"] = build_python_fidelity_json();
+    languages["go"] = build_go_fidelity_json();
+    meta["languages"] = std::move(languages);
     return meta;
 }
 

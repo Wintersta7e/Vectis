@@ -7,15 +7,16 @@
 
 namespace vectis::code {
 
-/// Per-edge resolution-fidelity model for Python `import` edges.
+/// Per-edge resolution-fidelity model for Python and Go `import` edges.
 ///
-/// Vectis's resolver records *whether* a Python import resolved to a
-/// file inside the project, but not *how confident* that resolution is.
+/// Vectis's resolver records *whether* an import resolved to a file
+/// inside the project, but not *how confident* that resolution is.
 /// This module reconstructs the resolution strategy from the edge's
 /// existing data (import string + resolved target path) — mirroring the
 /// offline Stage-1 ground-truth harness — and attaches a calibrated
 /// per-strategy precision so a consuming agent can weight edges instead
 /// of treating every resolved/unresolved edge as equally trustworthy.
+/// Each language has its own strata, calibration table, and version pin.
 ///
 /// All inputs come from the exporter's existing edge view, so nothing
 /// here touches the resolver and the digest stays byte-deterministic.
@@ -45,6 +46,30 @@ inline constexpr double k_py_external_relative_confidence = 0.90;
 // known follow-up). Published at 0.95.
 inline constexpr double k_py_external_dotted_confidence = 0.95;
 
+/// Version pin for the Go calibration table below; bump on any change to
+/// the `k_go_*` values or the Go strategy taxonomy.
+inline constexpr std::string_view k_go_fidelity_version = "go-import-2026-06-01";
+
+// --- Calibration table (Go import edges) -------------------------------------
+//
+// Spec-oracle ground-truth study, measured 2026-06-01 against the go.mod
+// module-prefix resolver. Corpus = 3 Go projects, 90-edge stratified
+// sample (40 internal / 50 external). Go's resolution is mechanical, so
+// the oracle is an automated go.mod-prefix check + anomaly review rather
+// than manual labelling. Every stratum was observed perfect (go-internal
+// 40/40; 0/50 false-externals); published conservatively below.
+// Distribution-level, NOT a per-repo guarantee.
+//
+// Resolved (internal) import: the unambiguous module-prefix model gives
+// the highest figure of the three.
+inline constexpr double k_go_internal_confidence = 0.98;
+// Unresolved standard-library import (first path segment has no dot, e.g.
+// `fmt`, `database/sql`): structurally certain to be external.
+inline constexpr double k_go_external_stdlib_confidence = 0.95;
+// Unresolved third-party import (first path segment is a domain, e.g.
+// `github.com/...`): open-ended namespace, same observed precision.
+inline constexpr double k_go_external_thirdparty_confidence = 0.95;
+
 /// Reconstruct the resolution strategy string for one Python import
 /// edge, mirroring the Stage-1 harness:
 ///   - relative iff `import_string` begins with '.', else dotted;
@@ -62,9 +87,26 @@ inline constexpr double k_py_external_dotted_confidence = 0.95;
 /// rather than silently inheriting a neighbour's number.
 [[nodiscard]] double python_edge_confidence(std::string_view strategy);
 
-/// Build the top-level `fidelity_metadata` block. Distribution-level
-/// expected reliability for repos resembling the calibration corpus —
-/// explicitly NOT a per-repo guarantee (see the `caveat` field).
+/// Reconstruct the resolution strategy string for one Go import edge:
+///   - resolved (`is_external` false): `go-internal` — the import matched
+///     the go.mod module prefix and points at a package inside the tree;
+///   - external: `go-external-stdlib` if the first `/`-separated segment
+///     has no `.` (`fmt`, `database/sql`), else `go-external-thirdparty`
+///     (`github.com/...`). Mirrors the Stage-1 harness.
+[[nodiscard]] std::string reconstruct_go_resolved_by(std::string_view import_string,
+                                                     bool is_external);
+
+/// Calibrated precision for a strategy string produced by
+/// `reconstruct_go_resolved_by`. Unknown strategies return 0.0 (fail
+/// closed), as with `python_edge_confidence`.
+[[nodiscard]] double go_edge_confidence(std::string_view strategy);
+
+/// Build the top-level `fidelity_metadata` block: a shared `provisional`
+/// flag + `caveat`, then a per-language `languages` map (`python`, `go`),
+/// each carrying its own version / scope / method / corpus /
+/// expected_precision. Distribution-level expected reliability for repos
+/// resembling each calibration corpus — explicitly NOT a per-repo
+/// guarantee (see the `caveat` field).
 [[nodiscard]] nlohmann::json build_fidelity_metadata_json();
 
 } // namespace vectis::code

@@ -207,12 +207,11 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     return it == lookup.end() ? std::string{} : it->second;
 }
 
-/// True if `path` names a Python source file. Used to gate the
-/// fidelity enrichment (resolved_by / confidence) to Python edges only.
-[[nodiscard]] bool ends_with_py(std::string_view path)
+/// True if `path` names a source file with extension `ext`. Used to gate
+/// the per-language fidelity enrichment (resolved_by / confidence).
+[[nodiscard]] bool ends_with(std::string_view path, std::string_view ext)
 {
-    constexpr std::string_view k_ext = ".py";
-    return path.size() >= k_ext.size() && path.substr(path.size() - k_ext.size()) == k_ext;
+    return path.size() >= ext.size() && path.substr(path.size() - ext.size()) == ext;
 }
 
 /// Build the dependency_graph JSON block.
@@ -220,9 +219,9 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
 /// - `edges`: object-shaped `{source, target, kind, …}` where source/target are
 ///   relative paths. External edges set `target` to null and carry the raw import
 ///   string in `target_external`. Internal edges with a non-empty `import_string`
-///   also carry `import_ref` — the raw token the resolver consumed. Python
-///   import edges additionally carry `resolved_by` (reconstructed strategy) and
-///   `confidence` (calibrated precision) — see code/fidelity.h.
+///   also carry `import_ref` — the raw token the resolver consumed. Python and
+///   Go import edges additionally carry `resolved_by` (reconstructed strategy)
+///   and `confidence` (calibrated precision) — see code/fidelity.h.
 /// - `cycles`: array of arrays of paths, one per detected cycle.
 /// When `include_file_details` is false (slim format):
 /// - `edges`: positional 4-tuple `[source_file_id, target_file_id|null,
@@ -275,15 +274,23 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                 }
             }
             edge["kind"] = dep.kind;
-            // Python import edges carry a reconstructed resolution
+            // Python and Go import edges carry a reconstructed resolution
             // strategy + calibrated confidence (see code/fidelity.h).
             // Computed purely from existing edge data; other languages
             // and edge kinds are left untouched.
-            if (dep.kind == "import" && ends_with_py(source_path)) {
-                const std::string strategy =
-                    reconstruct_python_resolved_by(dep.import_string, target_path, is_external);
-                edge["resolved_by"] = strategy;
-                edge["confidence"] = python_edge_confidence(strategy);
+            if (dep.kind == "import") {
+                if (ends_with(source_path, ".py")) {
+                    const std::string strategy =
+                        reconstruct_python_resolved_by(dep.import_string, target_path, is_external);
+                    edge["resolved_by"] = strategy;
+                    edge["confidence"] = python_edge_confidence(strategy);
+                }
+                else if (ends_with(source_path, ".go")) {
+                    const std::string strategy =
+                        reconstruct_go_resolved_by(dep.import_string, is_external);
+                    edge["resolved_by"] = strategy;
+                    edge["confidence"] = go_edge_confidence(strategy);
+                }
             }
             edges_array.push_back(std::move(edge));
         }
@@ -657,10 +664,11 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     // orientation signal — worth emitting in both slim and full.
     root["architecture"] = build_architecture_json(index, options);
 
-    // Per-strategy fidelity calibration for Python import edges. The
-    // block is tiny, so both slim and full carry it; the per-edge
-    // confidence/resolved_by fields, by contrast, are full-only (slim
-    // edge tuples stay frozen at their schema version).
+    // Per-strategy fidelity calibration for Python and Go import edges
+    // (per-language `languages` map). The block is tiny, so both slim and
+    // full carry it; the per-edge confidence/resolved_by fields, by
+    // contrast, are full-only (slim edge tuples stay frozen at their
+    // schema version).
     root["fidelity_metadata"] = build_fidelity_metadata_json();
 
     if (include_file_details) {
