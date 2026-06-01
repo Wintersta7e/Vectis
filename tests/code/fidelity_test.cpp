@@ -440,6 +440,29 @@ TEST(FidelityTest, Dispatch_UncalibratedReturnsNullopt)
     EXPECT_FALSE(reconstruct_edge_fidelity("a.py", "call", "b", "b.py", false).has_value());
 }
 
+TEST(FidelityTest, Dispatch_SharedKindGatesOnExtension)
+{
+    // The edge kinds `include`, `require`, and `use` are each shared across
+    // languages, so dispatch must key on the source extension, never the kind
+    // alone. Guard every collision: each edge must route to its language.
+    const auto strat = [](std::string_view src, std::string_view kind, std::string_view imp,
+                          std::string_view target, bool is_external) {
+        const auto fidelity = reconstruct_edge_fidelity(src, kind, imp, target, is_external);
+        return fidelity ? fidelity->resolved_by : std::string{"<none>"};
+    };
+
+    // include: PHP vs C/C++.
+    EXPECT_EQ(strat("a/b.php", "include", "x.php", "x.php", false), "php-require-resolved");
+    EXPECT_EQ(strat("a/b.h", "include", "x.h", "x.h", false), "cinclude-resolved-bare");
+    // require: JS/TS vs Ruby vs PHP.
+    EXPECT_EQ(strat("a/b.ts", "require", "react", "", true), "jsts-bare-external");
+    EXPECT_EQ(strat("a/b.rb", "require", "set", "", true), "ruby-external-stdlib");
+    // use: C# vs PHP vs Rust.
+    EXPECT_EQ(strat("a/b.cs", "use", "System.Text", "", true), "csharp-external-system");
+    EXPECT_EQ(strat("a/b.php", "use", "Closure", "", true), "php-use-external-global");
+    EXPECT_EQ(strat("a/b.rs", "use", "std::io", "", true), "rust-use-std");
+}
+
 // --- fidelity_metadata block -------------------------------------------------
 
 TEST(FidelityTest, Metadata_HasExpectedShape)
