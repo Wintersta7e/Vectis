@@ -18,6 +18,7 @@ using vectis::code::build_fidelity_metadata_json;
 using vectis::code::CodeIndex;
 using vectis::code::Dependency;
 using vectis::code::DigestFormat;
+using vectis::code::EdgeFidelity;
 using vectis::code::ExportOptions;
 using vectis::code::FileEntry;
 using vectis::code::go_edge_confidence;
@@ -29,6 +30,7 @@ using vectis::code::k_py_external_relative_confidence;
 using vectis::code::k_py_resolved_confidence;
 using vectis::code::Language;
 using vectis::code::python_edge_confidence;
+using vectis::code::reconstruct_edge_fidelity;
 using vectis::code::reconstruct_go_resolved_by;
 using vectis::code::reconstruct_python_resolved_by;
 
@@ -150,14 +152,41 @@ TEST(FidelityTest, Confidence_GoUnknownFailsClosed)
     EXPECT_DOUBLE_EQ(go_edge_confidence(""), 0.0);
 }
 
+// --- Dispatcher --------------------------------------------------------------
+
+TEST(FidelityTest, Dispatch_PythonAndGoImportEdges)
+{
+    const auto py = reconstruct_edge_fidelity("pkg/a.py", "import", ".b", "pkg/b.py",
+                                              /*is_external=*/false);
+    ASSERT_TRUE(py.has_value());
+    EXPECT_EQ(py->resolved_by, "relative-module");
+    EXPECT_DOUBLE_EQ(py->confidence, k_py_resolved_confidence);
+
+    const auto go = reconstruct_edge_fidelity("cmd/main.go", "import", "example.com/app/x",
+                                              "x/x.go", /*is_external=*/false);
+    ASSERT_TRUE(go.has_value());
+    EXPECT_EQ(go->resolved_by, "go-internal");
+    EXPECT_DOUBLE_EQ(go->confidence, k_go_internal_confidence);
+}
+
+TEST(FidelityTest, Dispatch_UncalibratedReturnsNullopt)
+{
+    // A language/kind with no calibration model yet must yield no enrichment.
+    EXPECT_FALSE(
+        reconstruct_edge_fidelity("src/x.cpp", "include", "y.h", "src/y.h", false).has_value());
+    // Right extension, wrong kind for that language.
+    EXPECT_FALSE(reconstruct_edge_fidelity("a.py", "call", "b", "b.py", false).has_value());
+}
+
 // --- fidelity_metadata block -------------------------------------------------
 
 TEST(FidelityTest, Metadata_HasExpectedShape)
 {
     const nlohmann::json meta = build_fidelity_metadata_json();
 
-    // Shared top-level fields, then a per-language `languages` map.
-    EXPECT_EQ(meta["provisional"], true);
+    // Shared top-level caveat, then a per-language `languages` map; each
+    // language carries its own `provisional` flag.
+    ASSERT_FALSE(meta.contains("provisional")) << "provisional moved per-language";
     ASSERT_TRUE(meta.contains("caveat"));
     EXPECT_NE(meta["caveat"].get<std::string>().find("NOT a per-repo guarantee"),
               std::string::npos);
@@ -167,6 +196,7 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     ASSERT_TRUE(py.contains("version"));
     EXPECT_EQ(py["method"], "per-strategy empirical precision vs manual ground truth (offline)");
     EXPECT_EQ(py["scope"], "python-import-edges");
+    EXPECT_EQ(py["provisional"], true);
     EXPECT_EQ(py["corpus"]["projects"], 2);
     EXPECT_EQ(py["corpus"]["labeled_edges"], 112);
     const auto& py_exp = py["expected_precision"];
@@ -178,7 +208,8 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     const auto& go = meta["languages"]["go"];
     ASSERT_TRUE(go.contains("version"));
     EXPECT_EQ(go["scope"], "go-import-edges");
-    EXPECT_EQ(go["corpus"]["projects"], 3);
+    EXPECT_EQ(go["provisional"], false) << "Go de-provisionalized after corpus expansion";
+    EXPECT_EQ(go["corpus"]["projects"], 11);
     EXPECT_EQ(go["corpus"]["labeled_edges"], 90);
     const auto& go_exp = go["expected_precision"];
     EXPECT_DOUBLE_EQ(go_exp["go-internal"].get<double>(), k_go_internal_confidence);
@@ -376,7 +407,6 @@ TEST(FidelityTest, BothFormats_CarryFidelityMetadata)
         const auto parsed = nlohmann::json::parse(build_digest_string(index, make_options(fmt)));
         ASSERT_TRUE(parsed.contains("fidelity_metadata")) << "format=" << static_cast<int>(fmt);
         const auto& meta = parsed["fidelity_metadata"];
-        EXPECT_EQ(meta["provisional"], true);
         EXPECT_TRUE(meta.contains("caveat"));
         ASSERT_TRUE(meta.contains("languages"));
         for (const char* lang : {"python", "go"}) {
@@ -384,6 +414,7 @@ TEST(FidelityTest, BothFormats_CarryFidelityMetadata)
             EXPECT_TRUE(block.contains("version")) << "lang=" << lang;
             EXPECT_TRUE(block.contains("scope")) << "lang=" << lang;
             EXPECT_TRUE(block.contains("expected_precision")) << "lang=" << lang;
+            EXPECT_TRUE(block.contains("provisional")) << "lang=" << lang;
         }
         EXPECT_EQ(meta["languages"]["go"]["scope"], "go-import-edges");
     }

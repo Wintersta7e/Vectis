@@ -207,21 +207,14 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     return it == lookup.end() ? std::string{} : it->second;
 }
 
-/// True if `path` names a source file with extension `ext`. Used to gate
-/// the per-language fidelity enrichment (resolved_by / confidence).
-[[nodiscard]] bool ends_with(std::string_view path, std::string_view ext)
-{
-    return path.size() >= ext.size() && path.substr(path.size() - ext.size()) == ext;
-}
-
 /// Build the dependency_graph JSON block.
 /// When `include_file_details` is true (full format):
 /// - `edges`: object-shaped `{source, target, kind, …}` where source/target are
 ///   relative paths. External edges set `target` to null and carry the raw import
 ///   string in `target_external`. Internal edges with a non-empty `import_string`
-///   also carry `import_ref` — the raw token the resolver consumed. Python and
-///   Go import edges additionally carry `resolved_by` (reconstructed strategy)
-///   and `confidence` (calibrated precision) — see code/fidelity.h.
+///   also carry `import_ref` — the raw token the resolver consumed. Edges in a
+///   calibrated language additionally carry `resolved_by` (reconstructed
+///   strategy) and `confidence` (calibrated precision) — see code/fidelity.h.
 /// - `cycles`: array of arrays of paths, one per detected cycle.
 /// When `include_file_details` is false (slim format):
 /// - `edges`: positional 4-tuple `[source_file_id, target_file_id|null,
@@ -274,23 +267,13 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
                 }
             }
             edge["kind"] = dep.kind;
-            // Python and Go import edges carry a reconstructed resolution
-            // strategy + calibrated confidence (see code/fidelity.h).
-            // Computed purely from existing edge data; other languages
-            // and edge kinds are left untouched.
-            if (dep.kind == "import") {
-                if (ends_with(source_path, ".py")) {
-                    const std::string strategy =
-                        reconstruct_python_resolved_by(dep.import_string, target_path, is_external);
-                    edge["resolved_by"] = strategy;
-                    edge["confidence"] = python_edge_confidence(strategy);
-                }
-                else if (ends_with(source_path, ".go")) {
-                    const std::string strategy =
-                        reconstruct_go_resolved_by(dep.import_string, is_external);
-                    edge["resolved_by"] = strategy;
-                    edge["confidence"] = go_edge_confidence(strategy);
-                }
+            // Calibrated per-edge resolution fidelity, dispatched by language
+            // (see code/fidelity.h). Computed purely from existing edge data;
+            // uncalibrated (language, kind) pairs are left untouched.
+            if (const auto fidelity = reconstruct_edge_fidelity(
+                    source_path, dep.kind, dep.import_string, target_path, is_external)) {
+                edge["resolved_by"] = fidelity->resolved_by;
+                edge["confidence"] = fidelity->confidence;
             }
             edges_array.push_back(std::move(edge));
         }

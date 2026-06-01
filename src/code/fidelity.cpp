@@ -32,6 +32,13 @@ constexpr std::string_view k_strategy_go_external_thirdparty = "go-external-thir
     return path.size() >= k_init.size() && path.substr(path.size() - k_init.size()) == k_init;
 }
 
+/// True if `path` ends with the source-file extension `ext`. Used by
+/// `reconstruct_edge_fidelity` to dispatch by language.
+[[nodiscard]] bool ends_with(std::string_view path, std::string_view ext)
+{
+    return path.size() >= ext.size() && path.substr(path.size() - ext.size()) == ext;
+}
+
 } // namespace
 
 std::string reconstruct_python_resolved_by(std::string_view import_string,
@@ -99,6 +106,29 @@ double go_edge_confidence(std::string_view strategy)
     return 0.0;
 }
 
+std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
+                                                      std::string_view kind,
+                                                      std::string_view import_string,
+                                                      std::string_view target_relpath,
+                                                      bool is_external)
+{
+    // Dispatch on (source extension, edge kind). Each branch reconstructs a
+    // language-specific strategy string and pairs it with that language's
+    // calibrated confidence. Uncalibrated combinations return nullopt so the
+    // exporter leaves the edge untouched. `include`/`require`/`use` kinds are
+    // shared across languages, hence the extension gate.
+    if (kind == "import" && ends_with(source_path, ".py")) {
+        const std::string strategy =
+            reconstruct_python_resolved_by(import_string, target_relpath, is_external);
+        return EdgeFidelity{strategy, python_edge_confidence(strategy)};
+    }
+    if (kind == "import" && ends_with(source_path, ".go")) {
+        const std::string strategy = reconstruct_go_resolved_by(import_string, is_external);
+        return EdgeFidelity{strategy, go_edge_confidence(strategy)};
+    }
+    return std::nullopt;
+}
+
 namespace {
 
 /// Per-language fidelity sub-block for Python import edges.
@@ -108,6 +138,11 @@ namespace {
     py["version"] = std::string{k_python_fidelity_version};
     py["scope"] = "python-import-edges";
     py["method"] = "per-strategy empirical precision vs manual ground truth (offline)";
+    // Still provisional: the original labels were manual (2 projects), and the
+    // `external-relative` stratum has no real-world coverage yet to confirm its
+    // figure. A wider re-measure corroborated the numbers but with a weaker
+    // (internal-consistency) oracle — not enough to de-provisionalize.
+    py["provisional"] = true;
 
     nlohmann::json corpus;
     corpus["projects"] = 2;
@@ -131,10 +166,16 @@ namespace {
     nlohmann::json go;
     go["version"] = std::string{k_go_fidelity_version};
     go["scope"] = "go-import-edges";
-    go["method"] = "per-strategy precision vs go.mod spec oracle + anomaly review (offline)";
+    go["method"] = "per-strategy precision vs go.mod spec oracle (offline), "
+                   "validated by full-population recheck on an 11-project corpus";
+    // Non-provisional: Go's oracle is fully mechanical (go.mod module-prefix +
+    // on-disk package existence) and a widened 11-project corpus held at
+    // 1.0 internal precision / 0 false-externals across both a stratified
+    // sample and a full-population recheck (thousands of edges).
+    go["provisional"] = false;
 
     nlohmann::json corpus;
-    corpus["projects"] = 3;
+    corpus["projects"] = 11;
     corpus["labeled_edges"] = 90;
     go["corpus"] = std::move(corpus);
 
@@ -150,11 +191,10 @@ namespace {
 
 nlohmann::json build_fidelity_metadata_json()
 {
-    // Shared across languages: the small-corpus disclaimer applies to every
-    // stratum. Per-language version / scope / method / corpus live under
-    // `languages` so each can be recalibrated independently.
+    // Only the disclaimer is shared across languages. Per-language version /
+    // scope / method / corpus / provisional live under `languages` so each can
+    // be recalibrated — and de-provisionalized — independently.
     nlohmann::json meta;
-    meta["provisional"] = true;
     meta["caveat"] = "distribution-level expected reliability for repos resembling the "
                      "calibration corpus; NOT a per-repo guarantee";
 

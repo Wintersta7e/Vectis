@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -101,12 +102,33 @@ inline constexpr double k_go_external_thirdparty_confidence = 0.95;
 /// closed), as with `python_edge_confidence`.
 [[nodiscard]] double go_edge_confidence(std::string_view strategy);
 
-/// Build the top-level `fidelity_metadata` block: a shared `provisional`
-/// flag + `caveat`, then a per-language `languages` map (`python`, `go`),
-/// each carrying its own version / scope / method / corpus /
-/// expected_precision. Distribution-level expected reliability for repos
-/// resembling each calibration corpus — explicitly NOT a per-repo
-/// guarantee (see the `caveat` field).
+/// One edge's reconstructed resolution strategy plus its calibrated
+/// precision. Returned by `reconstruct_edge_fidelity`.
+struct EdgeFidelity
+{
+    std::string resolved_by;
+    double confidence;
+};
+
+/// Reconstruct fidelity for one dependency edge, dispatching on the source
+/// file's extension and the edge `kind` to the matching per-language model.
+/// Returns `std::nullopt` for any (language, kind) pair that isn't
+/// calibrated, so the exporter leaves such edges untouched. Pure function
+/// of the edge's existing data — never re-runs resolution. `target_relpath`
+/// is the resolved target's path (empty for external edges); only some
+/// languages consult it.
+[[nodiscard]] std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
+                                                                    std::string_view kind,
+                                                                    std::string_view import_string,
+                                                                    std::string_view target_relpath,
+                                                                    bool is_external);
+
+/// Build the top-level `fidelity_metadata` block: a shared `caveat`, then a
+/// per-language `languages` map. Each language carries its own version /
+/// scope / method / corpus / expected_precision and its own `provisional`
+/// flag (calibration rigor differs per language). Distribution-level
+/// expected reliability for repos resembling each calibration corpus —
+/// explicitly NOT a per-repo guarantee (see the `caveat` field).
 [[nodiscard]] nlohmann::json build_fidelity_metadata_json();
 
 } // namespace vectis::code
