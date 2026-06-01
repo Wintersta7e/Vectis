@@ -1,5 +1,8 @@
 #include "code/fidelity.h"
 
+#include <algorithm>
+#include <array>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -32,6 +35,18 @@ constexpr std::string_view k_strategy_rust_use_std = "rust-use-std";
 constexpr std::string_view k_strategy_rust_use_internal = "rust-use-internal";
 constexpr std::string_view k_strategy_rust_use_extern = "rust-use-extern";
 
+// C/C++ #include strata: resolved/external × path/bare (directory part in the
+// include string or not).
+constexpr std::string_view k_strategy_cinclude_resolved_path = "cinclude-resolved-path";
+constexpr std::string_view k_strategy_cinclude_resolved_bare = "cinclude-resolved-bare";
+constexpr std::string_view k_strategy_cinclude_external_path = "cinclude-external-path";
+constexpr std::string_view k_strategy_cinclude_external_bare = "cinclude-external-bare";
+
+// Source-file extension sets for languages whose edge `kind` is shared with
+// other languages (so dispatch must gate on extension).
+constexpr std::array<std::string_view, 10> k_c_cpp_exts = {".c",   ".h",  ".cc",  ".cpp", ".cxx",
+                                                           ".hpp", ".hh", ".hxx", ".inl", ".ipp"};
+
 /// True if `path` names a Python package init file (`__init__.py`),
 /// which distinguishes a package-resolved import from a module one.
 [[nodiscard]] bool ends_with_init_py(std::string_view path)
@@ -45,6 +60,13 @@ constexpr std::string_view k_strategy_rust_use_extern = "rust-use-extern";
 [[nodiscard]] bool ends_with(std::string_view path, std::string_view ext)
 {
     return path.size() >= ext.size() && path.substr(path.size() - ext.size()) == ext;
+}
+
+/// True if `path` ends with any extension in `exts` (for languages spanning
+/// several source extensions, e.g. C/C++).
+[[nodiscard]] bool ends_with_any(std::string_view path, std::span<const std::string_view> exts)
+{
+    return std::ranges::any_of(exts, [path](std::string_view e) { return ends_with(path, e); });
 }
 
 } // namespace
@@ -151,6 +173,36 @@ double rust_edge_confidence(std::string_view strategy)
     return 0.0; // fail closed
 }
 
+std::string reconstruct_c_cpp_resolved_by(std::string_view import_string, bool is_external)
+{
+    // `path` iff the include string carries a directory part; the include
+    // string is the same field whether resolved (import_ref) or external.
+    const bool has_dir = import_string.find('/') != std::string_view::npos;
+    if (is_external) {
+        return std::string{has_dir ? k_strategy_cinclude_external_path
+                                   : k_strategy_cinclude_external_bare};
+    }
+    return std::string{has_dir ? k_strategy_cinclude_resolved_path
+                               : k_strategy_cinclude_resolved_bare};
+}
+
+double c_cpp_edge_confidence(std::string_view strategy)
+{
+    if (strategy == k_strategy_cinclude_resolved_path) {
+        return k_cinclude_resolved_path_confidence;
+    }
+    if (strategy == k_strategy_cinclude_resolved_bare) {
+        return k_cinclude_resolved_bare_confidence;
+    }
+    if (strategy == k_strategy_cinclude_external_path) {
+        return k_cinclude_external_path_confidence;
+    }
+    if (strategy == k_strategy_cinclude_external_bare) {
+        return k_cinclude_external_bare_confidence;
+    }
+    return 0.0; // fail closed
+}
+
 std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
                                                       std::string_view kind,
                                                       std::string_view import_string,
@@ -174,6 +226,10 @@ std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_pa
     if ((kind == "use" || kind == "mod") && ends_with(source_path, ".rs")) {
         const std::string strategy = reconstruct_rust_resolved_by(kind, import_string, is_external);
         return EdgeFidelity{strategy, rust_edge_confidence(strategy)};
+    }
+    if (kind == "include" && ends_with_any(source_path, k_c_cpp_exts)) {
+        const std::string strategy = reconstruct_c_cpp_resolved_by(import_string, is_external);
+        return EdgeFidelity{strategy, c_cpp_edge_confidence(strategy)};
     }
     return std::nullopt;
 }
@@ -261,6 +317,30 @@ namespace {
     return rust;
 }
 
+/// Per-language fidelity sub-block for C/C++ #include edges.
+[[nodiscard]] nlohmann::json build_c_cpp_fidelity_json()
+{
+    nlohmann::json cpp;
+    cpp["version"] = std::string{k_c_cpp_fidelity_version};
+    cpp["scope"] = "c-cpp-include-edges";
+    cpp["method"] = "per-stratum precision / false-external rate vs mechanical filesystem "
+                    "oracle, full census (offline); only quoted #include is captured";
+    cpp["provisional"] = true;
+
+    nlohmann::json corpus;
+    corpus["projects"] = 4;
+    corpus["labeled_edges"] = 4916;
+    cpp["corpus"] = std::move(corpus);
+
+    nlohmann::json expected;
+    expected[std::string{k_strategy_cinclude_resolved_path}] = k_cinclude_resolved_path_confidence;
+    expected[std::string{k_strategy_cinclude_resolved_bare}] = k_cinclude_resolved_bare_confidence;
+    expected[std::string{k_strategy_cinclude_external_path}] = k_cinclude_external_path_confidence;
+    expected[std::string{k_strategy_cinclude_external_bare}] = k_cinclude_external_bare_confidence;
+    cpp["expected_precision"] = std::move(expected);
+    return cpp;
+}
+
 } // namespace
 
 nlohmann::json build_fidelity_metadata_json()
@@ -276,6 +356,7 @@ nlohmann::json build_fidelity_metadata_json()
     languages["python"] = build_python_fidelity_json();
     languages["go"] = build_go_fidelity_json();
     languages["rust"] = build_rust_fidelity_json();
+    languages["c_cpp"] = build_c_cpp_fidelity_json();
     meta["languages"] = std::move(languages);
     return meta;
 }

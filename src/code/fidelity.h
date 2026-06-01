@@ -92,6 +92,24 @@ inline constexpr double k_rust_use_internal_confidence =
 inline constexpr double k_rust_use_extern_confidence =
     0.40; // 63% are in-tree sibling/workspace-crate refs, not deps
 
+/// Version pin for the C/C++ calibration table below.
+inline constexpr std::string_view k_c_cpp_fidelity_version = "c-cpp-include-2026-06-01";
+
+// --- Calibration table (C/C++ #include edges) --------------------------------
+//
+// Measured 2026-06-01 against 4 projects (2 C, 2 C++; 4,916 edges) with a
+// mechanical filesystem oracle (full census). Only quoted `#include "..."`
+// is captured (angle/system includes are invisible), so every edge is a
+// quote-include. Strata split on whether the include string carries a
+// directory part and whether it resolved. Resolved edges were 100%
+// correct; external-bare is the weak case (50% are missed in-tree headers
+// reached via a compiler -I path Vectis can't see), so it is published low.
+inline constexpr double k_cinclude_resolved_path_confidence = 0.97; // 1186/1186 correct
+inline constexpr double k_cinclude_resolved_bare_confidence = 0.95; // 3503/3503 correct
+inline constexpr double k_cinclude_external_path_confidence = 0.90; // 0/207 false-external
+inline constexpr double k_cinclude_external_bare_confidence =
+    0.50; // 10/20 false-external (n small)
+
 /// Reconstruct the resolution strategy string for one Python import
 /// edge, mirroring the Stage-1 harness:
 ///   - relative iff `import_string` begins with '.', else dotted;
@@ -135,6 +153,17 @@ inline constexpr double k_rust_use_extern_confidence =
 /// Calibrated precision for a `reconstruct_rust_resolved_by` strategy.
 /// Unknown strategies return 0.0 (fail closed).
 [[nodiscard]] double rust_edge_confidence(std::string_view strategy);
+
+/// Reconstruct the resolution strategy for one C/C++ `#include` edge:
+/// `cinclude-{resolved|external}-{path|bare}`, where `path` means the
+/// include string carries a directory part (`a/b.h`) and `bare` a plain
+/// basename (`b.h`). Only quoted includes are captured.
+[[nodiscard]] std::string reconstruct_c_cpp_resolved_by(std::string_view import_string,
+                                                        bool is_external);
+
+/// Calibrated precision for a `reconstruct_c_cpp_resolved_by` strategy.
+/// Unknown strategies return 0.0 (fail closed).
+[[nodiscard]] double c_cpp_edge_confidence(std::string_view strategy);
 
 /// One edge's reconstructed resolution strategy plus its calibrated
 /// precision. Returned by `reconstruct_edge_fidelity`.

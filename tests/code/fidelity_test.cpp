@@ -15,6 +15,7 @@ namespace {
 
 using vectis::code::build_digest_string;
 using vectis::code::build_fidelity_metadata_json;
+using vectis::code::c_cpp_edge_confidence;
 using vectis::code::CodeIndex;
 using vectis::code::Dependency;
 using vectis::code::DigestFormat;
@@ -22,6 +23,10 @@ using vectis::code::EdgeFidelity;
 using vectis::code::ExportOptions;
 using vectis::code::FileEntry;
 using vectis::code::go_edge_confidence;
+using vectis::code::k_cinclude_external_bare_confidence;
+using vectis::code::k_cinclude_external_path_confidence;
+using vectis::code::k_cinclude_resolved_bare_confidence;
+using vectis::code::k_cinclude_resolved_path_confidence;
 using vectis::code::k_go_external_stdlib_confidence;
 using vectis::code::k_go_external_thirdparty_confidence;
 using vectis::code::k_go_internal_confidence;
@@ -35,6 +40,7 @@ using vectis::code::k_rust_use_internal_confidence;
 using vectis::code::k_rust_use_std_confidence;
 using vectis::code::Language;
 using vectis::code::python_edge_confidence;
+using vectis::code::reconstruct_c_cpp_resolved_by;
 using vectis::code::reconstruct_edge_fidelity;
 using vectis::code::reconstruct_go_resolved_by;
 using vectis::code::reconstruct_python_resolved_by;
@@ -140,6 +146,19 @@ TEST(FidelityTest, Reconstruct_RustUse)
               "rust-use-extern");
 }
 
+TEST(FidelityTest, Reconstruct_CInclude)
+{
+    // resolved/external × path/bare, split on a directory part in the include.
+    EXPECT_EQ(reconstruct_c_cpp_resolved_by("a/b.h", /*is_external=*/false),
+              "cinclude-resolved-path");
+    EXPECT_EQ(reconstruct_c_cpp_resolved_by("b.h", /*is_external=*/false),
+              "cinclude-resolved-bare");
+    EXPECT_EQ(reconstruct_c_cpp_resolved_by("absl/strings/str_cat.h", /*is_external=*/true),
+              "cinclude-external-path");
+    EXPECT_EQ(reconstruct_c_cpp_resolved_by("xxhash.h", /*is_external=*/true),
+              "cinclude-external-bare");
+}
+
 // --- Confidence lookup -------------------------------------------------------
 
 TEST(FidelityTest, Confidence_ResolvedStrategies)
@@ -191,6 +210,19 @@ TEST(FidelityTest, Confidence_RustStrategies)
     EXPECT_DOUBLE_EQ(rust_edge_confidence("not-a-strategy"), 0.0);
 }
 
+TEST(FidelityTest, Confidence_CIncludeStrategies)
+{
+    EXPECT_DOUBLE_EQ(c_cpp_edge_confidence("cinclude-resolved-path"),
+                     k_cinclude_resolved_path_confidence);
+    EXPECT_DOUBLE_EQ(c_cpp_edge_confidence("cinclude-resolved-bare"),
+                     k_cinclude_resolved_bare_confidence);
+    EXPECT_DOUBLE_EQ(c_cpp_edge_confidence("cinclude-external-path"),
+                     k_cinclude_external_path_confidence);
+    EXPECT_DOUBLE_EQ(c_cpp_edge_confidence("cinclude-external-bare"),
+                     k_cinclude_external_bare_confidence);
+    EXPECT_DOUBLE_EQ(c_cpp_edge_confidence("not-a-strategy"), 0.0);
+}
+
 // --- Dispatcher --------------------------------------------------------------
 
 TEST(FidelityTest, Dispatch_PythonAndGoImportEdges)
@@ -210,10 +242,10 @@ TEST(FidelityTest, Dispatch_PythonAndGoImportEdges)
 
 TEST(FidelityTest, Dispatch_UncalibratedReturnsNullopt)
 {
-    // A language/kind with no calibration model yet must yield no enrichment.
-    EXPECT_FALSE(
-        reconstruct_edge_fidelity("src/x.cpp", "include", "y.h", "src/y.h", false).has_value());
-    // Right extension, wrong kind for that language.
+    // An uncalibrated language (SQL has no import semantics) yields nothing.
+    EXPECT_FALSE(reconstruct_edge_fidelity("db/schema.sql", "import", "other", "other.sql", false)
+                     .has_value());
+    // Right extension, but a kind that language doesn't calibrate.
     EXPECT_FALSE(reconstruct_edge_fidelity("a.py", "call", "b", "b.py", false).has_value());
 }
 
@@ -261,6 +293,12 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     EXPECT_EQ(rust["provisional"], true);
     EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal"].get<double>(),
                      k_rust_use_internal_confidence);
+
+    const auto& cpp = meta["languages"]["c_cpp"];
+    EXPECT_EQ(cpp["scope"], "c-cpp-include-edges");
+    EXPECT_EQ(cpp["provisional"], true);
+    EXPECT_DOUBLE_EQ(cpp["expected_precision"]["cinclude-external-bare"].get<double>(),
+                     k_cinclude_external_bare_confidence);
 }
 
 // --- Digest integration ------------------------------------------------------
@@ -341,8 +379,10 @@ TEST(FidelityTest, FullJson_PythonEdgeCarriesResolvedByAndConfidence)
         }
         if (e["kind"] == "include") {
             saw_cpp = true;
-            EXPECT_FALSE(e.contains("resolved_by")) << "non-Python edges must stay untouched";
-            EXPECT_FALSE(e.contains("confidence"));
+            // C/C++ includes are calibrated too: src/x.cpp #include "y.h"
+            // (a bare, resolved include) → cinclude-resolved-bare.
+            EXPECT_EQ(e["resolved_by"], "cinclude-resolved-bare");
+            EXPECT_DOUBLE_EQ(e["confidence"].get<double>(), k_cinclude_resolved_bare_confidence);
         }
     }
     EXPECT_TRUE(saw_python);
