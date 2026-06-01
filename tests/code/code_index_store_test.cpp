@@ -206,6 +206,45 @@ TEST_F(CodeIndexStoreTest, PreservesSymbolDetails)
     EXPECT_NE(syms2[0].parent_id, 0);
 }
 
+TEST_F(CodeIndexStoreTest, PreservesMultiLineDecorator)
+{
+    // A multi-line decorator's text contains literal newlines; it must survive
+    // the SQLite round-trip as ONE entry, not split into one entry per line.
+    FileEntry f;
+    f.path_relative = "tests/test_x.py";
+    f.language = Language::Python;
+    f.content_hash = "decohash";
+    const std::int64_t fid = m_index.add_file(std::move(f));
+
+    const std::string multiline =
+        "pytest.mark.parametrize(\n    (\"a\", \"b\"),\n    ((1, 2),),\n)";
+    Symbol s;
+    s.file_id = fid;
+    s.name = "test_x";
+    s.kind = SymbolKind::Function;
+    s.decorators = {multiline, "staticmethod"};
+    m_index.add_symbols(std::vector<Symbol>{s});
+
+    CacheMetadata meta;
+    meta.project_root = "/test";
+    ASSERT_TRUE(save_index(m_storage, m_index, meta));
+
+    CodeIndex loaded;
+    ASSERT_TRUE(load_index(m_storage, loaded));
+
+    const auto syms = loaded.symbols_in_file(fid);
+    bool found = false;
+    for (const auto& sym : syms) {
+        if (sym.name == "test_x") {
+            found = true;
+            ASSERT_EQ(sym.decorators.size(), 2U) << "multi-line decorator must stay one entry";
+            EXPECT_EQ(sym.decorators[0], multiline);
+            EXPECT_EQ(sym.decorators[1], "staticmethod");
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
 TEST_F(CodeIndexStoreTest, HasCacheFor_ReturnsTrueAfterSave)
 {
     populate_index();

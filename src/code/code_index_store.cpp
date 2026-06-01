@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "code/code_index.h"
 #include "code/dependency.h"
 #include "code/language.h"
@@ -53,6 +55,36 @@ namespace {
         }
         result.push_back(joined.substr(start, pos - start));
         start = pos + 1;
+    }
+    return result;
+}
+
+/// Serialize Symbol::decorators as a JSON array. Unlike members/namespaces,
+/// a decorator's text can contain literal newlines (multi-line Python
+/// decorators), so the newline-joined serialiser would not round-trip.
+[[nodiscard]] std::string encode_decorators(const std::vector<std::string>& decorators)
+{
+    return nlohmann::json(decorators).dump();
+}
+
+/// Inverse of `encode_decorators`. Falls back to the legacy newline-joined
+/// form when the column isn't a JSON array, so caches written before the
+/// format change still load.
+[[nodiscard]] std::vector<std::string> decode_decorators(const std::string& encoded)
+{
+    if (encoded.empty()) {
+        return {};
+    }
+    const auto parsed = nlohmann::json::parse(encoded, nullptr, /*allow_exceptions=*/false);
+    if (!parsed.is_array()) {
+        return split_members(encoded); // legacy newline-joined cache
+    }
+    std::vector<std::string> result;
+    result.reserve(parsed.size());
+    for (const auto& item : parsed) {
+        if (item.is_string()) {
+            result.push_back(item.get<std::string>());
+        }
     }
     return result;
 }
@@ -162,9 +194,10 @@ Result<void> save_index(StorageEngine& storage, const CodeIndex& index,
         const auto members_str = join_members(s.members);
         ins_sym->bind(10, std::string_view{members_str});
         ins_sym->bind(11, visibility_name(s.visibility));
-        // Decorators share the members serialiser — newline-joined,
-        // since none of the decorator texts contain literal newlines.
-        const auto decorators_str = join_members(s.decorators);
+        // Decorators are JSON-encoded, not newline-joined: a multi-line
+        // decorator's text contains literal newlines and would otherwise
+        // round-trip as one entry per line.
+        const auto decorators_str = encode_decorators(s.decorators);
         ins_sym->bind(12, std::string_view{decorators_str});
         if (auto r = ins_sym->execute(); !r) {
             return r;
@@ -325,7 +358,7 @@ Result<CacheMetadata> load_index(StorageEngine& storage, CodeIndex& index)
             s.complexity = static_cast<int>(row.get_int(8));
             s.members = split_members(row.get_text(9));
             s.visibility = visibility_from_name(row.get_text(10));
-            s.decorators = split_members(row.get_text(11));
+            s.decorators = decode_decorators(row.get_text(11));
             batch.push_back(std::move(s));
         });
         !r) {
