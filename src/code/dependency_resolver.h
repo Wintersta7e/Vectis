@@ -78,12 +78,13 @@ struct PathLookup
 ///      whose `path_relative` ends with the raw import string.
 ///
 ///   4. **Python dotted_name**: convert `foo.bar` to `foo/bar.py` or
-///      `foo/bar/__init__.py`, try each extension. For "src-layout"
-///      projects (importable package under `src/`, detected by
-///      stat-ing `<project_root>/src/<pkg>/__init__.py`), an absolute
-///      import that misses at the root is retried with the `src/`
-///      prefix prepended, so `import flask` from `tests/` resolves to
-///      `src/flask/__init__.py`. Relative imports keep their own path.
+///      `foo/bar/__init__.py`, try each extension. On a project-root
+///      miss the import is retried against every detected package-tree
+///      import root (a dir that holds a package but is not itself one —
+///      `src/`, `examples/<x>/`, `tests/<x>/`), taking the target only
+///      when exactly one root matches (ambiguous stays external), so
+///      `import flask` from `tests/` resolves to `src/flask/__init__.py`.
+///      Relative imports keep their own path.
 ///
 /// Anything that doesn't resolve is added to the index with
 /// `target_file_id = 0` and the raw import string preserved — it

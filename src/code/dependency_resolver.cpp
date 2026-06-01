@@ -1,7 +1,6 @@
 #include "code/dependency_resolver.h"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
@@ -11,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -265,8 +265,8 @@ struct ResolveCtx
 {
     std::unordered_map<std::string, std::vector<std::int64_t>> namespace_to_files;
     PathLookup path_lookup;
-    std::string go_module_prefix;          ///< empty if no go.mod
-    std::filesystem::path python_src_root; ///< empty unless a `src/` import-root exists
+    std::string go_module_prefix;                 ///< empty if no go.mod
+    std::vector<std::string> python_import_roots; ///< package-tree boundary roots
     std::unordered_map<std::string, std::vector<std::int64_t>> go_dir_to_files;
 };
 
@@ -318,44 +318,91 @@ struct ResolveCtx
     return {};
 }
 
-/// Detect a Python "src-layout" import root. Returns `"src"` when
-/// `<project_root>/src/<pkg>/__init__.py` exists for at least one
-/// package directory directly under `src/`, otherwise empty.
+/// Detect every Python "import root" in the file snapshot, excluding
+/// the project root itself (which the resolver always tries first).
 ///
-/// Src-layout projects keep the importable package under `src/`
-/// (`src/flask/__init__.py`, with NO top-level `flask/`), so an
-/// absolute import like `import flask` made from `tests/` resolves
-/// only if the resolver knows to retry with the `src/` prefix. Flat
-/// layouts (package at the repo root) have no such directory and so
-/// get an empty prefix — leaving their resolution untouched.
+/// A directory `D` is an import root when it is a package-tree
+/// boundary: it directly contains a package (a child dir with an
+/// `__init__.py` / `__init__.pyi`) AND `D` is itself NOT a package
+/// (no `__init__` marker at `D`). The project root and a `src/`
+/// layout qualify; so do `examples/tutorial/` and `tests/test_apps/`
+/// in projects that ship example/test package trees.
 ///
-/// Filesystem-based on purpose: it mirrors `read_go_module_prefix`,
-/// and projects that pass a non-existent `project_root` (most unit
-/// tests) correctly report "no src root".
-[[nodiscard]] std::filesystem::path
-detect_python_src_root(const std::filesystem::path& project_root)
+/// Returned roots are relative-path prefixes (generic-string form,
+/// no trailing slash). The empty project root is intentionally
+/// excluded — `resolve_one` resolves against it first and only retries
+/// these roots on a miss. Files in the snapshot are already filtered
+/// by the scanner's exclude list, so vendored / build dirs never
+/// contribute candidate roots here.
+[[nodiscard]] std::vector<std::string>
+detect_python_import_roots(const std::vector<FileEntry>& files)
 {
-    const std::filesystem::path src_dir = project_root / "src";
-    std::error_code ec;
-    if (!std::filesystem::is_directory(src_dir, ec) || ec) {
-        return {};
-    }
-    static const std::array<std::string_view, 2> k_init_markers = {"__init__.py", "__init__.pyi"};
-    for (const auto& entry : std::filesystem::directory_iterator(
-             src_dir, std::filesystem::directory_options::skip_permission_denied, ec)) {
-        if (ec) {
-            break;
-        }
-        if (!entry.is_directory(ec) || ec) {
+    // Directories that carry an `__init__.py(i)` marker — i.e. packages.
+    std::unordered_set<std::string> package_dirs;
+    for (const FileEntry& file : files) {
+        if (file.language != Language::Python) {
             continue;
         }
-        for (const std::string_view init : k_init_markers) {
-            if (std::filesystem::exists(entry.path() / init, ec) && !ec) {
-                return "src";
+        const std::filesystem::path& rel = file.path_relative;
+        const std::string stem = rel.stem().string();
+        if (stem != "__init__") {
+            continue;
+        }
+        const std::string ext = rel.extension().string();
+        if (ext != ".py" && ext != ".pyi") {
+            continue;
+        }
+        package_dirs.insert(rel.parent_path().generic_string());
+    }
+
+    // A directory directly containing a package is a candidate root.
+    // It qualifies only if it is not itself a package directory.
+    // Skip the empty (project-root) candidate — resolved separately.
+    std::unordered_set<std::string> roots;
+    for (const std::string& pkg : package_dirs) {
+        const std::string parent = std::filesystem::path{pkg}.parent_path().generic_string();
+        if (parent.empty()) {
+            continue;
+        }
+        if (package_dirs.contains(parent)) {
+            continue; // parent is inside a package — not a boundary
+        }
+        roots.insert(parent);
+    }
+
+    // Deterministic order keeps the per-root retry stable across runs;
+    // ambiguity (2+ roots match) is order-independent, but a sorted set
+    // makes any future single-root logic reproducible.
+    std::vector<std::string> out(roots.begin(), roots.end());
+    std::ranges::sort(out);
+    return out;
+}
+
+/// Retry an absolute Python dotted import against each detected import
+/// root after a project-root miss. Mirrors the Spring-bean uniqueness
+/// rule: take the target only when exactly ONE root yields a match;
+/// two or more matching roots are ambiguous and stay external (we never
+/// guess which `tests` / `app` package the import meant).
+[[nodiscard]] std::int64_t match_python_dotted_in_roots(const PathLookup& lookup,
+                                                        const std::vector<std::string>& roots,
+                                                        std::string_view dotted)
+{
+    const std::filesystem::path tail = split_dotted(dotted, '.');
+    if (tail.empty()) {
+        return 0;
+    }
+    std::int64_t sole_hit = 0;
+    std::size_t match_count = 0;
+    for (const std::string& root : roots) {
+        const std::int64_t hit = match_python_module(lookup, std::filesystem::path{root} / tail);
+        if (hit != 0) {
+            if (++match_count >= 2) {
+                return 0; // ambiguous — bail without guessing
             }
+            sole_hit = hit;
         }
     }
-    return {};
+    return match_count == 1 ? sole_hit : 0;
 }
 
 /// Build the `namespace-string → [file_id, ...]` index. A single
@@ -451,21 +498,15 @@ build_go_dir_index(const std::vector<FileEntry>& files)
                 match_python_relative(lookup, source.relative_path, raw.import_string);
             return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
         }
+        // Project-root resolution wins first. On a miss, retry against
+        // each detected import root (src/, examples/<x>/, tests/<x>/);
+        // an ambiguous hit across two+ roots stays external.
         if (const std::int64_t hit = match_python_dotted(lookup, raw.import_string); hit != 0) {
             return {hit};
         }
-        // Src-layout retry: `import flask` from outside `src/` resolves
-        // to `src/flask/__init__.py` only once the `src/` import-root is
-        // prepended. Absolute (non-relative) imports only — relative
-        // imports already resolved against the source package above.
-        if (!ctx.python_src_root.empty()) {
-            const std::filesystem::path stem =
-                ctx.python_src_root / split_dotted(raw.import_string, '.');
-            if (const std::int64_t hit = match_python_module(lookup, stem); hit != 0) {
-                return {hit};
-            }
-        }
-        return {};
+        const std::int64_t root_hit =
+            match_python_dotted_in_roots(lookup, ctx.python_import_roots, raw.import_string);
+        return root_hit != 0 ? std::vector<std::int64_t>{root_hit} : std::vector<std::int64_t>{};
     }
 
     // --- 4. TS/JS bare module name — external, no resolution.
@@ -677,9 +718,9 @@ void resolve_all(CodeIndex& index, const std::filesystem::path& project_root,
     const ResolveCtx ctx{
         /* namespace_to_files = */ build_namespace_index(per_file),
         /* path_lookup        = */ build_path_lookup(files),
-        /* go_module_prefix   = */ read_go_module_prefix(project_root),
-        /* python_src_root    = */ detect_python_src_root(project_root),
-        /* go_dir_to_files    = */ build_go_dir_index(files),
+        /* go_module_prefix    = */ read_go_module_prefix(project_root),
+        /* python_import_roots = */ detect_python_import_roots(files),
+        /* go_dir_to_files     = */ build_go_dir_index(files),
     };
 
     // Accumulate every resolved edge and flush as one batch — one

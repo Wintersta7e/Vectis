@@ -439,6 +439,105 @@ TEST(DependencyResolverTest, Python_SrcLayout_RootModuleStillResolvesAtRoot)
     fs::remove_all(tmp, ec);
 }
 
+// -----------------------------------------------------------------------------
+// Python absolute imports resolve against detected package-tree roots, not
+// just the project root. `examples/tutorial/` is an import root because it
+// directly contains the `flaskr` package and is not itself a package, so
+// `import flaskr.db` from a sibling test dir resolves into it.
+// -----------------------------------------------------------------------------
+TEST(DependencyResolverTest, Python_AbsoluteImportResolvesAgainstNestedRoot)
+{
+    CodeIndex idx;
+    const auto init_py = add(idx, "examples/tutorial/flaskr/__init__.py", Language::Python);
+    const auto db_py = add(idx, "examples/tutorial/flaskr/db.py", Language::Python);
+    const auto test_py = add(idx, "examples/tutorial/tests/test_db.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(test_py, Language::Python, "examples/tutorial/tests/test_db.py",
+                               {RawImport{"flaskr.db", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(test_py);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, db_py);
+    EXPECT_EQ(deps[0].import_string, "flaskr.db");
+    (void)init_py;
+}
+
+// A package directly at the project root still resolves there first, and the
+// nested-root retry must not double-count or change that target.
+TEST(DependencyResolverTest, Python_RootLevelPackageWinsOverNestedRoot)
+{
+    CodeIndex idx;
+    const auto app_py = add(idx, "app.py", Language::Python);
+    const auto root_init = add(idx, "shared/__init__.py", Language::Python);
+    const auto root_mod = add(idx, "shared/conf.py", Language::Python);
+    // A same-named package nested under an example root must be ignored
+    // when the project root already resolves the import.
+    add(idx, "examples/demo/shared/__init__.py", Language::Python);
+    add(idx, "examples/demo/shared/conf.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(
+        make_fi(app_py, Language::Python, "app.py", {RawImport{"shared.conf", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(app_py);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, root_mod);
+    (void)root_init;
+}
+
+// AMBIGUOUS case — the same package name lives under two distinct import
+// roots and the project root does not resolve it. The uniqueness rule
+// (mirroring Spring beans) leaves it external rather than guessing.
+TEST(DependencyResolverTest, Python_AbsoluteImportAmbiguousAcrossRootsStaysExternal)
+{
+    CodeIndex idx;
+    const auto driver_py = add(idx, "driver.py", Language::Python);
+    // `common` package appears under two boundary roots.
+    add(idx, "examples/a/common/__init__.py", Language::Python);
+    const auto a_helpers = add(idx, "examples/a/common/helpers.py", Language::Python);
+    add(idx, "examples/b/common/__init__.py", Language::Python);
+    const auto b_helpers = add(idx, "examples/b/common/helpers.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(driver_py, Language::Python, "driver.py",
+                               {RawImport{"common.helpers", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(driver_py);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, 0); // ambiguous → external, no wrong target
+    EXPECT_NE(deps[0].target_file_id, a_helpers);
+    EXPECT_NE(deps[0].target_file_id, b_helpers);
+}
+
+// A `src/` layout (the original single-root case) keeps resolving: `src/`
+// is a boundary root because it holds the `mypkg` package and carries no
+// `__init__.py` of its own.
+TEST(DependencyResolverTest, Python_AbsoluteImportResolvesAgainstSrcRoot)
+{
+    CodeIndex idx;
+    const auto init_py = add(idx, "src/mypkg/__init__.py", Language::Python);
+    const auto core_py = add(idx, "src/mypkg/core.py", Language::Python);
+    const auto entry_py = add(idx, "run.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(
+        make_fi(entry_py, Language::Python, "run.py", {RawImport{"mypkg.core", "import", 1}}));
+
+    resolve_all(idx, "/fake/project", per_file);
+
+    const auto deps = idx.dependencies_of(entry_py);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, core_py);
+    (void)init_py;
+}
+
 TEST(DependencyResolverTest, TypeScript_RelativeImportResolvesWithExtension)
 {
     CodeIndex idx;
