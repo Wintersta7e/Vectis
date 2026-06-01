@@ -23,6 +23,7 @@ using vectis::code::EdgeFidelity;
 using vectis::code::ExportOptions;
 using vectis::code::FileEntry;
 using vectis::code::go_edge_confidence;
+using vectis::code::jsts_edge_confidence;
 using vectis::code::k_cinclude_external_bare_confidence;
 using vectis::code::k_cinclude_external_path_confidence;
 using vectis::code::k_cinclude_resolved_bare_confidence;
@@ -30,6 +31,10 @@ using vectis::code::k_cinclude_resolved_path_confidence;
 using vectis::code::k_go_external_stdlib_confidence;
 using vectis::code::k_go_external_thirdparty_confidence;
 using vectis::code::k_go_internal_confidence;
+using vectis::code::k_jsts_alias_unresolved_confidence;
+using vectis::code::k_jsts_bare_external_confidence;
+using vectis::code::k_jsts_relative_resolved_confidence;
+using vectis::code::k_jsts_relative_unresolved_confidence;
 using vectis::code::k_py_external_dotted_confidence;
 using vectis::code::k_py_external_relative_confidence;
 using vectis::code::k_py_resolved_confidence;
@@ -43,6 +48,7 @@ using vectis::code::python_edge_confidence;
 using vectis::code::reconstruct_c_cpp_resolved_by;
 using vectis::code::reconstruct_edge_fidelity;
 using vectis::code::reconstruct_go_resolved_by;
+using vectis::code::reconstruct_jsts_resolved_by;
 using vectis::code::reconstruct_python_resolved_by;
 using vectis::code::reconstruct_rust_resolved_by;
 using vectis::code::rust_edge_confidence;
@@ -159,6 +165,24 @@ TEST(FidelityTest, Reconstruct_CInclude)
               "cinclude-external-bare");
 }
 
+TEST(FidelityTest, Reconstruct_Jsts)
+{
+    // Only relative imports resolve; bare/alias never do.
+    EXPECT_EQ(reconstruct_jsts_resolved_by("./util", /*is_external=*/false),
+              "jsts-relative-resolved");
+    EXPECT_EQ(reconstruct_jsts_resolved_by("./missing", /*is_external=*/true),
+              "jsts-relative-unresolved");
+    // `@/` / `~` / `#` are tsconfig path-alias roots, not npm packages.
+    EXPECT_EQ(reconstruct_jsts_resolved_by("@/components/Btn", /*is_external=*/true),
+              "jsts-alias-unresolved");
+    EXPECT_EQ(reconstruct_jsts_resolved_by("~/store", /*is_external=*/true),
+              "jsts-alias-unresolved");
+    // A scoped npm package (`@scope/pkg`) is bare-external, NOT an alias.
+    EXPECT_EQ(reconstruct_jsts_resolved_by("@angular/core", /*is_external=*/true),
+              "jsts-bare-external");
+    EXPECT_EQ(reconstruct_jsts_resolved_by("react", /*is_external=*/true), "jsts-bare-external");
+}
+
 // --- Confidence lookup -------------------------------------------------------
 
 TEST(FidelityTest, Confidence_ResolvedStrategies)
@@ -221,6 +245,18 @@ TEST(FidelityTest, Confidence_CIncludeStrategies)
     EXPECT_DOUBLE_EQ(c_cpp_edge_confidence("cinclude-external-bare"),
                      k_cinclude_external_bare_confidence);
     EXPECT_DOUBLE_EQ(c_cpp_edge_confidence("not-a-strategy"), 0.0);
+}
+
+TEST(FidelityTest, Confidence_JstsStrategies)
+{
+    EXPECT_DOUBLE_EQ(jsts_edge_confidence("jsts-relative-resolved"),
+                     k_jsts_relative_resolved_confidence);
+    EXPECT_DOUBLE_EQ(jsts_edge_confidence("jsts-relative-unresolved"),
+                     k_jsts_relative_unresolved_confidence);
+    EXPECT_DOUBLE_EQ(jsts_edge_confidence("jsts-alias-unresolved"),
+                     k_jsts_alias_unresolved_confidence);
+    EXPECT_DOUBLE_EQ(jsts_edge_confidence("jsts-bare-external"), k_jsts_bare_external_confidence);
+    EXPECT_DOUBLE_EQ(jsts_edge_confidence("not-a-strategy"), 0.0);
 }
 
 // --- Dispatcher --------------------------------------------------------------
@@ -299,6 +335,14 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     EXPECT_EQ(cpp["provisional"], true);
     EXPECT_DOUBLE_EQ(cpp["expected_precision"]["cinclude-external-bare"].get<double>(),
                      k_cinclude_external_bare_confidence);
+
+    // JS and TS share one calibration block, registered under both names.
+    EXPECT_EQ(meta["languages"]["javascript"], meta["languages"]["typescript"]);
+    const auto& jsts = meta["languages"]["typescript"];
+    EXPECT_EQ(jsts["scope"], "javascript-typescript-import-edges");
+    EXPECT_EQ(jsts["provisional"], true);
+    EXPECT_DOUBLE_EQ(jsts["expected_precision"]["jsts-alias-unresolved"].get<double>(),
+                     k_jsts_alias_unresolved_confidence);
 }
 
 // --- Digest integration ------------------------------------------------------
@@ -531,6 +575,70 @@ TEST(FidelityTest, FullJson_RustEdgesCarryStrategyAndConfidence)
     }
     EXPECT_TRUE(saw_mod);
     EXPECT_TRUE(saw_use);
+}
+
+TEST(FidelityTest, FullJson_JstsEdgesCarryStrategyAndConfidence)
+{
+    CodeIndex index;
+
+    FileEntry app;
+    app.path_relative = "src/app.ts";
+    app.language = Language::TypeScript;
+    const std::int64_t app_id = index.add_file(std::move(app));
+
+    FileEntry util;
+    util.path_relative = "src/util.ts";
+    util.language = Language::TypeScript;
+    const std::int64_t util_id = index.add_file(std::move(util));
+
+    // Resolved relative import -> jsts-relative-resolved.
+    Dependency rel;
+    rel.source_file_id = app_id;
+    rel.target_file_id = util_id;
+    rel.import_string = "./util";
+    rel.kind = "import";
+
+    // Unresolved tsconfig path alias -> jsts-alias-unresolved (detector).
+    Dependency alias;
+    alias.source_file_id = app_id;
+    alias.target_file_id = 0;
+    alias.import_string = "@/store";
+    alias.kind = "import";
+
+    // CJS require of an npm package -> jsts-bare-external (exercises require kind).
+    Dependency bare;
+    bare.source_file_id = app_id;
+    bare.target_file_id = 0;
+    bare.import_string = "react";
+    bare.kind = "require";
+
+    const std::array<Dependency, 3> batch = {rel, alias, bare};
+    index.add_dependencies(batch);
+
+    const auto parsed =
+        nlohmann::json::parse(build_digest_string(index, make_options(DigestFormat::Json)));
+
+    bool saw_rel = false;
+    bool saw_alias = false;
+    bool saw_bare = false;
+    for (const auto& e : parsed["dependency_graph"]["edges"]) {
+        const auto by = e.value("resolved_by", std::string{});
+        if (by == "jsts-relative-resolved") {
+            saw_rel = true;
+            EXPECT_DOUBLE_EQ(e["confidence"].get<double>(), k_jsts_relative_resolved_confidence);
+        }
+        else if (by == "jsts-alias-unresolved") {
+            saw_alias = true;
+            EXPECT_DOUBLE_EQ(e["confidence"].get<double>(), k_jsts_alias_unresolved_confidence);
+        }
+        else if (by == "jsts-bare-external") {
+            saw_bare = true;
+            EXPECT_DOUBLE_EQ(e["confidence"].get<double>(), k_jsts_bare_external_confidence);
+        }
+    }
+    EXPECT_TRUE(saw_rel);
+    EXPECT_TRUE(saw_alias);
+    EXPECT_TRUE(saw_bare);
 }
 
 TEST(FidelityTest, BothFormats_CarryFidelityMetadata)

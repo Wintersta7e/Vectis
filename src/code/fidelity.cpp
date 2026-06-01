@@ -42,10 +42,19 @@ constexpr std::string_view k_strategy_cinclude_resolved_bare = "cinclude-resolve
 constexpr std::string_view k_strategy_cinclude_external_path = "cinclude-external-path";
 constexpr std::string_view k_strategy_cinclude_external_bare = "cinclude-external-bare";
 
+// JS/TS strata: only relative imports resolve; bare/alias never do. Alias
+// (`@/`, `~`, `#`) externals almost always resolve in-tree — a detector.
+constexpr std::string_view k_strategy_jsts_relative_resolved = "jsts-relative-resolved";
+constexpr std::string_view k_strategy_jsts_relative_unresolved = "jsts-relative-unresolved";
+constexpr std::string_view k_strategy_jsts_alias_unresolved = "jsts-alias-unresolved";
+constexpr std::string_view k_strategy_jsts_bare_external = "jsts-bare-external";
+
 // Source-file extension sets for languages whose edge `kind` is shared with
 // other languages (so dispatch must gate on extension).
 constexpr std::array<std::string_view, 10> k_c_cpp_exts = {".c",   ".h",  ".cc",  ".cpp", ".cxx",
                                                            ".hpp", ".hh", ".hxx", ".inl", ".ipp"};
+constexpr std::array<std::string_view, 6> k_jsts_exts = {".ts",  ".tsx", ".js",
+                                                         ".jsx", ".mjs", ".cjs"};
 
 /// True if `path` names a Python package init file (`__init__.py`),
 /// which distinguishes a package-resolved import from a module one.
@@ -203,6 +212,39 @@ double c_cpp_edge_confidence(std::string_view strategy)
     return 0.0; // fail closed
 }
 
+std::string reconstruct_jsts_resolved_by(std::string_view import_string, bool is_external)
+{
+    if (!is_external) {
+        return std::string{k_strategy_jsts_relative_resolved}; // every resolved edge is relative
+    }
+    if (import_string.starts_with("./") || import_string.starts_with("../")) {
+        return std::string{k_strategy_jsts_relative_unresolved};
+    }
+    // tsconfig path-alias roots; `@/` is decisive (npm scopes are `@scope/pkg`).
+    if (import_string.starts_with("@/") || import_string.starts_with("~") ||
+        import_string.starts_with("#")) {
+        return std::string{k_strategy_jsts_alias_unresolved};
+    }
+    return std::string{k_strategy_jsts_bare_external};
+}
+
+double jsts_edge_confidence(std::string_view strategy)
+{
+    if (strategy == k_strategy_jsts_relative_resolved) {
+        return k_jsts_relative_resolved_confidence;
+    }
+    if (strategy == k_strategy_jsts_relative_unresolved) {
+        return k_jsts_relative_unresolved_confidence;
+    }
+    if (strategy == k_strategy_jsts_alias_unresolved) {
+        return k_jsts_alias_unresolved_confidence;
+    }
+    if (strategy == k_strategy_jsts_bare_external) {
+        return k_jsts_bare_external_confidence;
+    }
+    return 0.0; // fail closed
+}
+
 std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_path,
                                                       std::string_view kind,
                                                       std::string_view import_string,
@@ -230,6 +272,10 @@ std::optional<EdgeFidelity> reconstruct_edge_fidelity(std::string_view source_pa
     if (kind == "include" && ends_with_any(source_path, k_c_cpp_exts)) {
         const std::string strategy = reconstruct_c_cpp_resolved_by(import_string, is_external);
         return EdgeFidelity{strategy, c_cpp_edge_confidence(strategy)};
+    }
+    if ((kind == "import" || kind == "require") && ends_with_any(source_path, k_jsts_exts)) {
+        const std::string strategy = reconstruct_jsts_resolved_by(import_string, is_external);
+        return EdgeFidelity{strategy, jsts_edge_confidence(strategy)};
     }
     return std::nullopt;
 }
@@ -341,6 +387,32 @@ namespace {
     return cpp;
 }
 
+/// Per-language fidelity sub-block for JavaScript/TypeScript import/require
+/// edges. The same calibration applies to both languages (one resolver).
+[[nodiscard]] nlohmann::json build_jsts_fidelity_json()
+{
+    nlohmann::json jsts;
+    jsts["version"] = std::string{k_jsts_fidelity_version};
+    jsts["scope"] = "javascript-typescript-import-edges";
+    jsts["method"] = "per-strategy precision vs Node/TS resolution + tsconfig-paths "
+                     "oracle (offline)";
+    jsts["provisional"] = true;
+
+    nlohmann::json corpus;
+    corpus["projects"] = 8;
+    corpus["labeled_edges"] = 11981;
+    jsts["corpus"] = std::move(corpus);
+
+    nlohmann::json expected;
+    expected[std::string{k_strategy_jsts_relative_resolved}] = k_jsts_relative_resolved_confidence;
+    expected[std::string{k_strategy_jsts_relative_unresolved}] =
+        k_jsts_relative_unresolved_confidence;
+    expected[std::string{k_strategy_jsts_alias_unresolved}] = k_jsts_alias_unresolved_confidence;
+    expected[std::string{k_strategy_jsts_bare_external}] = k_jsts_bare_external_confidence;
+    jsts["expected_precision"] = std::move(expected);
+    return jsts;
+}
+
 } // namespace
 
 nlohmann::json build_fidelity_metadata_json()
@@ -357,6 +429,11 @@ nlohmann::json build_fidelity_metadata_json()
     languages["go"] = build_go_fidelity_json();
     languages["rust"] = build_rust_fidelity_json();
     languages["c_cpp"] = build_c_cpp_fidelity_json();
+    // JS and TS share one calibration; register under both names so a
+    // consumer can look up by the concrete source language.
+    const nlohmann::json jsts = build_jsts_fidelity_json();
+    languages["javascript"] = jsts;
+    languages["typescript"] = jsts;
     meta["languages"] = std::move(languages);
     return meta;
 }

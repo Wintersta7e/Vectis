@@ -110,6 +110,23 @@ inline constexpr double k_cinclude_external_path_confidence = 0.90; // 0/207 fal
 inline constexpr double k_cinclude_external_bare_confidence =
     0.50; // 10/20 false-external (n small)
 
+/// Version pin for the JavaScript/TypeScript calibration table below.
+inline constexpr std::string_view k_jsts_fidelity_version = "jsts-import-2026-06-01";
+
+// --- Calibration table (JavaScript/TypeScript import/require edges) -----------
+//
+// Measured 2026-06-01 against 8 projects (1 JS, 7 TS; ~12k edges) with a
+// Node/TS-resolution + tsconfig-paths oracle. Only relative imports ever
+// resolve; bare and path-alias specifiers are never resolved. The headline
+// is `jsts-alias-unresolved`: `@/`, `~`, `#`-rooted specifiers are tsconfig
+// path aliases that almost always DO resolve in-tree, so an "external"
+// verdict there is near-certainly wrong — published at 0.05 as a
+// false-external *detector*, not a trust signal.
+inline constexpr double k_jsts_relative_resolved_confidence = 0.97;   // 5128/5128 correct
+inline constexpr double k_jsts_relative_unresolved_confidence = 0.90; // 0/40 false-external
+inline constexpr double k_jsts_alias_unresolved_confidence = 0.05; // 40/40 actually resolve in-tree
+inline constexpr double k_jsts_bare_external_confidence = 0.90; // ~5% false-external (word-aliases)
+
 /// Reconstruct the resolution strategy string for one Python import
 /// edge, mirroring the Stage-1 harness:
 ///   - relative iff `import_string` begins with '.', else dotted;
@@ -164,6 +181,17 @@ inline constexpr double k_cinclude_external_bare_confidence =
 /// Calibrated precision for a `reconstruct_c_cpp_resolved_by` strategy.
 /// Unknown strategies return 0.0 (fail closed).
 [[nodiscard]] double c_cpp_edge_confidence(std::string_view strategy);
+
+/// Reconstruct the resolution strategy for one JS/TS `import`/`require`
+/// edge: `jsts-relative-resolved` (resolved); else `jsts-relative-unresolved`
+/// (specifier starts `./`/`../`), `jsts-alias-unresolved` (tsconfig path
+/// alias root `@/`, `~`, `#`), else `jsts-bare-external` (an npm specifier).
+[[nodiscard]] std::string reconstruct_jsts_resolved_by(std::string_view import_string,
+                                                       bool is_external);
+
+/// Calibrated precision for a `reconstruct_jsts_resolved_by` strategy.
+/// Unknown strategies return 0.0 (fail closed).
+[[nodiscard]] double jsts_edge_confidence(std::string_view strategy);
 
 /// One edge's reconstructed resolution strategy plus its calibrated
 /// precision. Returned by `reconstruct_edge_fidelity`.
