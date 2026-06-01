@@ -265,7 +265,8 @@ struct ResolveCtx
 {
     std::unordered_map<std::string, std::vector<std::int64_t>> namespace_to_files;
     PathLookup path_lookup;
-    std::string go_module_prefix; ///< empty if no go.mod
+    std::string go_module_prefix;          ///< empty if no go.mod
+    std::filesystem::path python_src_root; ///< empty unless a `src/` import-root exists
     std::unordered_map<std::string, std::vector<std::int64_t>> go_dir_to_files;
 };
 
@@ -312,6 +313,46 @@ struct ResolveCtx
                 path.erase(0, 1);
             }
             return path;
+        }
+    }
+    return {};
+}
+
+/// Detect a Python "src-layout" import root. Returns `"src"` when
+/// `<project_root>/src/<pkg>/__init__.py` exists for at least one
+/// package directory directly under `src/`, otherwise empty.
+///
+/// Src-layout projects keep the importable package under `src/`
+/// (`src/flask/__init__.py`, with NO top-level `flask/`), so an
+/// absolute import like `import flask` made from `tests/` resolves
+/// only if the resolver knows to retry with the `src/` prefix. Flat
+/// layouts (package at the repo root) have no such directory and so
+/// get an empty prefix — leaving their resolution untouched.
+///
+/// Filesystem-based on purpose: it mirrors `read_go_module_prefix`,
+/// and projects that pass a non-existent `project_root` (most unit
+/// tests) correctly report "no src root".
+[[nodiscard]] std::filesystem::path
+detect_python_src_root(const std::filesystem::path& project_root)
+{
+    const std::filesystem::path src_dir = project_root / "src";
+    std::error_code ec;
+    if (!std::filesystem::is_directory(src_dir, ec) || ec) {
+        return {};
+    }
+    static const std::array<std::string_view, 2> k_init_markers = {"__init__.py", "__init__.pyi"};
+    for (const auto& entry : std::filesystem::directory_iterator(
+             src_dir, std::filesystem::directory_options::skip_permission_denied, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_directory(ec) || ec) {
+            continue;
+        }
+        for (const std::string_view init : k_init_markers) {
+            if (std::filesystem::exists(entry.path() / init, ec) && !ec) {
+                return "src";
+            }
         }
     }
     return {};
@@ -410,8 +451,21 @@ build_go_dir_index(const std::vector<FileEntry>& files)
                 match_python_relative(lookup, source.relative_path, raw.import_string);
             return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
         }
-        const std::int64_t hit = match_python_dotted(lookup, raw.import_string);
-        return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
+        if (const std::int64_t hit = match_python_dotted(lookup, raw.import_string); hit != 0) {
+            return {hit};
+        }
+        // Src-layout retry: `import flask` from outside `src/` resolves
+        // to `src/flask/__init__.py` only once the `src/` import-root is
+        // prepended. Absolute (non-relative) imports only — relative
+        // imports already resolved against the source package above.
+        if (!ctx.python_src_root.empty()) {
+            const std::filesystem::path stem =
+                ctx.python_src_root / split_dotted(raw.import_string, '.');
+            if (const std::int64_t hit = match_python_module(lookup, stem); hit != 0) {
+                return {hit};
+            }
+        }
+        return {};
     }
 
     // --- 4. TS/JS bare module name — external, no resolution.
@@ -624,6 +678,7 @@ void resolve_all(CodeIndex& index, const std::filesystem::path& project_root,
         /* namespace_to_files = */ build_namespace_index(per_file),
         /* path_lookup        = */ build_path_lookup(files),
         /* go_module_prefix   = */ read_go_module_prefix(project_root),
+        /* python_src_root    = */ detect_python_src_root(project_root),
         /* go_dir_to_files    = */ build_go_dir_index(files),
     };
 

@@ -268,6 +268,177 @@ TEST(DependencyResolverTest, Python_RelativeImport_WalkingAboveRootStaysExternal
     EXPECT_EQ(deps[0].target_file_id, 0); // external / unresolved
 }
 
+// -----------------------------------------------------------------------------
+// Python src-layout: the importable package lives under `src/`
+// (`src/flask/__init__.py`, with NO top-level `flask/`). Absolute
+// imports made from outside `src/` (here, from `tests/`) must resolve
+// against the detected `src/` import-root. The resolver discovers the
+// root by stat-ing `<project_root>/src/<pkg>/__init__.py`, so the test
+// stages a real directory tree on disk like the Go module test does.
+// -----------------------------------------------------------------------------
+TEST(DependencyResolverTest, Python_SrcLayout_AbsoluteImportResolvesIntoSrc)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("vectis_pysrc_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(&tmp)));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp / "src" / "flask" / "json", ec);
+    {
+        std::ofstream{tmp / "src" / "flask" / "__init__.py"};
+        std::ofstream{tmp / "src" / "flask" / "cli.py"};
+        std::ofstream{tmp / "src" / "flask" / "json" / "tag.py"};
+    }
+
+    CodeIndex idx;
+    const auto test_py = add(idx, "tests/test_cli.py", Language::Python);
+    const auto init_py = add(idx, "src/flask/__init__.py", Language::Python);
+    const auto cli_py = add(idx, "src/flask/cli.py", Language::Python);
+    const auto tag_py = add(idx, "src/flask/json/tag.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(
+        test_py, Language::Python, "tests/test_cli.py",
+        {
+            RawImport{"flask", "import", 1}, RawImport{"flask.cli", "import", 2},
+            RawImport{"flask.json.tag", "import", 3}, RawImport{"os", "import", 4}, // external
+        }));
+
+    resolve_all(idx, tmp, per_file);
+
+    std::int64_t to_init = 0;
+    std::int64_t to_cli = 0;
+    std::int64_t to_tag = 0;
+    std::int64_t os_target = -1;
+    for (const Dependency& d : idx.dependencies_of(test_py)) {
+        if (d.import_string == "flask") {
+            to_init = d.target_file_id;
+        }
+        if (d.import_string == "flask.cli") {
+            to_cli = d.target_file_id;
+        }
+        if (d.import_string == "flask.json.tag") {
+            to_tag = d.target_file_id;
+        }
+        if (d.import_string == "os") {
+            os_target = d.target_file_id;
+        }
+    }
+    EXPECT_EQ(to_init, init_py) << "import flask should resolve to src/flask/__init__.py";
+    EXPECT_EQ(to_cli, cli_py) << "flask.cli should resolve to src/flask/cli.py";
+    EXPECT_EQ(to_tag, tag_py) << "flask.json.tag should resolve to src/flask/json/tag.py";
+    EXPECT_EQ(os_target, 0) << "stdlib import stays external even with a src root";
+
+    fs::remove_all(tmp, ec);
+}
+
+// Regression guard: a flat-layout project (package at the repo root,
+// no `src/` package) must resolve exactly as before. The src-layout
+// retry must not fire — `detect_python_src_root` returns empty when
+// `src/` holds no package — and a genuinely external import stays
+// external. Staged on disk so detection runs against a real tree.
+TEST(DependencyResolverTest, Python_FlatLayout_UnaffectedBySrcRetry)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("vectis_pyflat_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(&tmp)));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp / "conduit", ec);
+    {
+        std::ofstream{tmp / "conduit" / "__init__.py"};
+        std::ofstream{tmp / "conduit" / "app.py"};
+    }
+
+    CodeIndex idx;
+    const auto main_py = add(idx, "main.py", Language::Python);
+    const auto init_py = add(idx, "conduit/__init__.py", Language::Python);
+    const auto app_py = add(idx, "conduit/app.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(
+        make_fi(main_py, Language::Python, "main.py",
+                {
+                    RawImport{"conduit", "import", 1}, RawImport{"conduit.app", "import", 2},
+                    RawImport{"requests", "import", 3}, // external
+                }));
+
+    resolve_all(idx, tmp, per_file);
+
+    std::int64_t to_init = 0;
+    std::int64_t to_app = 0;
+    std::int64_t req_target = -1;
+    for (const Dependency& d : idx.dependencies_of(main_py)) {
+        if (d.import_string == "conduit") {
+            to_init = d.target_file_id;
+        }
+        if (d.import_string == "conduit.app") {
+            to_app = d.target_file_id;
+        }
+        if (d.import_string == "requests") {
+            req_target = d.target_file_id;
+        }
+    }
+    EXPECT_EQ(to_init, init_py);
+    EXPECT_EQ(to_app, app_py);
+    EXPECT_EQ(req_target, 0) << "external import must stay external in a flat layout";
+
+    fs::remove_all(tmp, ec);
+}
+
+// With a src-layout root present, a top-level module that genuinely
+// lives at the repo root must still resolve at the root (project-root
+// match takes priority); the src retry only kicks in after the root
+// lookup misses. This pins the priority order so the retry can never
+// shadow a real root module with a same-named one under `src/`.
+TEST(DependencyResolverTest, Python_SrcLayout_RootModuleStillResolvesAtRoot)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("vectis_pysrcroot_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(&tmp)));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp / "src" / "flask", ec);
+    {
+        std::ofstream{tmp / "src" / "flask" / "__init__.py"};
+    }
+
+    CodeIndex idx;
+    const auto main_py = add(idx, "main.py", Language::Python);
+    const auto conftest_py = add(idx, "conftest.py", Language::Python); // root-level module
+    const auto init_py = add(idx, "src/flask/__init__.py", Language::Python);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(main_py, Language::Python, "main.py",
+                               {
+                                   RawImport{"conftest", "import", 1},
+                                   RawImport{"flask", "import", 2},
+                               }));
+
+    resolve_all(idx, tmp, per_file);
+
+    std::int64_t to_conftest = 0;
+    std::int64_t to_flask = 0;
+    for (const Dependency& d : idx.dependencies_of(main_py)) {
+        if (d.import_string == "conftest") {
+            to_conftest = d.target_file_id;
+        }
+        if (d.import_string == "flask") {
+            to_flask = d.target_file_id;
+        }
+    }
+    EXPECT_EQ(to_conftest, conftest_py) << "root module must win over any src/ retry";
+    EXPECT_EQ(to_flask, init_py);
+
+    fs::remove_all(tmp, ec);
+}
+
 TEST(DependencyResolverTest, TypeScript_RelativeImportResolvesWithExtension)
 {
     CodeIndex idx;
