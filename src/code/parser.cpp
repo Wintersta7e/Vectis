@@ -493,6 +493,34 @@ collect_marker_siblings_back(TSNode start, std::string_view sibling_type, std::s
     return out;
 }
 
+/// True when a Rust `mod_item` carries a `#[path = "..."]` outer
+/// attribute. Such a module points at a non-conventional file, so
+/// resolving it as a plain `mod foo` would bind to a `foo.rs` decoy —
+/// the import is dropped instead (fail closed). Only a `path` attribute
+/// triggers the skip; a `#[cfg(...)]`-only mod is still emitted.
+[[nodiscard]] bool rust_mod_has_path_attribute(TSNode mod_item, std::string_view content)
+{
+    TSNode cur = ts_node_prev_named_sibling(mod_item);
+    while (!ts_node_is_null(cur) && std::string_view{ts_node_type(cur)} == "attribute_item") {
+        // Strip the `#[` … `]` wrapper, then check the attribute name.
+        const std::string text = extract_marker_text(cur, "#[", "]", content);
+        std::string_view name{text};
+        while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
+            name.remove_prefix(1);
+        }
+        if (name.starts_with("path")) {
+            // Guard against a longer identifier (`#[path_like]`): the next
+            // char must be a separator, not an identifier continuation.
+            const char after = name.size() > 4 ? name[4] : '\0';
+            if (after == '\0' || after == ' ' || after == '\t' || after == '=' || after == '(') {
+                return true;
+            }
+        }
+        cur = ts_node_prev_named_sibling(cur);
+    }
+    return false;
+}
+
 /// Java annotations: `marker_annotation` and `annotation` nodes inside
 /// a `modifiers` child. Source order across the two types matters so we
 /// walk the list once and filter both kinds.
@@ -1053,6 +1081,7 @@ std::vector<RawImport> TreeSitterParser::extract_imports(Language language,
         RawImport raw;
         bool has_path = false;
         bool has_kind = false;
+        TSNode kind_node{}; // the declaration node tagged with the kind capture
 
         for (std::uint16_t i = 0; i < match.capture_count; ++i) {
             const TSQueryCapture& capture = match.captures[i];
@@ -1085,6 +1114,7 @@ std::vector<RawImport> TreeSitterParser::extract_imports(Language language,
                 // stored verbatim.
                 raw.kind.assign(capture_name);
                 has_kind = true;
+                kind_node = capture.node;
                 const TSPoint start_pt = ts_node_start_point(capture.node);
                 raw.line = static_cast<int>(start_pt.row) + 1;
             }
@@ -1095,6 +1125,13 @@ std::vector<RawImport> TreeSitterParser::extract_imports(Language language,
             // looks_like_css_selector for the precise filter.
             if ((language == Language::JavaScript || language == Language::TypeScript) &&
                 looks_like_css_selector(raw.import_string)) {
+                continue;
+            }
+            // A Rust `#[path = "..."] mod foo;` names a non-conventional
+            // file; emitting it as a plain `mod foo` could bind a `foo.rs`
+            // decoy. Drop it so the edge fails closed.
+            if (language == Language::Rust && raw.kind == "mod" &&
+                rust_mod_has_path_attribute(kind_node, content)) {
                 continue;
             }
             result.push_back(std::move(raw));

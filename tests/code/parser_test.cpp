@@ -584,6 +584,30 @@ mod helpers;
     EXPECT_TRUE(saw_helpers);
 }
 
+TEST(ParserTest, Rust_InlineModNotCaptured)
+{
+    // Parser-level guard: inline `mod x { ... }` (has a body) must not be
+    // captured as a file-module import; only `mod y;` is.
+    auto parser = make_parser();
+    const std::string src = "mod inlined { pub fn f() {} }\nmod sibling;\n";
+    const auto imports = parser->extract_imports(Language::Rust, src);
+    ASSERT_EQ(imports.size(), 1U);
+    EXPECT_EQ(imports[0].import_string, "sibling");
+    EXPECT_EQ(imports[0].kind, "mod");
+}
+
+TEST(ParserTest, Rust_PathAttributeModNotCaptured)
+{
+    // `#[path = "..."] mod foo;` points at a non-conventional file; resolving
+    // it as a plain `mod foo` could bind to a `foo.rs` decoy. Drop the import
+    // so the edge fails closed. A plain `mod bar;` alongside still resolves.
+    auto parser = make_parser();
+    const std::string src = "#[path = \"real/foo.rs\"]\nmod foo;\nmod bar;\n";
+    const auto imports = parser->extract_imports(Language::Rust, src);
+    ASSERT_EQ(imports.size(), 1U);
+    EXPECT_EQ(imports[0].import_string, "bar");
+}
+
 TEST(ParserTest, ExtractsJavaImports)
 {
     auto parser = make_parser();

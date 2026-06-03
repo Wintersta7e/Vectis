@@ -269,7 +269,7 @@ constexpr std::string_view k_imports_ts_js = R"(
 constexpr std::string_view k_imports_rust = R"(
 (use_declaration argument: (scoped_identifier) @path) @use
 (use_declaration argument: (identifier) @path) @use
-(mod_item name: (identifier) @path) @mod
+(mod_item name: (identifier) @path !body) @mod
 )";
 
 // Java — `import foo.bar.Baz;` / `import foo.Baz;`. Static / wildcard
