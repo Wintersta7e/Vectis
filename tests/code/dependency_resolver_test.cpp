@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -1026,6 +1027,118 @@ TEST(DependencyResolverTest, Rust_ModAmbiguousFileAndDirIsUnresolved)
     const auto deps = idx.dependencies_of(lib);
     ASSERT_EQ(deps.size(), 1U);
     EXPECT_EQ(deps[0].target_file_id, 0); // unresolved, fail-closed
+}
+
+struct RustModtree
+{
+    CodeIndex idx;
+    std::vector<FileImports> per_file;
+    std::int64_t lib = 0, net = 0, tcp = 0, util = 0, bin = 0, orphan = 0;
+};
+// CodeIndex is non-movable (holds a shared_mutex), so RustModtree can't be
+// returned by value; populate an out-param instead.
+void make_modtree(RustModtree& m)
+{
+    m.lib = add(m.idx, "src/lib.rs", Language::Rust);
+    m.net = add(m.idx, "src/net.rs", Language::Rust);
+    m.tcp = add(m.idx, "src/net/tcp.rs", Language::Rust);
+    m.util = add(m.idx, "src/util/mod.rs", Language::Rust);
+    m.bin = add(m.idx, "src/bin/tool.rs", Language::Rust);
+    m.orphan = add(m.idx, "src/orphan.rs", Language::Rust);
+    m.per_file.push_back(make_fi(m.lib, Language::Rust, "src/lib.rs",
+                                 {RawImport{"net", "mod", 1}, RawImport{"util", "mod", 2},
+                                  RawImport{"crate::net::tcp::TcpStream", "use", 3}}));
+    m.per_file.push_back(
+        make_fi(m.net, Language::Rust, "src/net.rs",
+                {RawImport{"tcp", "mod", 1}, RawImport{"self::tcp::TcpStream", "use", 2},
+                 RawImport{"super::util::helper", "use", 3}}));
+    m.per_file.push_back(make_fi(m.tcp, Language::Rust, "src/net/tcp.rs",
+                                 {RawImport{"crate::util::helper", "use", 1}}));
+    m.per_file.push_back(make_fi(m.util, Language::Rust, "src/util/mod.rs", {}));
+    m.per_file.push_back(make_fi(m.bin, Language::Rust, "src/bin/tool.rs",
+                                 {RawImport{"crate::net::tcp::TcpStream", "use", 1}}));
+    m.per_file.push_back(make_fi(m.orphan, Language::Rust, "src/orphan.rs",
+                                 {RawImport{"crate::util::helper", "use", 1}}));
+}
+std::int64_t target_of(const std::vector<Dependency>& deps, std::string_view imp)
+{
+    for (const auto& d : deps) {
+        if (d.import_string == imp) {
+            return d.target_file_id;
+        }
+    }
+    return -1;
+}
+
+TEST(DependencyResolverTest, Rust_UseCrateResolvesToDeepestModule)
+{
+    RustModtree m;
+    make_modtree(m);
+    resolve_all(m.idx, "/fake/project", m.per_file);
+    // crate::net::tcp::TcpStream -> src/net/tcp.rs (TcpStream is an item, ignored)
+    EXPECT_EQ(target_of(m.idx.dependencies_of(m.lib), "crate::net::tcp::TcpStream"), m.tcp);
+}
+
+TEST(DependencyResolverTest, Rust_UseSelfAndSuperResolve)
+{
+    RustModtree m;
+    make_modtree(m);
+    resolve_all(m.idx, "/fake/project", m.per_file);
+    const auto net_deps = m.idx.dependencies_of(m.net);
+    EXPECT_EQ(target_of(net_deps, "self::tcp::TcpStream"), m.tcp); // self = net module
+    EXPECT_EQ(target_of(net_deps, "super::util::helper"), m.util); // super = crate root
+}
+
+TEST(DependencyResolverTest, Rust_UseCrateFromBinIsQuarantined)
+{
+    // src/bin/tool.rs is its own crate; crate:: must NOT reach the library crate.
+    RustModtree m;
+    make_modtree(m);
+    resolve_all(m.idx, "/fake/project", m.per_file);
+    EXPECT_EQ(target_of(m.idx.dependencies_of(m.bin), "crate::net::tcp::TcpStream"), 0);
+}
+
+TEST(DependencyResolverTest, Rust_UseCrateFromOrphanStillResolves)
+{
+    // orphan.rs isn't declared by any mod, but it's owned by the src/ crate,
+    // so crate::util::helper still resolves (crate:: needs only the owning root).
+    RustModtree m;
+    make_modtree(m);
+    resolve_all(m.idx, "/fake/project", m.per_file);
+    EXPECT_EQ(target_of(m.idx.dependencies_of(m.orphan), "crate::util::helper"), m.util);
+}
+
+TEST(DependencyResolverTest, Rust_UseCrateDoesNotLeakAcrossLibMainCrates)
+{
+    // lib.rs and main.rs in the same dir are SEPARATE crates. `mod secret;`
+    // is declared only by main.rs; a `use crate::secret::X` in lib.rs must NOT
+    // resolve into the bin crate's module.
+    CodeIndex idx;
+    const auto lib = add(idx, "src/lib.rs", Language::Rust);
+    const auto main_ = add(idx, "src/main.rs", Language::Rust);
+    const auto secret = add(idx, "src/secret.rs", Language::Rust);
+    (void)secret;
+    std::vector<FileImports> per_file;
+    per_file.push_back(
+        make_fi(lib, Language::Rust, "src/lib.rs", {RawImport{"crate::secret::Thing", "use", 1}}));
+    per_file.push_back(make_fi(main_, Language::Rust, "src/main.rs",
+                               {RawImport{"secret", "mod", 1}})); // only main declares it
+    per_file.push_back(make_fi(secret, Language::Rust, "src/secret.rs", {}));
+    resolve_all(idx, "/fake/project", per_file);
+    EXPECT_EQ(target_of(idx.dependencies_of(lib), "crate::secret::Thing"), 0); // no leak
+    // And from main.rs it DOES resolve (sanity):
+    // (main.rs has no `use crate::secret` here; this test only asserts the no-leak.)
+}
+
+TEST(DependencyResolverTest, Rust_UseStdIsExternal)
+{
+    CodeIndex idx;
+    const auto lib = add(idx, "src/lib.rs", Language::Rust);
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(lib, Language::Rust, "src/lib.rs",
+                               {RawImport{"std::collections::HashMap", "use", 1}}));
+    resolve_all(idx, "/fake/project", per_file);
+    EXPECT_EQ(idx.dependencies_of(lib)[0].target_file_id, 0);
 }
 
 } // namespace

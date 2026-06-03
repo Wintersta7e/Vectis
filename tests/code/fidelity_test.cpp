@@ -748,7 +748,8 @@ TEST(FidelityTest, FullJson_RustEdgesCarryStrategyAndConfidence)
     mod_dep.import_string = "foo";
     mod_dep.kind = "mod";
 
-    // `use serde::Serialize;` (use is always external today) -> rust-use-extern.
+    // `use serde::Serialize;` — in-crate `use` now resolves, but a crate
+    // dependency like serde stays external -> rust-use-extern.
     Dependency use_dep;
     use_dep.source_file_id = lib_id;
     use_dep.target_file_id = 0;

@@ -202,6 +202,25 @@ namespace {
     return stem;
 }
 
+/// Split a `::`-separated Rust path into segments, preserving empties so a
+/// leading `::` yields a leading empty segment the caller can reject.
+/// `a::b::c` -> {"a","b","c"}; always returns at least one segment.
+[[nodiscard]] std::vector<std::string> split_colons(std::string_view path)
+{
+    std::vector<std::string> segs;
+    std::size_t pos = 0;
+    while (pos <= path.size()) {
+        const std::size_t sep = path.find("::", pos);
+        const std::size_t end = (sep == std::string_view::npos) ? path.size() : sep;
+        segs.emplace_back(path.substr(pos, end - pos));
+        if (sep == std::string_view::npos) {
+            break;
+        }
+        pos = sep + 2;
+    }
+    return segs;
+}
+
 /// Look up a Python module rooted at `<stem>` — first as a `.py` /
 /// `.pyi` file, then as a `<stem>/__init__.py(i)` package marker.
 [[nodiscard]] std::int64_t match_python_module(const PathLookup& lookup,
@@ -286,6 +305,49 @@ namespace {
     return lookup_first_by_suffix(lookup, suffix);
 }
 
+/// A detected Rust crate root: the lib.rs/main.rs file and its dir.
+struct RustCrateRoot
+{
+    std::int64_t file_id = 0;
+    std::filesystem::path root_dir;
+};
+
+/// Per-crate module graph, built once from resolved `mod` declarations.
+/// Keys are `"<root_id>\x1f<a::b>"` so the same module path under two
+/// crate roots never collides. `contexts` maps a file to every
+/// (root, module-path) pair it is reachable as (`self`/`super` anchors);
+/// `owning_roots` maps a file to the crate root(s) that own it (the
+/// `crate::` anchor), derived from mod-reachability so a lib+bin crate
+/// sharing `src/` never cross-resolves. Orphan files no `mod` reaches
+/// fall back to single-root directory ancestry.
+struct RustModuleIndex
+{
+    std::unordered_map<std::string, std::int64_t> path_to_file;
+    std::unordered_map<std::int64_t, std::vector<std::pair<std::int64_t, std::string>>> contexts;
+    std::unordered_map<std::int64_t, std::vector<std::int64_t>> owning_roots;
+};
+
+[[nodiscard]] std::string rust_key(std::int64_t root_id, std::string_view module_path)
+{
+    return std::to_string(root_id) + '\x1f' + std::string{module_path};
+}
+
+[[nodiscard]] std::vector<RustCrateRoot>
+detect_rust_crate_roots(const std::vector<FileEntry>& files)
+{
+    std::vector<RustCrateRoot> roots;
+    for (const FileEntry& f : files) {
+        if (f.language != Language::Rust) {
+            continue;
+        }
+        const std::string name = f.path_relative.filename().string();
+        if (name == "lib.rs" || name == "main.rs") {
+            roots.push_back(RustCrateRoot{f.id, f.path_relative.parent_path()});
+        }
+    }
+    return roots;
+}
+
 /// Shared resolver context. All members are owned values — building
 /// them inside the brace-init avoids dangling-reference questions and
 /// keeps the resolver call chain free of context-rebuilds.
@@ -296,6 +358,7 @@ struct ResolveCtx
     std::string go_module_prefix;                 ///< empty if no go.mod
     std::vector<std::string> python_import_roots; ///< package-tree boundary roots
     std::unordered_map<std::string, std::vector<std::int64_t>> go_dir_to_files;
+    RustModuleIndex rust_modules;
 };
 
 /// Read the first `module <path>` line out of a Go `go.mod` file. Only
@@ -466,6 +529,236 @@ build_go_dir_index(const std::vector<FileEntry>& files)
     return out;
 }
 
+/// Build the per-crate Rust module graph. Each crate root (lib.rs /
+/// main.rs) is walked through its declared `mod` chain — resolved via the
+/// `rust_module_dir` / `match_rust_module` helpers — so a
+/// `use` path can only ever land on a genuinely declared module, never
+/// a stray same-named file. `owning_roots` is derived from that same
+/// reachability (a file's owning roots are the distinct roots of its
+/// `contexts`), with a single-root directory-ancestry fallback for
+/// orphans no `mod` reaches (e.g. `include!`d sources); `src/bin/*`
+/// files are their own crates and never inherit the library root.
+[[nodiscard]] RustModuleIndex build_rust_module_index(const std::vector<FileEntry>& files,
+                                                      const PathLookup& lookup,
+                                                      const std::vector<FileImports>& per_file)
+{
+    RustModuleIndex idx;
+    const std::vector<RustCrateRoot> roots = detect_rust_crate_roots(files);
+    if (roots.empty()) {
+        return idx;
+    }
+
+    std::unordered_map<std::int64_t, std::filesystem::path> path_of;
+    for (const FileEntry& f : files) {
+        path_of.emplace(f.id, f.path_relative);
+    }
+    std::unordered_map<std::int64_t, std::vector<std::string>> mods_of;
+    for (const FileImports& s : per_file) {
+        if (s.language != Language::Rust) {
+            continue;
+        }
+        for (const RawImport& raw : s.imports) {
+            if (raw.kind == "mod") {
+                mods_of[s.file_id].push_back(raw.import_string);
+            }
+        }
+    }
+
+    // Walk each crate root through its declared `mod` chain. A root file
+    // is seeded into `contexts` as `{(self_root, "")}`, so reachability
+    // alone tells us which crate(s) a file belongs to.
+    for (const RustCrateRoot& r : roots) {
+        struct Node
+        {
+            std::int64_t file_id;
+            std::string module_path;
+        };
+        std::vector<Node> stack{{r.file_id, std::string{}}};
+        std::unordered_set<std::int64_t> seen;
+        idx.path_to_file[rust_key(r.file_id, "")] = r.file_id;
+        idx.contexts[r.file_id].emplace_back(r.file_id, std::string{});
+        while (!stack.empty()) {
+            const Node cur = stack.back();
+            stack.pop_back();
+            if (!seen.insert(cur.file_id).second) {
+                continue;
+            }
+            const auto mit = mods_of.find(cur.file_id);
+            if (mit == mods_of.end()) {
+                continue;
+            }
+            const std::filesystem::path base = rust_module_dir(path_of[cur.file_id]);
+            for (const std::string& name : mit->second) {
+                const std::int64_t child = match_rust_module(lookup, base / name);
+                if (child == 0) {
+                    continue;
+                }
+                const std::string child_path =
+                    cur.module_path.empty() ? name : cur.module_path + "::" + name;
+                idx.path_to_file[rust_key(r.file_id, child_path)] = child;
+                idx.contexts[child].emplace_back(r.file_id, child_path);
+                stack.push_back({child, child_path});
+            }
+        }
+    }
+
+    // `crate::` anchors at the file's owning crate root(s). Prefer
+    // mod-reachability: a file's owning roots are the distinct roots of
+    // its `contexts`. This keeps a lib+bin crate that shares `src/` from
+    // cross-resolving — `lib.rs`->[lib], `main.rs`->[main], a module the
+    // lib chain declares ->[lib].
+    for (const auto& [file_id, ctxs] : idx.contexts) {
+        std::vector<std::int64_t>& owners = idx.owning_roots[file_id];
+        for (const auto& [root, mod_path] : ctxs) {
+            if (std::ranges::find(owners, root) == owners.end()) {
+                owners.push_back(root);
+            }
+        }
+    }
+
+    // Files no `mod` chain reaches (orphans — e.g. `include!`d sources)
+    // have no `contexts`, so reachability can't place them. Fall back to
+    // directory ancestry, but assign ONLY when a single crate root sits
+    // at the deepest ancestor dir; a tie (lib+main sharing `src/`) leaves
+    // the orphan unowned so `crate::` fails closed.
+    const auto under_root = [](const std::string& filed, const std::string& rdir) -> bool {
+        if (rdir.empty()) {
+            return true;
+        }
+        return filed.size() > rdir.size() && filed.compare(0, rdir.size(), rdir) == 0 &&
+               filed[rdir.size()] == '/';
+    };
+    const auto quarantined = [](const std::string& filed, const std::string& rdir) -> bool {
+        const std::string rel = rdir.empty() ? filed : filed.substr(rdir.size() + 1);
+        return rel.starts_with("bin/"); // src/bin/* are separate crates
+    };
+    std::vector<std::string> root_dirs;
+    root_dirs.reserve(roots.size());
+    for (const RustCrateRoot& r : roots) {
+        root_dirs.push_back(r.root_dir.generic_string());
+    }
+    for (const FileEntry& f : files) {
+        if (f.language != Language::Rust || idx.contexts.contains(f.id)) {
+            continue; // non-Rust, or already placed by mod-reachability
+        }
+        const std::string filed = f.path_relative.generic_string();
+        std::size_t best_len = std::string::npos;
+        for (const std::string& rdir : root_dirs) {
+            if (!under_root(filed, rdir) || quarantined(filed, rdir)) {
+                continue;
+            }
+            if (best_len == std::string::npos || rdir.size() > best_len) {
+                best_len = rdir.size();
+            }
+        }
+        if (best_len == std::string::npos) {
+            continue;
+        }
+        std::vector<std::int64_t> deepest;
+        for (std::size_t ri = 0; ri < roots.size(); ++ri) {
+            const std::string& rdir = root_dirs[ri];
+            if (rdir.size() == best_len && under_root(filed, rdir) && !quarantined(filed, rdir)) {
+                deepest.push_back(roots[ri].file_id);
+            }
+        }
+        if (deepest.size() == 1) {
+            idx.owning_roots[f.id] = std::move(deepest);
+        }
+    }
+    return idx;
+}
+
+/// Resolve an in-crate Rust `use` path against the module graph. crate ->
+/// crate root; self -> source module; super(*) -> ancestor module. std/core/
+/// alloc, Self, unanchored first segment, ambiguity, and multi-crate
+/// disagreement all -> 0 (external). Returns the deepest declared module's id.
+[[nodiscard]] std::int64_t resolve_rust_use(const RustModuleIndex& idx, const FileImports& source,
+                                            std::string_view import_string)
+{
+    const std::vector<std::string> segs = split_colons(import_string);
+    const std::string& head = segs.front();
+    if (head == "std" || head == "core" || head == "alloc" || head == "Self") {
+        return 0;
+    }
+
+    std::vector<std::pair<std::int64_t, std::string>> starts;
+    std::size_t first_mod_seg = 0;
+    if (head == "crate") {
+        const auto it = idx.owning_roots.find(source.file_id);
+        if (it == idx.owning_roots.end()) {
+            return 0;
+        }
+        for (const std::int64_t root : it->second) {
+            starts.emplace_back(root, std::string{});
+        }
+        first_mod_seg = 1;
+    }
+    else if (head == "self" || head == "super") {
+        const auto it = idx.contexts.find(source.file_id);
+        if (it == idx.contexts.end()) {
+            return 0;
+        }
+        std::size_t supers = 0;
+        while (first_mod_seg < segs.size() &&
+               (segs[first_mod_seg] == "self" || segs[first_mod_seg] == "super")) {
+            if (segs[first_mod_seg] == "super") {
+                ++supers;
+            }
+            ++first_mod_seg;
+        }
+        for (const auto& [root, mod_path] : it->second) {
+            // Empty mod_path = crate root (no segments); split otherwise.
+            std::vector<std::string> parts;
+            if (!mod_path.empty()) {
+                parts = split_colons(mod_path);
+            }
+            if (supers > parts.size()) {
+                continue;
+            }
+            parts.resize(parts.size() - supers);
+            std::string start;
+            for (const auto& q : parts) {
+                start += (start.empty() ? "" : "::") + q;
+            }
+            starts.emplace_back(root, start);
+        }
+    }
+    else {
+        return 0;
+    }
+
+    std::int64_t agreed = -1;
+    bool any_miss = false;
+    for (const auto& [root, start] : starts) {
+        std::int64_t best = 0;
+        std::string path = start;
+        for (std::size_t i = first_mod_seg; i < segs.size(); ++i) {
+            path += (path.empty() ? "" : "::") + segs[i];
+            const auto hit = idx.path_to_file.find(rust_key(root, path));
+            if (hit != idx.path_to_file.end()) {
+                best = hit->second;
+            }
+        }
+        if (best == 0) {
+            any_miss = true;
+            continue;
+        }
+        if (agreed == -1) {
+            agreed = best;
+        }
+        else if (agreed != best) {
+            return 0;
+        }
+    }
+    // Fail closed when the path resolves in one candidate crate but not
+    // another (a file genuinely shared by two crates): disagreement by
+    // omission is still disagreement.
+    if (agreed != -1 && any_miss) {
+        return 0;
+    }
+    return agreed == -1 ? 0 : agreed;
+}
+
 /// Resolve one raw import to a set of file_ids in the index. Most
 /// imports resolve to at most one file (returned as a single-element
 /// vector). C# `using X.Y;` and Go `import "x/y"` are different — a
@@ -546,7 +839,10 @@ build_go_dir_index(const std::vector<FileEntry>& files)
             const std::int64_t hit = match_rust_module(lookup, base / raw.import_string);
             return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
         }
-        // `use x::y::z;` — Rust crate-style paths not resolved.
+        if (raw.kind == "use") {
+            const std::int64_t hit = resolve_rust_use(ctx.rust_modules, source, raw.import_string);
+            return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
+        }
     }
 
     // --- 6. Java import --------------------------------------------
@@ -742,12 +1038,15 @@ void resolve_all(CodeIndex& index, const std::filesystem::path& project_root,
                  const std::vector<FileImports>& per_file)
 {
     const std::vector<FileEntry> files = index.snapshot_files();
+    PathLookup lookup = build_path_lookup(files);
+    RustModuleIndex rust_modules = build_rust_module_index(files, lookup, per_file);
     const ResolveCtx ctx{
         /* namespace_to_files = */ build_namespace_index(per_file),
-        /* path_lookup        = */ build_path_lookup(files),
+        /* path_lookup        = */ std::move(lookup),
         /* go_module_prefix    = */ read_go_module_prefix(project_root),
         /* python_import_roots = */ detect_python_import_roots(files),
         /* go_dir_to_files     = */ build_go_dir_index(files),
+        /* rust_modules        = */ std::move(rust_modules),
     };
 
     // Accumulate every resolved edge and flush as one batch — one
