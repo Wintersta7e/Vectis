@@ -76,22 +76,23 @@ inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06
 
 // --- Calibration table (Rust use/mod edges) ----------------------------------
 //
-// Measured 2026-06-01 against 3 Cargo workspaces (3,715 edges) with a
-// mechanical oracle (Cargo.toml deps + in-tree module set). Rust splits
-// on edge kind: `mod x;` is path-resolved by the resolver. In-crate `use`
-// paths (crate::/self::/super::) now resolve via the module graph: a match
-// means a declared module file was found (trustworthy by construction), and
-// a non-match stays low (residual gaps from macros, cfg-gated mods, #[path]).
-// `mod`/`use-std`/`use-extern` strata are unchanged in this step.
-inline constexpr double k_rust_mod_confidence = 0.97; // 507/507 path-resolved correct
+// In-crate `use` (crate::/self::/super::) and `mod` re-measured 2026-06-03
+// against 3 real-world Rust projects (449 .rs files, 1,164 use/mod edges) with
+// an independent mod-graph oracle (a separate Python reimplementation, not
+// Vectis) plus a hand-audited resolved-edge sample. A resolved in-crate `use`
+// means a declared module file was found (trustworthy by construction); a
+// non-match stays low (in-crate but unscanned: macros, cfg-gated mods, #[path],
+// excluded dirs). `use-std`/`use-extern` keep their 2026-06-01 figures
+// (corroborated; use-extern sibling-crate resolution is still deferred).
+inline constexpr double k_rust_mod_confidence = 0.97; // 202/202 re-measured; 507/507 originally
 inline constexpr double k_rust_mod_unresolved_confidence =
-    0.85; // 9.5% are dir-module (`x/mod.rs`) resolver misses
+    0.90; // dir-module (`x/mod.rs`) miss now 0% on re-measure (n=15)
 inline constexpr double k_rust_use_std_confidence = 0.97; // 0/1320 false-external; std/core/alloc
-// `use crate::/self::/super::` now resolves against the module graph.
-// resolved = a declared module file was found (trustworthy by construction);
-// unresolved = a residual gap (macros, cfg-gated mods, #[path]).
-inline constexpr double k_rust_use_internal_resolved_confidence =
-    0.90; // interim; re-measured in calibration
+// `use crate::/self::/super::` resolves against the module graph: resolved =
+// a declared module file was found; unresolved = in-crate but unscanned.
+// Re-measured 246/246 target-correct; published below 1.0 for cfg/#[path]/macro
+// blind spots, item-not-verified-past-module, and n=246 over 3 projects.
+inline constexpr double k_rust_use_internal_resolved_confidence = 0.93;
 inline constexpr double k_rust_use_internal_unresolved_confidence = 0.30; // residual gaps
 inline constexpr double k_rust_use_extern_confidence =
     0.40; // 63% are in-tree sibling/workspace-crate refs, not deps

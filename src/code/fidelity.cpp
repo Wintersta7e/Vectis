@@ -605,13 +605,13 @@ namespace {
     nlohmann::json rust;
     rust["version"] = std::string{k_rust_fidelity_version};
     rust["scope"] = "rust-use-mod-edges";
-    rust["method"] = "per-stratum precision / false-external rate vs Cargo-manifest + "
-                     "in-tree module oracle (offline); use-internal split on resolved status";
+    rust["method"] = "per-stratum target-correctness / false-external rate vs an "
+                     "independent mod-graph oracle + audited sample (offline)";
     rust["provisional"] = true;
 
     nlohmann::json corpus;
     corpus["projects"] = 3;
-    corpus["labeled_edges"] = 3715;
+    corpus["labeled_edges"] = 1164;
     rust["corpus"] = std::move(corpus);
 
     nlohmann::json expected;
