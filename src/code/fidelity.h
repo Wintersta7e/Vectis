@@ -72,23 +72,27 @@ inline constexpr double k_go_external_stdlib_confidence = 0.95;
 inline constexpr double k_go_external_thirdparty_confidence = 0.95;
 
 /// Version pin for the Rust calibration table below.
-inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06-01";
+inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06-03";
 
 // --- Calibration table (Rust use/mod edges) ----------------------------------
 //
 // Measured 2026-06-01 against 3 Cargo workspaces (3,715 edges) with a
 // mechanical oracle (Cargo.toml deps + in-tree module set). Rust splits
-// on edge kind: `mod x;` is path-resolved by the resolver, but `use`
-// paths are NOT resolved at all today (every `use` is emitted external),
-// so the `use-*` strata describe the reliability of the *external label*,
-// not of a resolution. The low use-internal/use-extern figures are honest:
-// an "external" `use` is frequently an unresolved in-tree reference.
+// on edge kind: `mod x;` is path-resolved by the resolver. In-crate `use`
+// paths (crate::/self::/super::) now resolve via the module graph: a match
+// means a declared module file was found (trustworthy by construction), and
+// a non-match stays low (residual gaps from macros, cfg-gated mods, #[path]).
+// `mod`/`use-std`/`use-extern` strata are unchanged in this step.
 inline constexpr double k_rust_mod_confidence = 0.97; // 507/507 path-resolved correct
 inline constexpr double k_rust_mod_unresolved_confidence =
     0.85; // 9.5% are dir-module (`x/mod.rs`) resolver misses
 inline constexpr double k_rust_use_std_confidence = 0.97; // 0/1320 false-external; std/core/alloc
-inline constexpr double k_rust_use_internal_confidence =
-    0.30; // 100% false-external: crate/self/super never resolved
+// `use crate::/self::/super::` now resolves against the module graph.
+// resolved = a declared module file was found (trustworthy by construction);
+// unresolved = a residual gap (macros, cfg-gated mods, #[path]).
+inline constexpr double k_rust_use_internal_resolved_confidence =
+    0.90; // interim; re-measured in calibration
+inline constexpr double k_rust_use_internal_unresolved_confidence = 0.30; // residual gaps
 inline constexpr double k_rust_use_extern_confidence =
     0.40; // 63% are in-tree sibling/workspace-crate refs, not deps
 
@@ -236,8 +240,11 @@ inline constexpr double k_ruby_external_gem_confidence = 0.90;      // 0/75 fals
 /// Reconstruct the resolution strategy for one Rust `use`/`mod` edge.
 /// `kind` selects the mechanism: `mod` → `rust-mod` (resolved) /
 /// `rust-mod-unresolved`; `use` → `rust-use-std` (first `::` segment is
-/// std/core/alloc), `rust-use-internal` (crate/self/super/Self), else
-/// `rust-use-extern`. `use` edges are always external in today's resolver.
+/// std/core/alloc), `rust-use-internal-resolved` or
+/// `rust-use-internal-unresolved` (crate/self/super/Self — split on
+/// `is_external`: resolved when the module graph matched a file, unresolved
+/// for residual gaps from macros / cfg-gated mods / #[path]), else
+/// `rust-use-extern`.
 [[nodiscard]] std::string reconstruct_rust_resolved_by(std::string_view kind,
                                                        std::string_view import_string,
                                                        bool is_external);

@@ -62,7 +62,8 @@ using vectis::code::k_ruby_resolved_single_confidence;
 using vectis::code::k_rust_mod_confidence;
 using vectis::code::k_rust_mod_unresolved_confidence;
 using vectis::code::k_rust_use_extern_confidence;
-using vectis::code::k_rust_use_internal_confidence;
+using vectis::code::k_rust_use_internal_resolved_confidence;
+using vectis::code::k_rust_use_internal_unresolved_confidence;
 using vectis::code::k_rust_use_std_confidence;
 using vectis::code::Language;
 using vectis::code::php_edge_confidence;
@@ -167,16 +168,32 @@ TEST(FidelityTest, Reconstruct_RustMod)
 
 TEST(FidelityTest, Reconstruct_RustUse)
 {
-    // `use` is always external today; classify by the first `::` segment.
+    // std/core/alloc first segment -> rust-use-std regardless of resolved status.
     EXPECT_EQ(reconstruct_rust_resolved_by("use", "std::io", /*is_external=*/true), "rust-use-std");
     EXPECT_EQ(reconstruct_rust_resolved_by("use", "core::mem", /*is_external=*/true),
               "rust-use-std");
+    // crate/self/super: unresolved (is_external=true) stays low.
     EXPECT_EQ(reconstruct_rust_resolved_by("use", "crate::foo::Bar", /*is_external=*/true),
-              "rust-use-internal");
+              "rust-use-internal-unresolved");
     EXPECT_EQ(reconstruct_rust_resolved_by("use", "super::x", /*is_external=*/true),
-              "rust-use-internal");
+              "rust-use-internal-unresolved");
+    // External third-party crate path -> rust-use-extern.
     EXPECT_EQ(reconstruct_rust_resolved_by("use", "serde::Serialize", /*is_external=*/true),
               "rust-use-extern");
+}
+
+TEST(FidelityTest, RustUseInternalSplitsOnResolvedStatus)
+{
+    // Resolved in-crate use (is_external=false): high confidence by construction.
+    const std::string r =
+        reconstruct_rust_resolved_by("use", "crate::net::tcp", /*is_external=*/false);
+    EXPECT_EQ(r, "rust-use-internal-resolved");
+    EXPECT_GT(rust_edge_confidence(r), 0.5);
+    // Unresolved (is_external=true): residual gap — stays low.
+    const std::string u =
+        reconstruct_rust_resolved_by("use", "crate::macro_made", /*is_external=*/true);
+    EXPECT_EQ(u, "rust-use-internal-unresolved");
+    EXPECT_LT(rust_edge_confidence(u), 0.5);
 }
 
 TEST(FidelityTest, Reconstruct_CInclude)
@@ -331,8 +348,13 @@ TEST(FidelityTest, Confidence_RustStrategies)
     EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-mod"), k_rust_mod_confidence);
     EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-mod-unresolved"), k_rust_mod_unresolved_confidence);
     EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-std"), k_rust_use_std_confidence);
-    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-internal"), k_rust_use_internal_confidence);
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-internal-resolved"),
+                     k_rust_use_internal_resolved_confidence);
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-internal-unresolved"),
+                     k_rust_use_internal_unresolved_confidence);
     EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-extern"), k_rust_use_extern_confidence);
+    // Old single-stratum key is gone; must fail closed.
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-internal"), 0.0);
     EXPECT_DOUBLE_EQ(rust_edge_confidence("not-a-strategy"), 0.0);
 }
 
@@ -505,8 +527,10 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
     const auto& rust = meta["languages"]["rust"];
     EXPECT_EQ(rust["scope"], "rust-use-mod-edges");
     EXPECT_EQ(rust["provisional"], true);
-    EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal"].get<double>(),
-                     k_rust_use_internal_confidence);
+    EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal-resolved"].get<double>(),
+                     k_rust_use_internal_resolved_confidence);
+    EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal-unresolved"].get<double>(),
+                     k_rust_use_internal_unresolved_confidence);
 
     const auto& cpp = meta["languages"]["c_cpp"];
     EXPECT_EQ(cpp["scope"], "c-cpp-include-edges");
