@@ -966,4 +966,66 @@ TEST(DependencyResolverTest, Java_ScaleResolutionStaysSubLinear)
     EXPECT_EQ(internal_edges, k_packages * k_files_per_package * k_files_per_package);
 }
 
+TEST(DependencyResolverTest, Rust_ModResolvesDirectoryModule)
+{
+    CodeIndex idx;
+    const auto lib = add(idx, "src/lib.rs", Language::Rust);
+    const auto net_mod = add(idx, "src/net/mod.rs", Language::Rust); // dir-module
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(lib, Language::Rust, "src/lib.rs", {RawImport{"net", "mod", 1}}));
+    resolve_all(idx, "/fake/project", per_file);
+    const auto deps = idx.dependencies_of(lib);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, net_mod);
+}
+
+TEST(DependencyResolverTest, Rust_ModResolvesFileModule)
+{
+    // The common case: `mod net;` in a crate root resolves to the sibling
+    // file src/net.rs (not a directory module).
+    CodeIndex idx;
+    const auto lib = add(idx, "src/lib.rs", Language::Rust);
+    const auto net = add(idx, "src/net.rs", Language::Rust);
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(lib, Language::Rust, "src/lib.rs", {RawImport{"net", "mod", 1}}));
+    resolve_all(idx, "/fake/project", per_file);
+    const auto deps = idx.dependencies_of(lib);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, net);
+}
+
+TEST(DependencyResolverTest, Rust_ModBaseIsModuleDirNotParent)
+{
+    // `mod bar;` inside src/foo.rs lives at src/foo/bar.rs, NOT src/bar.rs.
+    CodeIndex idx;
+    const auto foo = add(idx, "src/foo.rs", Language::Rust);
+    const auto bar = add(idx, "src/foo/bar.rs", Language::Rust);
+    const auto decoy = add(idx, "src/bar.rs", Language::Rust); // must NOT match
+    (void)decoy;
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(foo, Language::Rust, "src/foo.rs", {RawImport{"bar", "mod", 1}}));
+    resolve_all(idx, "/fake/project", per_file);
+    const auto deps = idx.dependencies_of(foo);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, bar);
+}
+
+TEST(DependencyResolverTest, Rust_ModAmbiguousFileAndDirIsUnresolved)
+{
+    // Both src/foo.rs and src/foo/mod.rs present for `mod foo;` -> Rust rejects
+    // it as ambiguous; we stay external rather than guess.
+    CodeIndex idx;
+    const auto lib = add(idx, "src/lib.rs", Language::Rust);
+    add(idx, "src/foo.rs", Language::Rust);
+    add(idx, "src/foo/mod.rs", Language::Rust);
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(lib, Language::Rust, "src/lib.rs", {RawImport{"foo", "mod", 1}}));
+    resolve_all(idx, "/fake/project", per_file);
+    // An empty resolve_one() result becomes one external edge (target 0),
+    // so the ambiguous mod still produces exactly one dependency record.
+    const auto deps = idx.dependencies_of(lib);
+    ASSERT_EQ(deps.size(), 1U);
+    EXPECT_EQ(deps[0].target_file_id, 0); // unresolved, fail-closed
+}
+
 } // namespace

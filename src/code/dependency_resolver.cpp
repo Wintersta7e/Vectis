@@ -153,6 +153,34 @@ namespace {
     return 0;
 }
 
+/// Rust module directory of a file: where its child modules live.
+/// Entry-point files (lib.rs, main.rs, mod.rs) own their parent dir;
+/// any other file `foo.rs` owns `<dir>/foo/`.
+[[nodiscard]] std::filesystem::path rust_module_dir(const std::filesystem::path& rel)
+{
+    const std::string name = rel.filename().string();
+    if (name == "lib.rs" || name == "main.rs" || name == "mod.rs") {
+        return rel.parent_path();
+    }
+    return rel.parent_path() / rel.stem();
+}
+
+/// Resolve a Rust module path-stem to a file: `<stem>.rs` or
+/// `<stem>/mod.rs`. If BOTH exist the module is ambiguous (Rust rejects
+/// it) — return 0. Never probes `index.rs` (a JS/TS artifact).
+[[nodiscard]] std::int64_t match_rust_module(const PathLookup& lookup,
+                                             const std::filesystem::path& stem)
+{
+    std::filesystem::path as_file = stem;
+    as_file += ".rs";
+    const std::int64_t file_hit = lookup_exact(lookup, as_file);
+    const std::int64_t dir_hit = lookup_exact(lookup, stem / "mod.rs");
+    if (file_hit != 0 && dir_hit != 0) {
+        return 0; // ambiguous -> fail closed
+    }
+    return file_hit != 0 ? file_hit : dir_hit;
+}
+
 /// Split a dotted name like `foo.bar.Baz` into path segments `foo/bar/Baz`.
 /// Empty segments (leading dot, consecutive dots) are skipped.
 [[nodiscard]] std::filesystem::path split_dotted(std::string_view dotted, char separator)
@@ -514,9 +542,8 @@ build_go_dir_index(const std::vector<FileEntry>& files)
     // --- 5. Rust use / mod -----------------------------------------
     if (source.language == Language::Rust) {
         if (raw.kind == "mod") {
-            const std::filesystem::path source_dir = source.relative_path.parent_path();
-            const std::filesystem::path stem = source_dir / raw.import_string;
-            const std::int64_t hit = match_by_extension(lookup, stem, {".rs"});
+            const std::filesystem::path base = rust_module_dir(source.relative_path);
+            const std::int64_t hit = match_rust_module(lookup, base / raw.import_string);
             return hit != 0 ? std::vector<std::int64_t>{hit} : std::vector<std::int64_t>{};
         }
         // `use x::y::z;` — Rust crate-style paths not resolved.
