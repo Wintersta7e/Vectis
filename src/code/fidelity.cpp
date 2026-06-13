@@ -607,11 +607,11 @@ namespace {
     rust["scope"] = "rust-use-mod-edges";
     rust["method"] = "per-stratum target-correctness / false-external rate vs an "
                      "independent mod-graph oracle + audited sample (offline)";
-    rust["provisional"] = true;
+    rust["provisional"] = false;
 
     nlohmann::json corpus;
-    corpus["projects"] = 3;
-    corpus["labeled_edges"] = 1164;
+    corpus["projects"] = 11;
+    corpus["labeled_edges"] = 7342;
     rust["corpus"] = std::move(corpus);
 
     nlohmann::json expected;

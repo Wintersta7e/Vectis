@@ -72,7 +72,7 @@ inline constexpr double k_go_external_stdlib_confidence = 0.95;
 inline constexpr double k_go_external_thirdparty_confidence = 0.95;
 
 /// Version pin for the Rust calibration table below.
-inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06-03";
+inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06-13";
 
 // --- Calibration table (Rust use/mod edges) ----------------------------------
 //
@@ -82,20 +82,25 @@ inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06
 // Vectis) plus a hand-audited resolved-edge sample. A resolved in-crate `use`
 // means a declared module file was found (trustworthy by construction); a
 // non-match stays low (in-crate but unscanned: macros, cfg-gated mods, #[path],
-// excluded dirs). `use-std`/`use-extern` keep their 2026-06-01 figures
-// (corroborated; use-extern sibling-crate resolution is still deferred).
-inline constexpr double k_rust_mod_confidence = 0.97; // 202/202 re-measured; 507/507 originally
+// excluded dirs). Recalibrated 2026-06-13 over an 11-crate / ~7.3k-edge corpus
+// (independent mod-graph oracle, numbers reproduced off the measuring box).
+// use-extern stays conservative: its 100% measured "external" agreement shares
+// the oracle's workspace-sibling blind spot, so it is not evidence of precision.
+inline constexpr double k_rust_mod_confidence =
+    0.98; // 1074/1079 target-correct (Wilson LB 0.989, 11 crates)
 inline constexpr double k_rust_mod_unresolved_confidence =
     0.90; // dir-module (`x/mod.rs`) miss now 0% on re-measure (n=15)
-inline constexpr double k_rust_use_std_confidence = 0.97; // 0/1320 false-external; std/core/alloc
+inline constexpr double k_rust_use_std_confidence =
+    0.98; // 2246/2246 external (std/core/alloc, Wilson LB 0.998)
 // `use crate::/self::/super::` resolves against the module graph: resolved =
 // a declared module file was found; unresolved = in-crate but unscanned.
-// Re-measured 246/246 target-correct; published below 1.0 for cfg/#[path]/macro
-// blind spots, item-not-verified-past-module, and n=246 over 3 projects.
+// 1174/1232 target-correct over 11 crates (Wilson LB 0.940) confirms 0.93;
+// held below the LB for cfg/#[path]/macro blind spots + item-past-module.
 inline constexpr double k_rust_use_internal_resolved_confidence = 0.93;
-inline constexpr double k_rust_use_internal_unresolved_confidence = 0.30; // residual gaps
+inline constexpr double k_rust_use_internal_unresolved_confidence =
+    0.30; // recall gap, sibling-coupled; held
 inline constexpr double k_rust_use_extern_confidence =
-    0.40; // 63% are in-tree sibling/workspace-crate refs, not deps
+    0.40; // sibling/workspace-crate refs read as external; held, resolution deferred
 
 /// Version pin for the C/C++ calibration table below.
 inline constexpr std::string_view k_c_cpp_fidelity_version = "c-cpp-include-2026-06-01";

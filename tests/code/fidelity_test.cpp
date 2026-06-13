@@ -526,7 +526,9 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
 
     const auto& rust = meta["languages"]["rust"];
     EXPECT_EQ(rust["scope"], "rust-use-mod-edges");
-    EXPECT_EQ(rust["provisional"], true);
+    EXPECT_EQ(rust["provisional"], false) << "Rust de-provisionalized after 11-crate recalibration";
+    EXPECT_EQ(rust["corpus"]["projects"], 11);
+    EXPECT_EQ(rust["corpus"]["labeled_edges"], 7342);
     EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal-resolved"].get<double>(),
                      k_rust_use_internal_resolved_confidence);
     EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal-unresolved"].get<double>(),
