@@ -25,7 +25,7 @@ namespace vectis::code {
 /// Version pin for the calibration table below. Bump whenever any
 /// `k_py_*` confidence value or the strategy taxonomy changes so a
 /// consumer can detect a recalibration across digest runs.
-inline constexpr std::string_view k_python_fidelity_version = "py-import-2026-06-01";
+inline constexpr std::string_view k_python_fidelity_version = "py-import-2026-06-15";
 
 // --- Calibration table (Python import edges) ---------------------------------
 //
@@ -122,7 +122,7 @@ inline constexpr double k_cinclude_resolved_bare_confidence =
 inline constexpr double k_cinclude_external_path_confidence =
     0.98; // 210/210, 43-repo corpus 2026-06-15
 inline constexpr double k_cinclude_external_bare_confidence =
-    0.68; // 24/28 (Wilson LB 0.685), 43-repo corpus 2026-06-15
+    0.94; // 177/181, 101-repo corpus 2026-06-15 (prior 0.68 was a noisy n=28 sample)
 
 /// Version pin for the JavaScript/TypeScript calibration table below.
 inline constexpr std::string_view k_jsts_fidelity_version = "jsts-import-2026-06-15";
@@ -144,7 +144,7 @@ inline constexpr double k_jsts_bare_external_confidence =
     0.99; // 4021/4021, 43-repo corpus 2026-06-15
 
 /// Version pin for the Java calibration table below.
-inline constexpr std::string_view k_java_fidelity_version = "java-import-2026-06-01";
+inline constexpr std::string_view k_java_fidelity_version = "java-import-2026-06-15";
 
 // --- Calibration table (Java import edges) -----------------------------------
 //
@@ -161,10 +161,11 @@ inline constexpr double k_java_dotted_resolved_confidence = 0.95;     // 1176/11
 inline constexpr double k_java_wildcard_resolved_confidence = 0.90;   // 33/33; thin, 1 project
 inline constexpr double k_java_external_jdk_confidence = 0.97;        // 0/1215 false-external
 inline constexpr double k_java_external_thirdparty_confidence = 0.96; // 0/1129 false-external
-inline constexpr double k_java_external_innertype_confidence = 0.75;  // 25% false-external
+inline constexpr double k_java_external_innertype_confidence =
+    0.40; // 8/40 hand-labeled: in-tree static-import classes left external; weak + corpus-dependent
 
 /// Version pin for the C# calibration table below.
-inline constexpr std::string_view k_csharp_fidelity_version = "csharp-using-2026-06-01";
+inline constexpr std::string_view k_csharp_fidelity_version = "csharp-using-2026-06-15";
 
 // --- Calibration table (C# using edges) --------------------------------------
 //
@@ -176,9 +177,10 @@ inline constexpr std::string_view k_csharp_fidelity_version = "csharp-using-2026
 // false-external rate (type-level usings — `using Some.Ns.TypeName;` — that
 // the namespace-keyed index can't resolve), so it is published lowest. Only
 // plain usings are captured (`using static` / aliased `using X =` are not).
-inline constexpr double k_cs_internal_confidence = 0.97;            // 173868/173868 correct
-inline constexpr double k_cs_external_system_confidence = 0.95;     // 2.1% false-external
-inline constexpr double k_cs_external_thirdparty_confidence = 0.85; // 13.7% false-external
+inline constexpr double k_cs_internal_confidence = 0.97;        // 173868/173868 correct
+inline constexpr double k_cs_external_system_confidence = 0.95; // 2.1% false-external
+inline constexpr double k_cs_external_thirdparty_confidence =
+    0.90; // 40/40 hand-labeled sample 2026-06-15
 
 /// Version pin for the PHP calibration table below.
 inline constexpr std::string_view k_php_fidelity_version = "php-import-2026-06-15";

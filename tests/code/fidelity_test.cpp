@@ -506,11 +506,13 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
 
     const auto& py = meta["languages"]["python"];
     ASSERT_TRUE(py.contains("version"));
-    EXPECT_EQ(py["method"], "per-strategy empirical precision vs manual ground truth (offline)");
+    EXPECT_EQ(py["method"],
+              "per-strategy precision vs a hand-labeled stratified sample over a 9-project "
+              "corpus (offline, 2026-06-15)");
     EXPECT_EQ(py["scope"], "python-import-edges");
-    EXPECT_EQ(py["provisional"], true);
-    EXPECT_EQ(py["corpus"]["projects"], 2);
-    EXPECT_EQ(py["corpus"]["labeled_edges"], 112);
+    EXPECT_EQ(py["provisional"], false);
+    EXPECT_EQ(py["corpus"]["projects"], 9);
+    EXPECT_EQ(py["corpus"]["labeled_edges"], 136);
     const auto& py_exp = py["expected_precision"];
     EXPECT_DOUBLE_EQ(py_exp["relative-module"].get<double>(), k_py_resolved_confidence);
     EXPECT_DOUBLE_EQ(py_exp["dotted-package"].get<double>(), k_py_resolved_confidence);
@@ -557,13 +559,13 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
 
     const auto& java = meta["languages"]["java"];
     EXPECT_EQ(java["scope"], "java-import-edges");
-    EXPECT_EQ(java["provisional"], true);
+    EXPECT_EQ(java["provisional"], false);
     EXPECT_DOUBLE_EQ(java["expected_precision"]["java-external-innertype"].get<double>(),
                      k_java_external_innertype_confidence);
 
     const auto& cs = meta["languages"]["csharp"];
     EXPECT_EQ(cs["scope"], "csharp-using-edges");
-    EXPECT_EQ(cs["provisional"], true);
+    EXPECT_EQ(cs["provisional"], false);
     EXPECT_DOUBLE_EQ(cs["expected_precision"]["csharp-external-thirdparty"].get<double>(),
                      k_cs_external_thirdparty_confidence);
 

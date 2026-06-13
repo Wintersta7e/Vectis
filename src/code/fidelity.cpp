@@ -555,16 +555,15 @@ namespace {
     nlohmann::json py;
     py["version"] = std::string{k_python_fidelity_version};
     py["scope"] = "python-import-edges";
-    py["method"] = "per-strategy empirical precision vs manual ground truth (offline)";
-    // Still provisional: the original labels were manual (2 projects), and the
-    // `external-relative` stratum has no real-world coverage yet to confirm its
-    // figure. A wider re-measure corroborated the numbers but with a weaker
-    // (internal-consistency) oracle — not enough to de-provisionalize.
-    py["provisional"] = true;
+    py["method"] = "per-strategy precision vs a hand-labeled stratified sample over a 9-project "
+                   "corpus (offline, 2026-06-15)";
+    // De-provisionalized 2026-06-15: a hand-labeled stratified sample over a
+    // 9-project corpus confirmed every stratum (136/136 by hand).
+    py["provisional"] = false;
 
     nlohmann::json corpus;
-    corpus["projects"] = 2;
-    corpus["labeled_edges"] = 112;
+    corpus["projects"] = 9;
+    corpus["labeled_edges"] = 136;
     py["corpus"] = std::move(corpus);
 
     nlohmann::json expected;
@@ -693,13 +692,13 @@ namespace {
     nlohmann::json java;
     java["version"] = std::string{k_java_fidelity_version};
     java["scope"] = "java-import-edges";
-    java["method"] = "per-strategy precision vs source-parsed FQCN/package oracle + "
-                     "Maven/Gradle dep check (offline)";
-    java["provisional"] = true;
+    java["method"] = "per-strategy precision vs a hand-labeled stratified sample (offline, "
+                     "2026-06-15); auto FQCN resolution is unreliable on multi-module repos";
+    java["provisional"] = false;
 
     nlohmann::json corpus;
-    corpus["projects"] = 3;
-    corpus["labeled_edges"] = 3949;
+    corpus["projects"] = 9;
+    corpus["labeled_edges"] = 200;
     java["corpus"] = std::move(corpus);
 
     nlohmann::json expected;
@@ -720,13 +719,13 @@ namespace {
     nlohmann::json cs;
     cs["version"] = std::string{k_csharp_fidelity_version};
     cs["scope"] = "csharp-using-edges";
-    cs["method"] = "per-strategy precision / false-external rate vs source-derived "
-                   "namespace oracle (offline); using static / aliased using not captured";
-    cs["provisional"] = true;
+    cs["method"] = "per-strategy precision vs a hand-labeled stratified sample over declared "
+                   "namespaces (offline, 2026-06-15); using static / aliased using not captured";
+    cs["provisional"] = false;
 
     nlohmann::json corpus;
-    corpus["projects"] = 6;
-    corpus["labeled_edges"] = 191526;
+    corpus["projects"] = 9;
+    corpus["labeled_edges"] = 120;
     cs["corpus"] = std::move(corpus);
 
     nlohmann::json expected;
