@@ -531,8 +531,7 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
 
     const auto& rust = meta["languages"]["rust"];
     EXPECT_EQ(rust["scope"], "rust-use-mod-edges");
-    EXPECT_EQ(rust["provisional"], true)
-        << "new sibling-crate stratum is pending corpus re-measure";
+    EXPECT_EQ(rust["provisional"], false) << "de-provisionalized after 43-repo recalibration";
     EXPECT_EQ(rust["corpus"]["projects"], 11);
     EXPECT_EQ(rust["corpus"]["labeled_edges"], 7342);
     EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal-resolved"].get<double>(),

@@ -72,7 +72,7 @@ inline constexpr double k_go_external_stdlib_confidence = 0.95;
 inline constexpr double k_go_external_thirdparty_confidence = 0.95;
 
 /// Version pin for the Rust calibration table below.
-inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06-14";
+inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06-15";
 
 // --- Calibration table (Rust use/mod edges) ----------------------------------
 //
@@ -84,28 +84,28 @@ inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06
 // non-match stays low (in-crate but unscanned: macros, cfg-gated mods, #[path],
 // excluded dirs). Recalibrated 2026-06-13 over an 11-crate / ~7.3k-edge corpus
 // (independent mod-graph oracle, numbers reproduced off the measuring box).
-// Resolved workspace-sibling use paths are newly split out and remain
-// provisional until the corpus is re-measured with package-name resolution.
+// Resolved workspace-sibling use paths are split out with package-name
+// resolution.
 inline constexpr double k_rust_mod_confidence =
     0.98; // 1074/1079 target-correct (Wilson LB 0.989, 11 crates)
 inline constexpr double k_rust_mod_unresolved_confidence =
     0.90; // dir-module (`x/mod.rs`) miss now 0% on re-measure (n=15)
 inline constexpr double k_rust_use_std_confidence =
-    0.98; // 2246/2246 external (std/core/alloc, Wilson LB 0.998)
+    0.99; // 2246/2246 external, 43-repo corpus 2026-06-15
 // `use crate::/self::/super::` resolves against the module graph: resolved =
 // a declared module file was found; unresolved = in-crate but unscanned.
 // 1174/1232 target-correct over 11 crates (Wilson LB 0.940) confirms 0.93;
 // held below the LB for cfg/#[path]/macro blind spots + item-past-module.
 inline constexpr double k_rust_use_internal_resolved_confidence = 0.93;
 inline constexpr double k_rust_use_internal_unresolved_confidence =
-    0.30; // recall gap from macros/cfg/#[path]; held
+    0.48; // 322/613 correctly-unresolved, 43-repo corpus 2026-06-15
 inline constexpr double k_rust_use_sibling_resolved_confidence =
-    0.90; // provisional; sibling-crate use resolution, pending corpus re-measure
+    0.91; // 176/184 target-correct (Wilson LB 0.917), 43-repo corpus 2026-06-15
 inline constexpr double k_rust_use_extern_confidence =
-    0.40; // residual externs: unresolved deps, unsupported manifests, ambiguous siblings
+    0.67; // 1335/1913 post-sibling-resolution (Wilson LB 0.677), 43-repo corpus 2026-06-15
 
 /// Version pin for the C/C++ calibration table below.
-inline constexpr std::string_view k_c_cpp_fidelity_version = "c-cpp-include-2026-06-01";
+inline constexpr std::string_view k_c_cpp_fidelity_version = "c-cpp-include-2026-06-15";
 
 // --- Calibration table (C/C++ #include edges) --------------------------------
 //
@@ -117,13 +117,15 @@ inline constexpr std::string_view k_c_cpp_fidelity_version = "c-cpp-include-2026
 // correct; external-bare is the weak case (50% are missed in-tree headers
 // reached via a compiler -I path Vectis can't see), so it is published low.
 inline constexpr double k_cinclude_resolved_path_confidence = 0.97; // 1186/1186 correct
-inline constexpr double k_cinclude_resolved_bare_confidence = 0.95; // 3503/3503 correct
-inline constexpr double k_cinclude_external_path_confidence = 0.90; // 0/207 false-external
+inline constexpr double k_cinclude_resolved_bare_confidence =
+    0.99; // 4390/4390, 43-repo corpus 2026-06-15
+inline constexpr double k_cinclude_external_path_confidence =
+    0.98; // 210/210, 43-repo corpus 2026-06-15
 inline constexpr double k_cinclude_external_bare_confidence =
-    0.50; // 10/20 false-external (n small)
+    0.68; // 24/28 (Wilson LB 0.685), 43-repo corpus 2026-06-15
 
 /// Version pin for the JavaScript/TypeScript calibration table below.
-inline constexpr std::string_view k_jsts_fidelity_version = "jsts-import-2026-06-01";
+inline constexpr std::string_view k_jsts_fidelity_version = "jsts-import-2026-06-15";
 
 // --- Calibration table (JavaScript/TypeScript import/require edges) -----------
 //
@@ -134,10 +136,12 @@ inline constexpr std::string_view k_jsts_fidelity_version = "jsts-import-2026-06
 // path aliases that almost always DO resolve in-tree, so an "external"
 // verdict there is near-certainly wrong — published at 0.05 as a
 // false-external *detector*, not a trust signal.
-inline constexpr double k_jsts_relative_resolved_confidence = 0.97;   // 5128/5128 correct
-inline constexpr double k_jsts_relative_unresolved_confidence = 0.90; // 0/40 false-external
+inline constexpr double k_jsts_relative_resolved_confidence = 0.97; // 5128/5128 correct
+inline constexpr double k_jsts_relative_unresolved_confidence =
+    0.98; // 425/426, 43-repo corpus 2026-06-15
 inline constexpr double k_jsts_alias_unresolved_confidence = 0.05; // 40/40 actually resolve in-tree
-inline constexpr double k_jsts_bare_external_confidence = 0.90; // ~5% false-external (word-aliases)
+inline constexpr double k_jsts_bare_external_confidence =
+    0.99; // 4021/4021, 43-repo corpus 2026-06-15
 
 /// Version pin for the Java calibration table below.
 inline constexpr std::string_view k_java_fidelity_version = "java-import-2026-06-01";
@@ -177,7 +181,7 @@ inline constexpr double k_cs_external_system_confidence = 0.95;     // 2.1% fals
 inline constexpr double k_cs_external_thirdparty_confidence = 0.85; // 13.7% false-external
 
 /// Version pin for the PHP calibration table below.
-inline constexpr std::string_view k_php_fidelity_version = "php-import-2026-06-01";
+inline constexpr std::string_view k_php_fidelity_version = "php-import-2026-06-15";
 
 // --- Calibration table (PHP require/include/use edges) -----------------------
 //
@@ -189,15 +193,17 @@ inline constexpr std::string_view k_php_fidelity_version = "php-import-2026-06-0
 // a strong de-weight signal (the right file is usually in the fanned-out set,
 // but most siblings are wrong). External `use`s split on whether the symbol
 // is namespaced (`\`) or a root/global name.
-inline constexpr double k_php_require_resolved_confidence = 0.95;        // 33/33 correct
-inline constexpr double k_php_require_external_confidence = 0.90;        // recall-side
-inline constexpr double k_php_use_psr4_confidence = 0.97;                // 8051/8051 correct
-inline constexpr double k_php_use_nsindex_fanout_confidence = 0.30;      // over-approximation
-inline constexpr double k_php_use_external_global_confidence = 0.95;     // 0 false-external
-inline constexpr double k_php_use_external_namespaced_confidence = 0.95; // 0 false-external
+inline constexpr double k_php_require_resolved_confidence = 0.95;   // 33/33 correct
+inline constexpr double k_php_require_external_confidence = 0.90;   // recall-side
+inline constexpr double k_php_use_psr4_confidence = 0.97;           // 8051/8051 correct
+inline constexpr double k_php_use_nsindex_fanout_confidence = 0.30; // over-approximation
+inline constexpr double k_php_use_external_global_confidence =
+    0.99; // 2276/2276, 43-repo corpus 2026-06-15
+inline constexpr double k_php_use_external_namespaced_confidence =
+    0.99; // 2944/2944, 43-repo corpus 2026-06-15
 
 /// Version pin for the Ruby calibration table below.
-inline constexpr std::string_view k_ruby_fidelity_version = "ruby-import-2026-06-01";
+inline constexpr std::string_view k_ruby_fidelity_version = "ruby-import-2026-06-15";
 
 // --- Calibration table (Ruby require edges) ----------------------------------
 //
@@ -209,10 +215,13 @@ inline constexpr std::string_view k_ruby_fidelity_version = "ruby-import-2026-06
 // `json.rb` via the suffix-first fallback, so resolved-single is published
 // below resolved-multi.
 inline constexpr double k_ruby_relative_explicit_confidence = 0.90; // n=1; structural prior
-inline constexpr double k_ruby_resolved_multi_confidence = 0.95;    // 202/202 correct
-inline constexpr double k_ruby_resolved_single_confidence = 0.85;   // 93.3%; stdlib-shadow
-inline constexpr double k_ruby_external_stdlib_confidence = 0.95;   // 0/55 false-external
-inline constexpr double k_ruby_external_gem_confidence = 0.90;      // 0/75 false-external
+inline constexpr double k_ruby_resolved_multi_confidence =
+    0.99; // 863/863, 43-repo corpus 2026-06-15
+inline constexpr double k_ruby_resolved_single_confidence =
+    0.93; // 103/105, 43-repo corpus 2026-06-15
+inline constexpr double k_ruby_external_stdlib_confidence =
+    0.96;                                                      // 101/101, 43-repo corpus 2026-06-15
+inline constexpr double k_ruby_external_gem_confidence = 0.96; // 97/97, 43-repo corpus 2026-06-15
 
 /// Reconstruct the resolution strategy string for one Python import
 /// edge, mirroring the Stage-1 harness:

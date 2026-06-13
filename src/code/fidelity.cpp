@@ -613,9 +613,9 @@ namespace {
     rust["scope"] = "rust-use-mod-edges";
     rust["method"] = "per-stratum target-correctness / false-external rate vs an "
                      "independent mod-graph oracle + audited sample (offline)";
-    // Provisional again: sibling-crate `use` resolution adds a new unmeasured
-    // stratum pending corpus re-measure.
-    rust["provisional"] = true;
+    // Non-provisional: sibling-crate `use` resolution is measured in the
+    // 43-repo recalibration.
+    rust["provisional"] = false;
 
     nlohmann::json corpus;
     corpus["projects"] = 11;
