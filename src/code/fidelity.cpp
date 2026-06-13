@@ -28,13 +28,15 @@ constexpr std::string_view k_strategy_go_external_stdlib = "go-external-stdlib";
 constexpr std::string_view k_strategy_go_external_thirdparty = "go-external-thirdparty";
 
 // Rust strata: `mod` (path-resolved) vs `use` (split by first `::` segment
-// into std, internal crate paths, and externs). crate/self/super `use`
-// paths now resolve via the module graph; internal splits on resolved status.
+// into std, anchored in-crate paths, resolved workspace-sibling paths, and
+// externs). crate/self/super `use` paths resolve via the module graph;
+// internal splits on resolved status.
 constexpr std::string_view k_strategy_rust_mod = "rust-mod";
 constexpr std::string_view k_strategy_rust_mod_unresolved = "rust-mod-unresolved";
 constexpr std::string_view k_strategy_rust_use_std = "rust-use-std";
 constexpr std::string_view k_strategy_rust_use_internal_resolved = "rust-use-internal-resolved";
 constexpr std::string_view k_strategy_rust_use_internal_unresolved = "rust-use-internal-unresolved";
+constexpr std::string_view k_strategy_rust_use_sibling_resolved = "rust-use-sibling-resolved";
 constexpr std::string_view k_strategy_rust_use_extern = "rust-use-extern";
 
 // C/C++ #include strata: resolved/external × path/bare (directory part in the
@@ -234,7 +236,8 @@ std::string reconstruct_rust_resolved_by(std::string_view kind, std::string_view
         return std::string{is_external ? k_strategy_rust_use_internal_unresolved
                                        : k_strategy_rust_use_internal_resolved};
     }
-    return std::string{k_strategy_rust_use_extern};
+    return std::string{is_external ? k_strategy_rust_use_extern
+                                   : k_strategy_rust_use_sibling_resolved};
 }
 
 double rust_edge_confidence(std::string_view strategy)
@@ -253,6 +256,9 @@ double rust_edge_confidence(std::string_view strategy)
     }
     if (strategy == k_strategy_rust_use_internal_unresolved) {
         return k_rust_use_internal_unresolved_confidence;
+    }
+    if (strategy == k_strategy_rust_use_sibling_resolved) {
+        return k_rust_use_sibling_resolved_confidence;
     }
     if (strategy == k_strategy_rust_use_extern) {
         return k_rust_use_extern_confidence;
@@ -607,7 +613,9 @@ namespace {
     rust["scope"] = "rust-use-mod-edges";
     rust["method"] = "per-stratum target-correctness / false-external rate vs an "
                      "independent mod-graph oracle + audited sample (offline)";
-    rust["provisional"] = false;
+    // Provisional again: sibling-crate `use` resolution adds a new unmeasured
+    // stratum pending corpus re-measure.
+    rust["provisional"] = true;
 
     nlohmann::json corpus;
     corpus["projects"] = 11;
@@ -622,6 +630,8 @@ namespace {
         k_rust_use_internal_resolved_confidence;
     expected[std::string{k_strategy_rust_use_internal_unresolved}] =
         k_rust_use_internal_unresolved_confidence;
+    expected[std::string{k_strategy_rust_use_sibling_resolved}] =
+        k_rust_use_sibling_resolved_confidence;
     expected[std::string{k_strategy_rust_use_extern}] = k_rust_use_extern_confidence;
     rust["expected_precision"] = std::move(expected);
     return rust;

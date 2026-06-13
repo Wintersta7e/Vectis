@@ -20,6 +20,7 @@
 #include "code/parser.h"
 #include "code/symbol.h"
 #include "core/log.h"
+#include "core/string_util.h"
 
 namespace vectis::code {
 
@@ -325,6 +326,7 @@ struct RustModuleIndex
     std::unordered_map<std::string, std::int64_t> path_to_file;
     std::unordered_map<std::int64_t, std::vector<std::pair<std::int64_t, std::string>>> contexts;
     std::unordered_map<std::int64_t, std::vector<std::int64_t>> owning_roots;
+    std::unordered_map<std::string, std::vector<std::int64_t>> crate_name_to_roots;
 };
 
 [[nodiscard]] std::string rust_key(std::int64_t root_id, std::string_view module_path)
@@ -346,6 +348,109 @@ detect_rust_crate_roots(const std::vector<FileEntry>& files)
         }
     }
     return roots;
+}
+
+[[nodiscard]] std::string normalize_rust_crate_name(std::string_view name)
+{
+    std::string normalized{name};
+    std::ranges::replace(normalized, '-', '_');
+    return normalized;
+}
+
+/// Read a text file (capped to 64 KiB so malformed huge manifests cannot
+/// stall dependency resolution). Returns empty on I/O errors.
+[[nodiscard]] std::string read_text_capped(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) || ec) {
+        return {};
+    }
+    std::ifstream in(path);
+    if (!in) {
+        return {};
+    }
+    constexpr std::streamsize k_max = static_cast<std::streamsize>(64) * 1024;
+    std::string out;
+    out.resize(k_max);
+    in.read(out.data(), k_max);
+    out.resize(static_cast<std::size_t>(in.gcount()));
+    return out;
+}
+
+[[nodiscard]] bool is_cargo_package_header(std::string_view line)
+{
+    constexpr std::string_view k_header = "[package]";
+    if (!line.starts_with(k_header)) {
+        return false;
+    }
+    const std::string_view rest = vectis::core::trim_ascii(line.substr(k_header.size()));
+    return rest.empty() || rest.front() == '#';
+}
+
+[[nodiscard]] std::string parse_cargo_package_name(std::string_view body)
+{
+    std::istringstream in{std::string{body}};
+    std::string line;
+    bool in_package = false;
+    while (std::getline(in, line)) {
+        const std::string_view trimmed = vectis::core::trim_ascii(line);
+        if (trimmed.empty() || trimmed.front() == '#') {
+            continue;
+        }
+        if (is_cargo_package_header(trimmed)) {
+            in_package = true;
+            continue;
+        }
+        if (!in_package) {
+            continue;
+        }
+        if (trimmed.front() == '[') {
+            break;
+        }
+        const std::size_t equals = trimmed.find('=');
+        if (equals == std::string_view::npos) {
+            continue;
+        }
+        const std::string_view key = vectis::core::trim_ascii(trimmed.substr(0, equals));
+        if (key != "name") {
+            continue;
+        }
+        const std::string_view value = vectis::core::trim_ascii(trimmed.substr(equals + 1));
+        if (value.empty() || (value.front() != '"' && value.front() != '\'')) {
+            return {};
+        }
+        const char quote = value.front();
+        const std::size_t close = value.find(quote, 1);
+        if (close == std::string_view::npos) {
+            return {};
+        }
+        const std::string_view package_name = vectis::core::trim_ascii(value.substr(1, close - 1));
+        return std::string{package_name};
+    }
+    return {};
+}
+
+[[nodiscard]] std::string
+read_cargo_package_name_for_root(const std::filesystem::path& project_root,
+                                 const RustCrateRoot& root)
+{
+    std::vector<std::filesystem::path> candidates;
+    candidates.push_back(root.root_dir / "Cargo.toml");
+    const std::filesystem::path parent_manifest = root.root_dir.parent_path() / "Cargo.toml";
+    if (parent_manifest != candidates.front()) {
+        candidates.push_back(parent_manifest);
+    }
+
+    for (const std::filesystem::path& rel_manifest : candidates) {
+        const std::string body = read_text_capped(project_root / rel_manifest);
+        if (body.empty()) {
+            continue;
+        }
+        if (std::string package_name = parse_cargo_package_name(body); !package_name.empty()) {
+            return package_name;
+        }
+    }
+    return {};
 }
 
 /// Shared resolver context. All members are owned values — building
@@ -538,7 +643,8 @@ build_go_dir_index(const std::vector<FileEntry>& files)
 /// `contexts`), with a single-root directory-ancestry fallback for
 /// orphans no `mod` reaches (e.g. `include!`d sources); `src/bin/*`
 /// files are their own crates and never inherit the library root.
-[[nodiscard]] RustModuleIndex build_rust_module_index(const std::vector<FileEntry>& files,
+[[nodiscard]] RustModuleIndex build_rust_module_index(const std::filesystem::path& project_root,
+                                                      const std::vector<FileEntry>& files,
                                                       const PathLookup& lookup,
                                                       const std::vector<FileImports>& per_file)
 {
@@ -546,6 +652,14 @@ build_go_dir_index(const std::vector<FileEntry>& files)
     const std::vector<RustCrateRoot> roots = detect_rust_crate_roots(files);
     if (roots.empty()) {
         return idx;
+    }
+
+    for (const RustCrateRoot& root : roots) {
+        std::string package_name = read_cargo_package_name_for_root(project_root, root);
+        if (package_name.empty()) {
+            continue;
+        }
+        idx.crate_name_to_roots[normalize_rust_crate_name(package_name)].push_back(root.file_id);
     }
 
     std::unordered_map<std::int64_t, std::filesystem::path> path_of;
@@ -668,10 +782,11 @@ build_go_dir_index(const std::vector<FileEntry>& files)
     return idx;
 }
 
-/// Resolve an in-crate Rust `use` path against the module graph. crate ->
-/// crate root; self -> source module; super(*) -> ancestor module. std/core/
-/// alloc, Self, unanchored first segment, ambiguity, and multi-crate
-/// disagreement all -> 0 (external). Returns the deepest declared module's id.
+/// Resolve a Rust `use` path against the module graph. crate -> crate root;
+/// self -> source module; super(*) -> ancestor module; a verified Cargo
+/// package-name first segment -> that sibling crate root. std/core/alloc, Self,
+/// unknown unanchored first segment, ambiguity, and multi-crate disagreement all
+/// -> 0 (external). Returns the deepest declared module's id.
 [[nodiscard]] std::int64_t resolve_rust_use(const RustModuleIndex& idx, const FileImports& source,
                                             std::string_view import_string)
 {
@@ -724,7 +839,15 @@ build_go_dir_index(const std::vector<FileEntry>& files)
         }
     }
     else {
-        return 0;
+        const std::string crate_name = normalize_rust_crate_name(head);
+        const auto it = idx.crate_name_to_roots.find(crate_name);
+        if (it == idx.crate_name_to_roots.end()) {
+            return 0;
+        }
+        for (const std::int64_t root : it->second) {
+            starts.emplace_back(root, std::string{});
+        }
+        first_mod_seg = 1;
     }
 
     std::int64_t agreed = -1;
@@ -1039,7 +1162,7 @@ void resolve_all(CodeIndex& index, const std::filesystem::path& project_root,
 {
     const std::vector<FileEntry> files = index.snapshot_files();
     PathLookup lookup = build_path_lookup(files);
-    RustModuleIndex rust_modules = build_rust_module_index(files, lookup, per_file);
+    RustModuleIndex rust_modules = build_rust_module_index(project_root, files, lookup, per_file);
     const ResolveCtx ctx{
         /* namespace_to_files = */ build_namespace_index(per_file),
         /* path_lookup        = */ std::move(lookup),

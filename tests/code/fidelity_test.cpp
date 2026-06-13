@@ -64,6 +64,7 @@ using vectis::code::k_rust_mod_unresolved_confidence;
 using vectis::code::k_rust_use_extern_confidence;
 using vectis::code::k_rust_use_internal_resolved_confidence;
 using vectis::code::k_rust_use_internal_unresolved_confidence;
+using vectis::code::k_rust_use_sibling_resolved_confidence;
 using vectis::code::k_rust_use_std_confidence;
 using vectis::code::Language;
 using vectis::code::php_edge_confidence;
@@ -177,6 +178,8 @@ TEST(FidelityTest, Reconstruct_RustUse)
               "rust-use-internal-unresolved");
     EXPECT_EQ(reconstruct_rust_resolved_by("use", "super::x", /*is_external=*/true),
               "rust-use-internal-unresolved");
+    EXPECT_EQ(reconstruct_rust_resolved_by("use", "foo::bar", /*is_external=*/false),
+              "rust-use-sibling-resolved");
     // External third-party crate path -> rust-use-extern.
     EXPECT_EQ(reconstruct_rust_resolved_by("use", "serde::Serialize", /*is_external=*/true),
               "rust-use-extern");
@@ -352,6 +355,8 @@ TEST(FidelityTest, Confidence_RustStrategies)
                      k_rust_use_internal_resolved_confidence);
     EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-internal-unresolved"),
                      k_rust_use_internal_unresolved_confidence);
+    EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-sibling-resolved"),
+                     k_rust_use_sibling_resolved_confidence);
     EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-extern"), k_rust_use_extern_confidence);
     // Old single-stratum key is gone; must fail closed.
     EXPECT_DOUBLE_EQ(rust_edge_confidence("rust-use-internal"), 0.0);
@@ -526,13 +531,16 @@ TEST(FidelityTest, Metadata_HasExpectedShape)
 
     const auto& rust = meta["languages"]["rust"];
     EXPECT_EQ(rust["scope"], "rust-use-mod-edges");
-    EXPECT_EQ(rust["provisional"], false) << "Rust de-provisionalized after 11-crate recalibration";
+    EXPECT_EQ(rust["provisional"], true)
+        << "new sibling-crate stratum is pending corpus re-measure";
     EXPECT_EQ(rust["corpus"]["projects"], 11);
     EXPECT_EQ(rust["corpus"]["labeled_edges"], 7342);
     EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal-resolved"].get<double>(),
                      k_rust_use_internal_resolved_confidence);
     EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-internal-unresolved"].get<double>(),
                      k_rust_use_internal_unresolved_confidence);
+    EXPECT_DOUBLE_EQ(rust["expected_precision"]["rust-use-sibling-resolved"].get<double>(),
+                     k_rust_use_sibling_resolved_confidence);
 
     const auto& cpp = meta["languages"]["c_cpp"];
     EXPECT_EQ(cpp["scope"], "c-cpp-include-edges");

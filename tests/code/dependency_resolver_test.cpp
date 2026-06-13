@@ -1141,4 +1141,92 @@ TEST(DependencyResolverTest, Rust_UseStdIsExternal)
     EXPECT_EQ(idx.dependencies_of(lib)[0].target_file_id, 0);
 }
 
+TEST(DependencyResolverTest, Rust_WorkspaceSibling_UseResolvesAcrossCrates)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("vectis_rust_workspace_test_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp / "crates" / "foo" / "src", ec);
+    fs::create_directories(tmp / "crates" / "app" / "src", ec);
+    {
+        std::ofstream{tmp / "Cargo.toml"} << "[workspace]\nmembers = [\"crates/*\"]\n";
+        std::ofstream{tmp / "crates" / "foo" / "Cargo.toml"} << "[package]\nname = \"foo\"\n";
+        std::ofstream{tmp / "crates" / "foo" / "src" / "lib.rs"} << "mod bar;\n";
+        std::ofstream{tmp / "crates" / "foo" / "src" / "bar.rs"} << "pub struct Thing;\n";
+        std::ofstream{tmp / "crates" / "app" / "Cargo.toml"} << "[package]\nname = \"app\"\n";
+        std::ofstream{tmp / "crates" / "app" / "src" / "main.rs"}
+            << "use foo::bar::Thing;\nuse some_external::x;\n";
+    }
+
+    CodeIndex idx;
+    const auto foo_lib = add(idx, "crates/foo/src/lib.rs", Language::Rust);
+    const auto foo_bar = add(idx, "crates/foo/src/bar.rs", Language::Rust);
+    const auto app_main = add(idx, "crates/app/src/main.rs", Language::Rust);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(
+        make_fi(foo_lib, Language::Rust, "crates/foo/src/lib.rs", {RawImport{"bar", "mod", 1}}));
+    per_file.push_back(make_fi(foo_bar, Language::Rust, "crates/foo/src/bar.rs", {}));
+    per_file.push_back(
+        make_fi(app_main, Language::Rust, "crates/app/src/main.rs",
+                {RawImport{"foo::bar::Thing", "use", 1}, RawImport{"some_external::x", "use", 2}}));
+
+    resolve_all(idx, tmp, per_file);
+
+    const auto app_deps = idx.dependencies_of(app_main);
+    EXPECT_EQ(target_of(app_deps, "foo::bar::Thing"), foo_bar);
+    EXPECT_EQ(target_of(app_deps, "some_external::x"), 0);
+
+    fs::remove_all(tmp, ec);
+}
+
+TEST(DependencyResolverTest, Rust_WorkspaceSibling_DirNameMismatchStaysExternal)
+{
+    namespace fs = std::filesystem;
+
+    const fs::path tmp =
+        fs::temp_directory_path() /
+        ("vectis_rust_pkg_name_test_" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp / "crates" / "widget" / "src", ec);
+    fs::create_directories(tmp / "crates" / "app" / "src", ec);
+    {
+        std::ofstream{tmp / "Cargo.toml"} << "[workspace]\nmembers = [\"crates/*\"]\n";
+        std::ofstream{tmp / "crates" / "widget" / "Cargo.toml"} << "[package]\nname = \"gadget\"\n";
+        std::ofstream{tmp / "crates" / "widget" / "src" / "lib.rs"} << "mod thing;\n";
+        std::ofstream{tmp / "crates" / "widget" / "src" / "thing.rs"} << "pub struct Item;\n";
+        std::ofstream{tmp / "crates" / "app" / "Cargo.toml"} << "[package]\nname = \"app\"\n";
+        std::ofstream{tmp / "crates" / "app" / "src" / "main.rs"}
+            << "use widget::thing::Item;\nuse gadget::thing::Item;\n";
+    }
+
+    CodeIndex idx;
+    const auto widget_lib = add(idx, "crates/widget/src/lib.rs", Language::Rust);
+    const auto thing = add(idx, "crates/widget/src/thing.rs", Language::Rust);
+    const auto app_main = add(idx, "crates/app/src/main.rs", Language::Rust);
+
+    std::vector<FileImports> per_file;
+    per_file.push_back(make_fi(widget_lib, Language::Rust, "crates/widget/src/lib.rs",
+                               {RawImport{"thing", "mod", 1}}));
+    per_file.push_back(make_fi(thing, Language::Rust, "crates/widget/src/thing.rs", {}));
+    per_file.push_back(make_fi(
+        app_main, Language::Rust, "crates/app/src/main.rs",
+        {RawImport{"widget::thing::Item", "use", 1}, RawImport{"gadget::thing::Item", "use", 2}}));
+
+    resolve_all(idx, tmp, per_file);
+
+    const auto app_deps = idx.dependencies_of(app_main);
+    EXPECT_EQ(target_of(app_deps, "widget::thing::Item"), 0);
+    EXPECT_EQ(target_of(app_deps, "gadget::thing::Item"), thing);
+
+    fs::remove_all(tmp, ec);
+}
+
 } // namespace

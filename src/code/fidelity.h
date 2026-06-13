@@ -72,7 +72,7 @@ inline constexpr double k_go_external_stdlib_confidence = 0.95;
 inline constexpr double k_go_external_thirdparty_confidence = 0.95;
 
 /// Version pin for the Rust calibration table below.
-inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06-13";
+inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06-14";
 
 // --- Calibration table (Rust use/mod edges) ----------------------------------
 //
@@ -84,8 +84,8 @@ inline constexpr std::string_view k_rust_fidelity_version = "rust-import-2026-06
 // non-match stays low (in-crate but unscanned: macros, cfg-gated mods, #[path],
 // excluded dirs). Recalibrated 2026-06-13 over an 11-crate / ~7.3k-edge corpus
 // (independent mod-graph oracle, numbers reproduced off the measuring box).
-// use-extern stays conservative: its 100% measured "external" agreement shares
-// the oracle's workspace-sibling blind spot, so it is not evidence of precision.
+// Resolved workspace-sibling use paths are newly split out and remain
+// provisional until the corpus is re-measured with package-name resolution.
 inline constexpr double k_rust_mod_confidence =
     0.98; // 1074/1079 target-correct (Wilson LB 0.989, 11 crates)
 inline constexpr double k_rust_mod_unresolved_confidence =
@@ -98,9 +98,11 @@ inline constexpr double k_rust_use_std_confidence =
 // held below the LB for cfg/#[path]/macro blind spots + item-past-module.
 inline constexpr double k_rust_use_internal_resolved_confidence = 0.93;
 inline constexpr double k_rust_use_internal_unresolved_confidence =
-    0.30; // recall gap, sibling-coupled; held
+    0.30; // recall gap from macros/cfg/#[path]; held
+inline constexpr double k_rust_use_sibling_resolved_confidence =
+    0.90; // provisional; sibling-crate use resolution, pending corpus re-measure
 inline constexpr double k_rust_use_extern_confidence =
-    0.40; // sibling/workspace-crate refs read as external; held, resolution deferred
+    0.40; // residual externs: unresolved deps, unsupported manifests, ambiguous siblings
 
 /// Version pin for the C/C++ calibration table below.
 inline constexpr std::string_view k_c_cpp_fidelity_version = "c-cpp-include-2026-06-01";
@@ -249,8 +251,9 @@ inline constexpr double k_ruby_external_gem_confidence = 0.90;      // 0/75 fals
 /// std/core/alloc), `rust-use-internal-resolved` or
 /// `rust-use-internal-unresolved` (crate/self/super/Self — split on
 /// `is_external`: resolved when the module graph matched a file, unresolved
-/// for residual gaps from macros / cfg-gated mods / #[path]), else
-/// `rust-use-extern`.
+/// for residual gaps from macros / cfg-gated mods / #[path]), else resolved
+/// sibling-crate paths use `rust-use-sibling-resolved` and unresolved bare paths
+/// use `rust-use-extern`.
 [[nodiscard]] std::string reconstruct_rust_resolved_by(std::string_view kind,
                                                        std::string_view import_string,
                                                        bool is_external);
