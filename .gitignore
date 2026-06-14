@@ -27,6 +27,9 @@ vcpkg_installed/
 /vectis.exe
 vectis-data/
 
+# Release artifacts (built by scripts/build-agent-kit.sh)
+/vectis-agent-kit-*.tar.gz
+
 # Generated digests (Vectis produces these next to scanned projects)
 vectis-digest.json
 vectis-digest.md

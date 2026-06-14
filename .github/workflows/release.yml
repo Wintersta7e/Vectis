@@ -1,0 +1,87 @@
+name: Release
+
+# Pushing a `v*` tag builds the portable Linux binary, publishes a GitHub
+# release with the agent kit + checksums, and prunes old releases so at most
+# the three newest are kept. (Windows / macOS runners can be added to the
+# job matrix later; the kit's bin/ layout already anticipates them.)
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Tagging publishes a public release and deletes old ones — never run two of
+# these concurrently, and never cancel one mid-publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish (Linux x64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake ninja-build \
+            git pkg-config \
+            libsqlite3-dev \
+            libspdlog-dev \
+            libfmt-dev \
+            nlohmann-json3-dev \
+            libtomlplusplus-dev \
+            libgtest-dev
+
+      - name: Verify tag matches project version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          cmake_version="$(grep -oP '^\s*VERSION \K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1)"
+          echo "tag=$tag_version cmake=$cmake_version"
+          if [ "$tag_version" != "$cmake_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match CMakeLists VERSION $cmake_version"
+            exit 1
+          fi
+
+      - name: Build static binary + agent-kit tarball
+        run: ./scripts/build-agent-kit.sh --version "${GITHUB_REF_NAME#v}"
+
+      - name: Smoke-test the static binary
+        run: |
+          ./dist/agent-kit/bin/linux-x64/vectis --version
+          ./dist/agent-kit/bin/linux-x64/vectis digest . --format slim --quiet > /tmp/self.json
+          python3 -c "import json; d=json.load(open('/tmp/self.json')); assert d['project']['file_count'] > 50, 'self-scan too small'; print('smoke ok:', d['project']['file_count'], 'files')"
+
+      - name: Stage release assets + checksums
+        run: |
+          mkdir -p release-assets
+          cp vectis-agent-kit-*-linux-x64.tar.gz release-assets/
+          cp dist/agent-kit/bin/linux-x64/vectis "release-assets/vectis-${GITHUB_REF_NAME#v}-linux-x64"
+          ( cd release-assets && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt )
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "vectis $GITHUB_REF_NAME" \
+            --generate-notes \
+            release-assets/*
+
+      - name: Prune old releases (keep the 3 newest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
+          | while read -r tag; do
+              [ -n "$tag" ] || continue
+              echo "Pruning old release + tag: $tag"
+              gh release delete "$tag" --yes --cleanup-tag
+            done
