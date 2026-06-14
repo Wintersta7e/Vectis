@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 project(Vectis
-    VERSION 0.1.0
+    VERSION 1.0.0
     DESCRIPTION "Portable Developer Intelligence Tool"
     LANGUAGES CXX C
 )

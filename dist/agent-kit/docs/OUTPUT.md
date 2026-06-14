@@ -20,7 +20,7 @@ differences are noted inline.
 ```json
 {
   "_schema":          { ... },
-  "vectis_version":   "0.1.0",
+  "vectis_version":   "1.0.0",
   "project":          { ... },
   "architecture":     { ... },
   "encoding":         { ... },
