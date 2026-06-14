@@ -82,6 +82,18 @@ find_package(tomlplusplus REQUIRED)
 find_package(fmt          REQUIRED)
 find_package(spdlog       REQUIRED)
 
+# For static/distribution builds, pull spdlog and fmt in header-only so the
+# binary carries no libspdlog.so / libfmt.so dependency (which would also drag
+# libstdc++.so back in transitively, defeating -static-libstdc++). Both the
+# apt and vcpkg configs expose these header-only targets.
+if(VECTIS_STATIC_LINK)
+    set(VECTIS_FMT_TARGET fmt::fmt-header-only)
+    set(VECTIS_SPDLOG_TARGET spdlog::spdlog_header_only)
+else()
+    set(VECTIS_FMT_TARGET fmt::fmt)
+    set(VECTIS_SPDLOG_TARGET spdlog::spdlog)
+endif()
+
 # Header-only wrapper around tomlplusplus. Debian/Ubuntu's
 # tomlplusplusConfig.cmake binds the target to libtomlplusplus.so and
 # defines TOML_HEADER_ONLY=0, which would force every portable-bundle
@@ -429,8 +441,8 @@ target_link_libraries(vectis_core PUBLIC
     ${VECTIS_SQLITE3_TARGET}
     nlohmann_json::nlohmann_json
     vectis_tomlplusplus
-    fmt::fmt
-    spdlog::spdlog
+    ${VECTIS_FMT_TARGET}
+    ${VECTIS_SPDLOG_TARGET}
     tl::expected
 )
 

@@ -71,6 +71,24 @@ cp "$BINARY" "$BIN_OUT/vectis"
 chmod 755 "$BIN_OUT/vectis"
 echo "==> Binary installed to $BIN_OUT/vectis"
 
+# ── portability gate ──────────────────────────────────────────────────────────
+# The distribution binary must carry no third-party shared-library deps — only
+# the glibc runtime. Fail loudly if any creep back in (e.g. spdlog/fmt linked
+# non-header-only), keeping the "single binary, zero runtime deps" promise honest.
+if command -v ldd >/dev/null 2>&1; then
+	echo "==> Checking portability (ldd) …"
+	unexpected="$(ldd "$BIN_OUT/vectis" 2>/dev/null |
+		grep -oE 'lib[a-zA-Z0-9_+-]+\.so[0-9.]*' |
+		grep -vE '^(libc|libm|libdl|libpthread|librt)\.' || true)"
+	if [ -n "$unexpected" ]; then
+		echo "ERROR: distribution binary has unexpected shared-library deps:" >&2
+		printf '  %s\n' $unexpected >&2
+		echo "       (expected only the glibc runtime)" >&2
+		exit 2
+	fi
+	echo "==> Portable: only the glibc runtime is linked."
+fi
+
 # ── regenerate sample digest ──────────────────────────────────────────────────
 SAMPLE_OUT="$KIT_DIR/examples/sample-digest.slim.json"
 echo "==> Regenerating sample digest from fixture …"
