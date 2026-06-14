@@ -59,8 +59,10 @@ commits.
 - SQLite (WAL + FTS5) cache, portable Windows static build
 
 **Not done yet:** shared `ScanOptions` across subcommands, more
-monorepo manifests (Bazel / Nx / Rush), a published binary install
-path.
+monorepo manifests (Bazel / Nx / Rush).
+
+**Distributing Vectis to agents / CI:** see [`dist/agent-kit/`](dist/agent-kit/) for
+the packaged skill, CLI reference, output schema, and assembly script.
 
 ## What it does
 
@@ -81,6 +83,11 @@ path.
   API Backend, .NET Solution, Library, Electron. The first ten are
   calibrated against a 33-project reference set; Electron is
   unit-tested but not yet on it.
+- **Calibrated per-edge fidelity model** — all 10 import-resolution
+  languages (Python, JS/TS, C/C++, Rust, Java, C#, Go, Ruby, PHP)
+  carry per-stratum precision estimates measured offline against real
+  corpora. Published in `fidelity_metadata` on every digest so
+  consumers know how much to trust each edge class.
 - **Per-symbol API surface** — every symbol carries a `visibility`
   field (`public` / `private` / `protected` / `internal`) derived
   from each language's native idiom (Go capitalisation, Python

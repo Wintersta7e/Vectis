@@ -350,11 +350,21 @@ if(NOT ts_sql_POPULATED)
 endif()
 vectis_add_ts_grammar(sql ts_sql "")
 
+# --- Version header ----------------------------------------------------------
+# Single source of truth for the version string: generated from project(VERSION)
+# so the CLI, MCP server info, and digest output never drift from CMake.
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/core/version.h
+    @ONLY
+)
+
 # --- Vectis core library -----------------------------------------------------
 # Everything Vectis-written lives in a static library so the executable and
 # the test runner can link against the same objects without double-compiling.
 add_library(vectis_core STATIC
     src/cli/cli_main.cpp
+    src/cli/guide.cpp
     src/cli/mcp_server.cpp
     src/core/config_manager.cpp
     src/core/log.cpp
@@ -399,6 +409,7 @@ add_library(vectis_core STATIC
 
 target_include_directories(vectis_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
 target_link_libraries(vectis_core PUBLIC

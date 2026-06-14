@@ -23,8 +23,8 @@ build-windows.cmd
 vcpkg_installed/
 
 # Binary output
-vectis
-vectis.exe
+/vectis
+/vectis.exe
 vectis-data/
 
 # Generated digests (Vectis produces these next to scanned projects)
@@ -54,6 +54,7 @@ tests/fixtures/code/sample-multimodule/
 docs/design/
 docs/BUILD.md
 docs/plans/
+docs/superpowers/
 
 # Local validation harness (real-world OSS repos cloned for smoke runs)
 testing-ground/

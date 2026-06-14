@@ -28,13 +28,13 @@
 #include "code/symbol.h"
 #include "core/log.h"
 #include "core/result.h"
+#include "core/version.h"
 #include "platform/file_io.h"
 
 namespace vectis::code {
 
 namespace {
 
-constexpr const char* k_vectis_version = "0.1.0";
 /// Bump when edge_tuple arity/order or any other positional element changes.
 constexpr int k_slim_schema_version = 2;
 /// Positional-contract identifier for the edge encoding used in slim output.
@@ -577,7 +577,7 @@ using FileIdToPath = std::unordered_map<std::int64_t, std::string>;
     const std::unordered_map<std::string, int> lang_lookup = build_id_lookup(languages);
 
     nlohmann::json root;
-    root["vectis_version"] = k_vectis_version;
+    root["vectis_version"] = vectis::core::k_vectis_version;
     if (!include_file_details) {
         root["_schema"] = build_slim_schema_header();
     }

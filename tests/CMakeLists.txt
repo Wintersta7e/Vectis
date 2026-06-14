@@ -5,7 +5,9 @@ find_package(GTest REQUIRED)
 include(GoogleTest)
 
 add_executable(vectis_tests
+    cli/agent_kit_skill_test.cpp
     cli/cli_cache_test.cpp
+    cli/cli_commands_test.cpp
     cli/mcp_server_test.cpp
     core/config_manager_test.cpp
     core/hash_test.cpp
@@ -50,6 +52,7 @@ add_executable(vectis_tests
 # path as a compile definition.
 target_compile_definitions(vectis_tests PRIVATE
     VECTIS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+    VECTIS_AGENT_KIT_SKILL="${CMAKE_SOURCE_DIR}/dist/agent-kit/skill/vectis/SKILL.md"
 )
 
 target_link_libraries(vectis_tests PRIVATE

@@ -18,6 +18,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "cli/guide.h"
 #include "cli/mcp_server.h"
 #include "code/code_index.h"
 #include "code/code_index_store.h"
@@ -31,6 +32,7 @@
 #include "core/log.h"
 #include "core/result.h"
 #include "core/task_queue.h"
+#include "core/version.h"
 #include "platform/file_io.h"
 #include "services/index_engine/index_engine.h"
 #include "services/storage_engine/storage_engine.h"
@@ -46,9 +48,13 @@ USAGE
     vectis explain <path> [opts]  Scan <path> and print a short narrative
                                   summary (architecture, scale, hotspots,
                                   dependencies). Plain text, ~20 lines.
+    vectis guide                  Print an agent-oriented guide (when/how to
+                                  use vectis, how to read the output) and exit.
     vectis mcp                    Start a Model Context Protocol server on
                                   stdio. Exposes the `digest` and `explain`
-                                  tools to MCP clients (Claude Code, etc.).
+                                  tools to MCP clients (e.g. Claude Code,
+                                  Codex, Cursor).
+    vectis --version              Print the version and exit.
     vectis --help                 Show this text.
 
 DIGEST OPTIONS
@@ -85,7 +91,7 @@ EXAMPLES
 
 void print_usage()
 {
-    std::fputs(k_usage, stdout);
+    std::cout << k_usage;
 }
 
 /// Render a count with its singular or plural form, e.g. `1 file` vs
@@ -816,7 +822,6 @@ int run_mcp_subcommand()
     // The handlers themselves set quiet=true on each invocation.
     McpServerInfo info;
     info.name = "vectis";
-    info.version = "0.1.0";
     const std::vector<McpTool> tools{make_digest_tool(), make_explain_tool()};
     return run_mcp_server(std::cin, std::cout, info, tools);
 }
@@ -833,6 +838,14 @@ int run(int argc, char** argv)
     const std::string_view cmd{argv[1]};
     if (cmd == "--help" || cmd == "-h" || cmd == "help") {
         print_usage();
+        return 0;
+    }
+    if (cmd == "--version" || cmd == "version") {
+        std::cout << "vectis " << vectis::core::k_vectis_version << '\n';
+        return 0;
+    }
+    if (cmd == "guide") {
+        print_guide(std::cout);
         return 0;
     }
     if (cmd == "digest") {

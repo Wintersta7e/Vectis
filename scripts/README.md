@@ -23,6 +23,19 @@ scripts/vectis-diff baseline.slim.json current.slim.json
 
 Requires `bash` and `jq`.
 
+## `build-agent-kit.sh`
+
+Build the static Vectis release binary, regenerate `examples/sample-digest.slim.json`,
+and assemble a versioned agent-kit tarball (`vectis-agent-kit-<version>-linux-x64.tar.gz`
+next to the repo root).
+
+```bash
+scripts/build-agent-kit.sh               # version from binary --version
+scripts/build-agent-kit.sh --version 1.2.3
+```
+
+Requires CMake 3.25+, Ninja, and the system apt packages listed in `docs/BUILD.md`.
+
 ## `hooks/pre-push.sh`
 
 Advisory pre-push hook for downstream repos that want a "what does

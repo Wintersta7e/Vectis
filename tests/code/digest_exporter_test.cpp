@@ -16,6 +16,7 @@
 #include "code/digest_exporter.h"
 #include "code/language.h"
 #include "code/symbol.h"
+#include "core/version.h"
 
 namespace {
 
@@ -135,7 +136,7 @@ TEST(DigestExporterTest, Json_WellFormed)
         parsed.contains("languages"));      // top-level only in slim; full uses project.languages
     EXPECT_FALSE(parsed.contains("kinds")); // top-level only in slim
     EXPECT_FALSE(parsed.contains("refs"));  // top-level only in slim
-    EXPECT_EQ(parsed["vectis_version"], "0.1.0");
+    EXPECT_EQ(parsed["vectis_version"], vectis::core::k_vectis_version);
     // Digest must be deterministic — no timestamps, no environment-derived
     // fields. Same input + same binary → byte-identical JSON.
     EXPECT_FALSE(parsed.contains("generated_at"));

@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "core/version.h"
+
 namespace vectis::cli {
 
 /// One MCP tool exposed to clients. The handler is invoked when an MCP
@@ -37,7 +39,7 @@ struct McpHandlerError
 struct McpServerInfo
 {
     std::string name = "vectis";
-    std::string version = "0.1.0";
+    std::string version = vectis::core::k_vectis_version;
 };
 
 /// Run the MCP server loop on `in` / `out`. Reads newline-delimited
